@@ -1,0 +1,38 @@
+name: Build IPA (không ký)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xem scheme
+        run: xcodebuild -list -project DESMMobile.xcodeproj
+
+      - name: Build cho thiết bị (không ký)
+        run: |
+          SCHEME=$(xcodebuild -list -json -project DESMMobile.xcodeproj | jq -r '.project.schemes[0]')
+          echo "Scheme: $SCHEME"
+          xcodebuild -project DESMMobile.xcodeproj -scheme "$SCHEME" \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Đóng gói .ipa
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
+          echo "App: $APP"
+          test -n "$APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry DESMMobile-unsigned.ipa Payload
+          ls -lh DESMMobile-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DESMMobile-unsigned-ipa
+          path: DESMMobile-unsigned.ipa
