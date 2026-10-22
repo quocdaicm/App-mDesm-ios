@@ -1,0 +1,17 @@
+name: Build check (iOS Simulator, không ký)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xem scheme
+        run: xcodebuild -list -project DESMMobile.xcodeproj
+      - name: Build
+        run: |
+          xcodebuild -project DESMMobile.xcodeproj -scheme DESMMobile \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
