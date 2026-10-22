@@ -4,7 +4,10 @@
 - Thanh địa chỉ nhập URL bất kỳ có giao thức HTTP/HTTPS (tự thêm HTTPS nếu thiếu).
 - Mở trang trong WKWebView; dùng kho cookie mặc định của WKWebView để duy trì phiên trong app.
 - CSS mobile được tiêm bằng WKUserScript ở document start (cả iframe), tự áp lại nếu trang xóa style/class; mặc định chỉ áp cho domain doosanenerbility.com (có công tắc).
-- Bật/tắt chế độ CSS mobile.
+- 3 chế độ hiển thị (nút trên thanh đầu): Mobile (CSS sắp xếp lại bố cục, bảng biểu mẫu xếp dọc), Vừa màn hình (bản desktop thu nhỏ, chỉnh độ rộng trong Cài đặt), Gốc (không can thiệp).
+- Cài đặt > "Mã HTML của trang": sao chép HTML trang đang mở hoặc lưu thành file .html (chia sẻ/Lưu vào Tệp), gồm iframe cùng domain; có tùy chọn ẩn giá trị ô nhập và bỏ script nội tuyến.
+- Thu gọn thanh trên để có thêm chỗ hiển thị trang.
+- Cài đặt > "Sao chép cấu trúc trang đang mở": sao chép sơ đồ DOM (không gồm dữ liệu nhập) để tinh chỉnh CSS chính xác.
 - Cài đặt CSS bổ sung, được lưu cục bộ trên thiết bị bằng `@AppStorage`.
 - Quay lại/tiến/tải lại/về DESM/mở URL hiện tại bằng Safari.
 - Không lưu mật khẩu, không gửi dữ liệu đến dịch vụ ngoài.
