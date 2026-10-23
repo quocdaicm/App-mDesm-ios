@@ -900,12 +900,12 @@ final class BrowserModel: ObservableObject {
                 root.appendChild(style);
               } else if (style.textContent !== c.css) { style.textContent = c.css; }
               if (!root.classList.contains(CLS)) root.classList.add(CLS);
-              if (w === w.top) root.classList.add('desm-top');
+              if (w === w.top && !root.classList.contains('desm-top')) root.classList.add('desm-top');
               enhance(doc);
             } else {
               if (style) style.remove();
               if (root.classList.contains(CLS)) root.classList.remove(CLS);
-              root.classList.remove('desm-top');
+              if (root.classList.contains('desm-top')) root.classList.remove('desm-top');
               if (root.classList.contains('desm-nav-open')) root.classList.remove('desm-nav-open');
             }
             if (doc === document && w === w.top) setViewport(doc);
