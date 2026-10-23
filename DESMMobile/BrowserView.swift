@@ -50,6 +50,19 @@ final class BrowserModel: ObservableObject {
     @Published var showSettings = false
     @Published var errorMessage: String?
     @Published var toast: String?
+    /// Ẩn thanh trên + thanh dưới (tự ẩn khi vào được trang DESM, bấm nút nổi để hiện lại)
+    @Published var barsHidden = false
+    private var wasInDesm = false
+
+    /// Gọi sau mỗi lần tải xong trang: vừa vào được DESM (không phải trang đăng nhập) thì tự ẩn thanh; rời DESM thì hiện lại.
+    func updateBars(for url: URL?) {
+        let host = url?.host?.lowercased() ?? ""
+        let path = url?.path.lowercased() ?? ""
+        let inDesm = BrowserModel.allowedHosts.contains { host == $0 || host.hasSuffix("." + $0) } && !path.contains("login")
+        if inDesm && !wasInDesm { withAnimation(.easeInOut(duration: 0.2)) { barsHidden = true } }
+        if !inDesm && barsHidden { withAnimation(.easeInOut(duration: 0.2)) { barsHidden = false } }
+        wasInDesm = inDesm
+    }
 
     @Published var layoutMode: LayoutMode {
         didSet { UserDefaults.standard.set(layoutMode.rawValue, forKey: "desmLayoutMode") }
@@ -389,6 +402,12 @@ final class BrowserModel: ObservableObject {
               // Chia đều bề rộng khả dụng cho 2 cột để Package No. và Location nằm sát nhau, vừa màn hình dọc
               var main = G.MainTag || null, host = main ? main.parentNode : null;
               var cw = (host && host.clientWidth) ? host.clientWidth : 378, sc = 1;
+              // Khung lưới đổi bề rộng (xoay màn hình...): báo cho TreeGrid tính lại kích thước
+              if (host && host.clientWidth && G.__desmHW !== host.clientWidth) {
+                var firstW = G.__desmHW === undefined;
+                G.__desmHW = host.clientWidth;
+                if (!firstW) { try { win.dispatchEvent(new win.Event('resize')); } catch (eR) {} }
+              }
               try {
                 var tb0 = main && main.querySelector('table'), mt = tb0 && win.getComputedStyle(tb0).transform;
                 var mm = mt && mt.match(/matrix\(([^,]+)/); if (mm) sc = parseFloat(mm[1]) || 1;
@@ -422,6 +441,144 @@ final class BrowserModel: ObservableObject {
               G.__desmTry = changed ? G.__desmTry + 1 : 0;
             }
           }
+          // Lưới Package dạng thẻ (card): mỗi kiện hàng một thẻ gồm Package No, mô tả, loại kiện, A/O và Location.
+          // Chạm thẻ = chọn dòng tương ứng trong lưới TreeGrid (ẩn bên dưới) để Location Update/Delete hoạt động.
+          function cardView(doc) {
+            var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
+            var G = null;
+            for (var gi = 0; gi < win.TGGrids.length; gi++) {
+              var g = win.TGGrids[gi];
+              if (g && g.Cols && g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION && g.Rows) { G = g; break; }
+            }
+            if (!G || !G.MainTag || !G.MainTag.parentNode) return;
+            var host = G.MainTag.parentNode;
+            if (win.__desmCards === undefined) win.__desmCards = true;
+            var on = !!win.__desmCards;
+            var box = doc.getElementById('desmCards');
+            if (!box) {
+              box = doc.createElement('div'); box.id = 'desmCards';
+              host.parentNode.insertBefore(box, host.nextSibling);
+            }
+            var tb = doc.getElementById('toolbar');
+            if (tb && !doc.getElementById('desmViewToggle')) {
+              var vb = doc.createElement('button');
+              vb.type = 'button'; vb.id = 'desmViewToggle'; vb.className = 'btn btn-secondary btn-sm';
+              vb.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                win.__desmCards = !win.__desmCards; box.__sig = null;
+                cardView(doc);
+              });
+              tb.appendChild(vb);
+            }
+            var vb2 = doc.getElementById('desmViewToggle');
+            if (vb2) vb2.textContent = on ? 'Dạng: Thẻ' : 'Dạng: Bảng';
+            host.classList.toggle('desm-grid-off', on);
+            box.style.display = on ? '' : 'none';
+            if (!on) {
+              if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
+              return;
+            }
+            box.__wasOn = true;
+            try {
+              var top = box.getBoundingClientRect().top;
+              box.style.height = Math.max(160, win.innerHeight - top - 4) + 'px';
+            } catch (e) {}
+            var rows = [];
+            function addRow(r) {
+              if (!r || r.Kind !== 'Data') return;
+              if (r.Visible === 0 || r.Visible === '0' || r.Visible === false || r.Deleted) return;
+              rows.push(r);
+            }
+            try {
+              if (G.GetFirstVisible && G.GetNextVisible) {
+                var r0 = G.GetFirstVisible(), guard = 0;
+                while (r0 && guard++ < 5000) { addRow(r0); r0 = G.GetNextVisible(r0); }
+              }
+            } catch (e) { rows = []; }
+            if (!rows.length) { for (var id0 in G.Rows) addRow(G.Rows[id0]); }
+            function isSel(r) { return !!r.Selected && r.Selected !== '0'; }
+            var items = rows.map(function(r) {
+              return {
+                id: r.id, sel: isSel(r),
+                no: gridText(G, r, 'PACKAGE_NO'), desc: gridText(G, r, 'DESCRIPTION'),
+                type: gridText(G, r, 'PACKAGE_TYPE'), list: gridText(G, r, 'PACKAGE_LIST_NO'),
+                ao: gridText(G, r, 'OUT_STATUS'), loc: gridText(G, r, 'STORAGE_LOCATION'),
+                ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
+              };
+            });
+            var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n');
+            if (box.__sig === sig) return;
+            box.__sig = sig;
+            var keep = box.scrollTop;
+            while (box.firstChild) box.removeChild(box.firstChild);
+            function el(tag, cls, text) {
+              var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e;
+            }
+            var nSel = items.filter(function(i) { return i.sel; }).length;
+            var bar = el('label', 'desm-cards-bar');
+            var all = doc.createElement('input'); all.type = 'checkbox'; all.className = 'desm-chk';
+            all.checked = items.length > 0 && nSel === items.length;
+            all.indeterminate = nSel > 0 && nSel < items.length;
+            all.addEventListener('change', function() {
+              var want = all.checked ? 1 : 0;
+              items.forEach(function(it) {
+                var r = G.Rows[it.id]; if (!r) return;
+                if (isSel(r) !== !!want) { try { G.SelectRow(r, want); } catch (e) {} }
+              });
+              box.__sig = null; cardView(doc);
+            });
+            bar.appendChild(all);
+            bar.appendChild(el('span', 'desm-cards-count', 'Chọn tất cả · ' + items.length + ' kiện' + (nSel ? ' · đã chọn ' + nSel : '')));
+            box.appendChild(bar);
+            items.forEach(function(it) {
+              var card = el('div', 'desm-card' + (it.sel ? ' desm-sel' : '') + (it.ok ? ' desm-ok' : ''));
+              var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-card-chk';
+              ck.checked = it.sel; card.appendChild(ck);
+              card.appendChild(el('div', 'desm-card-no', it.no));
+              if (it.desc) card.appendChild(el('div', 'desm-card-desc', it.desc));
+              var sub = [it.type, it.list].filter(function(x) { return x; }).join(' · ');
+              if (sub) card.appendChild(el('div', 'desm-card-sub', sub));
+              var foot = el('div', 'desm-card-foot');
+              foot.appendChild(el('span', 'desm-card-ao', it.ao ? 'A/O : ' + it.ao : ''));
+              var loc = el('span', 'desm-card-loc');
+              var NS = 'http://www.w3.org/2000/svg';
+              var svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24');
+              svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+              var pth = doc.createElementNS(NS, 'path');
+              pth.setAttribute('d', 'M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z');
+              pth.setAttribute('fill', 'none'); pth.setAttribute('stroke', 'currentColor'); pth.setAttribute('stroke-width', '2');
+              svg.appendChild(pth); loc.appendChild(svg);
+              loc.appendChild(el('span', 'desm-card-loctxt', it.loc || '—'));
+              foot.appendChild(loc); card.appendChild(foot);
+              card.addEventListener('click', function() {
+                var r = G.Rows[it.id]; if (!r) return;
+                try { G.SelectRow(r, isSel(r) ? 0 : 1); } catch (e) {}
+                box.__sig = null; cardView(doc);
+              });
+              box.appendChild(card);
+            });
+            box.scrollTop = keep;
+          }
+          // Thu gọn chiều cao tiêu đề + hàng lọc của lưới (mặc định ~120px -> ~56px); tắt chế độ Gọn thì trả lại như cũ
+          function slimHeader(win, on) {
+            var list = win.TGGrids; if (!list || !list.length) return;
+            var TARGET = { Header: 15, AR1: 15, Filter1: 13, Filter2: 13 };
+            for (var gi = 0; gi < list.length; gi++) {
+              var G = list[gi];
+              if (!G || !G.Rows || !G.Rows.Header || !G.Cols || !G.Cols.PACKAGE_NO || G.__desmHFail) continue;
+              var orig = G.__desmHOrig = G.__desmHOrig || {};
+              var changed = false;
+              for (var id in TARGET) {
+                var r = G.Rows[id]; if (!r) continue;
+                if (orig[id] === undefined) orig[id] = parseFloat(r.Height) || 30;
+                var want = on ? TARGET[id] : orig[id];
+                if (Math.abs((parseFloat(r.Height) || 0) - want) > 0.5) {
+                  try { G.SetAttribute(r, null, 'Height', want, 0); changed = true; } catch (e) { G.__desmHFail = 1; break; }
+                }
+              }
+              if (changed && !G.__desmHFail) { try { G.Rerender(); } catch (e) { try { G.Update && G.Update(); } catch (e2) {} } }
+            }
+          }
           function colToggle(doc) {
             var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
             if (win.__desmCompact === undefined) win.__desmCompact = true;
@@ -437,9 +594,26 @@ final class BrowserModel: ObservableObject {
               });
               tb.insertBefore(bt, tb.firstChild);
             }
+            // Thanh nút gọn: mặc định chỉ chừa Location Delete + Location Update, các nút khác gom sau nút "⋯"
+            if (tb && doc.getElementById('btnLocationDelete') && doc.getElementById('btnLocationSetup')) {
+              tb.classList.add('desm-tb-slim');
+              if (!doc.getElementById('desmMoreToggle')) {
+                var mb = doc.createElement('button');
+                mb.type = 'button'; mb.id = 'desmMoreToggle'; mb.className = 'btn btn-secondary btn-sm';
+                mb.textContent = '⋯';
+                mb.addEventListener('click', function(e) {
+                  e.preventDefault(); e.stopPropagation();
+                  tb.classList.toggle('desm-tb-all');
+                  mb.textContent = tb.classList.contains('desm-tb-all') ? '×' : '⋯';
+                });
+                tb.appendChild(mb);
+              }
+            }
             var b2 = doc.getElementById('desmColToggle');
             if (b2) b2.textContent = win.__desmCompact ? 'Cột: Gọn' : 'Cột: Đủ';
             compactGrid(win, win.__desmCompact);
+            try { slimHeader(win, win.__desmCompact); } catch (e) {}
+            try { cardView(doc); } catch (e) {}
           }
           // Tự điền tài khoản ở trang đăng nhập: bắt tài khoản khi bấm Login, và hàm điền do app gọi
           function findUser(doc, pw) {
@@ -768,14 +942,18 @@ final class BrowserModel: ObservableObject {
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var fabOffset: CGSize = .zero
+    @GestureState private var fabDrag: CGSize = .zero
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            if model.isLoading {
-                ProgressView(value: model.progress).tint(.blue).frame(height: 3)
-            } else {
-                Rectangle().fill(Color(.separator).opacity(0.5)).frame(height: 0.5)
+            if !model.barsHidden {
+                header
+                if model.isLoading {
+                    ProgressView(value: model.progress).tint(.blue).frame(height: 3)
+                } else {
+                    Rectangle().fill(Color(.separator).opacity(0.5)).frame(height: 0.5)
+                }
             }
             WebView(model: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -790,7 +968,8 @@ struct BrowserView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: model.toast)
-            bottomBar
+                .overlay(alignment: .bottomTrailing) { barsToggleButton }
+            if !model.barsHidden { bottomBar }
         }
         .background(Color(.systemGroupedBackground))
         .tint(.blue)
@@ -807,6 +986,25 @@ struct BrowserView: View {
             SettingsView(model: model)
                 .presentationDetents([.medium, .large])
         }
+    }
+
+    /// Nút nổi duy nhất để ẩn/hiện cả thanh trên và thanh dưới; kéo để dời vị trí.
+    private var barsToggleButton: some View {
+        Image(systemName: model.barsHidden ? "chevron.down.circle.fill" : "chevron.up.circle.fill")
+            .font(.system(size: 30))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, Color.blue)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .opacity(0.8)
+            .padding(12)
+            .offset(x: fabOffset.width + fabDrag.width, y: fabOffset.height + fabDrag.height)
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() } }
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .updating($fabDrag) { v, state, _ in state = v.translation }
+                    .onEnded { v in fabOffset.width += v.translation.width; fabOffset.height += v.translation.height }
+            )
+            .accessibilityLabel(model.barsHidden ? "Hiện thanh công cụ" : "Ẩn thanh công cụ")
     }
 
     private func modeButton(size: CGFloat) -> some View {
@@ -855,11 +1053,11 @@ struct BrowserView: View {
         VStack(spacing: 8) {
             if !model.compactHeader {
                 HStack(spacing: 9) {
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(.white)
+                    Image("AppLogo")
+                        .resizable()
+                        .scaledToFit()
                         .frame(width: 36, height: 36)
-                        .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 11))
+                        .clipShape(RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 1) {
                         Text("DESM Mobile").font(.system(size: 16, weight: .bold))
                         Text(model.pageTitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)

@@ -244,6 +244,7 @@ struct WebView: UIViewRepresentable {
                 self.model.canGoForward = webView.canGoForward
                 self.model.address = webView.url?.absoluteString ?? self.model.address
                 self.model.pageTitle = webView.title ?? "DESM Mobile"
+                self.model.updateBars(for: webView.url)
                 self.model.evaluateNow()
                 self.model.saveSession()
                 self.autofillIfLogin(webView)

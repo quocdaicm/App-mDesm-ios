@@ -144,27 +144,44 @@ enum MobileStyles {
       html.desm-mobile-mode.desm-mobile-mode #toolbar > button {
         flex:0 0 auto; float:none!important; margin:0!important; height:34px!important; white-space:nowrap!important; font-size:12px!important;
       }
+      /* Thanh nút gọn: chỉ chừa Location Delete + Location Update (nút "⋯" mở ra các nút còn lại) */
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim:not(.desm-tb-all) > :not(#btnLocationDelete):not(#btnLocationSetup):not(#desmMoreToggle):not(#desmViewToggle) { display:none!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim > #desmMoreToggle { order:99; min-width:40px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmViewToggle { order:98; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar:not(.desm-tb-slim) > #desmMoreToggle { display:none!important; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > button .icon { padding:0 8px!important; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > button .text { padding:0 10px 0 0!important; }
 
-      /* Thanh bộ lọc (JS tạo): nút Bộ lọc thu/mở + Search/Reset luôn thấy */
+      /* Thanh bộ lọc (JS tạo): nút Bộ lọc thu/mở + Search/Reset luôn thấy. Dùng grid minmax(0,1fr) để tự co theo màn hình */
       html.desm-mobile-mode.desm-mobile-mode .desm-filter-bar {
-        display:flex; align-items:center; gap:8px; padding:8px 10px; background:#fff;
+        display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px;
+        width:100%; max-width:100%; min-width:0; padding:8px 10px; background:#fff;
         border-bottom:1px solid #e3e6f0; position:sticky; top:0; z-index:20;
       }
       html.desm-mobile-mode.desm-mobile-mode .desm-filter-toggle {
-        flex:1 1 auto; min-width:0; height:40px; display:flex; align-items:center; justify-content:space-between;
+        width:100%; min-width:0; height:40px; display:flex; align-items:center; justify-content:space-between;
         padding:0 12px; border:1px solid #cdd5e4; border-radius:10px; background:#f3f6fb; color:#2d4a8a;
-        font-weight:600; font-size:14px;
+        font-weight:600; font-size:14px; overflow:hidden; white-space:nowrap;
       }
-      html.desm-mobile-mode.desm-mobile-mode .desm-filter-bar { flex-wrap:wrap; }
-      html.desm-mobile-mode.desm-mobile-mode .desm-quick { flex:1 0 100%; display:flex; gap:6px; }
+      /* 2 ô tìm nhanh: chia đều chiều ngang, không bao giờ rộng hơn màn hình */
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick {
+        grid-column:1 / -1; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px;
+        width:100%; max-width:100%; min-width:0;
+      }
       html.desm-mobile-mode.desm-mobile-mode .desm-quick input {
-        flex:1 1 0; min-width:0; height:36px!important; min-height:36px!important; padding:0 10px!important;
+        display:block; width:100%!important; min-width:0!important; max-width:100%!important;
+        height:36px!important; min-height:36px!important; padding:0 10px!important;
         border:1px solid #cdd5e4!important; border-radius:9px!important; background:#fff; font-size:14px!important;
+        text-overflow:ellipsis;
+      }
+      /* Màn hình rất hẹp: xếp 2 ô thành 2 hàng */
+      @media(max-width:359px) {
+        html.desm-mobile-mode.desm-mobile-mode .desm-quick { grid-template-columns:minmax(0,1fr); }
+        html.desm-mobile-mode.desm-mobile-mode .desm-filter-bar { grid-template-columns:minmax(0,1fr); }
+        html.desm-mobile-mode.desm-mobile-mode .desm-btns { justify-content:flex-end; }
       }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field.desm-dup { display:none!important; }
-      html.desm-mobile-mode.desm-mobile-mode .desm-btns { display:flex; gap:6px; flex:0 0 auto; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns { display:flex; gap:6px; flex:0 0 auto; min-width:0; }
       html.desm-mobile-mode.desm-mobile-mode .desm-btns button {
         height:40px!important; width:auto!important; min-width:44px; margin:0!important; padding:0!important;
         display:inline-flex!important; align-items:center; justify-content:center; border-radius:10px!important;
@@ -233,6 +250,104 @@ enum MobileStyles {
     html.desm-mobile-mode .GridMain, html.desm-mobile-mode .GridMain * { -webkit-text-size-adjust:100%; }
     html.desm-mobile-mode .GridMain :is(th, td) { font-size:inherit!important; line-height:inherit!important; }
     html.desm-mobile-mode .GridMain button, html.desm-mobile-mode .GridMain .btn { min-height:0; }
+
+    /* ===== Toàn trang co giãn theo màn hình (không cuộn ngang, không bị rộng cố định) ===== */
+    @media(max-width:800px) {
+      html.desm-mobile-mode, html.desm-mobile-mode body { overflow-x:clip; }
+      html.desm-mobile-mode :is(.card, .card-body, .card-body-grid, .table-responsive, #tabs, #content-wrapper) {
+        width:100%!important; max-width:100%!important; min-width:0!important;
+      }
+      html.desm-mobile-mode .card-body-grid > .table-responsive { overflow-x:visible!important; }
+      html.desm-mobile-mode table[width="100%"], html.desm-mobile-mode table[style*="width:100%"] { max-width:100%; }
+      /* Khung chứa lưới TreeGrid: bỏ bề rộng cố định (vd 378px), lấy theo màn hình */
+      html.desm-mobile-mode div[id^="grid"]:has(> .GridMain) {
+        width:100%!important; max-width:100%!important; min-width:0!important;
+      }
+      html.desm-mobile-mode div[id^="grid"]:has(> .GridMain) > .GridMain { max-width:100%; }
+      /* Ảnh/iframe/video tự co */
+      html.desm-mobile-mode :is(iframe, embed, object) { max-width:100%!important; }
+    }
+
+    /* ===== Lưới Package dạng thẻ ===== */
+    html:not(.desm-mobile-mode) #desmCards { display:none!important; }
+    html.desm-mobile-mode .desm-grid-off { display:none!important; }
+    html.desm-mobile-mode #desmCards {
+      overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; background:#f3f6fb; max-width:100%;
+    }
+    html.desm-mobile-mode .desm-cards-bar {
+      display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:8px 12px; background:#fff;
+      border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:sticky; top:0; z-index:5; cursor:pointer;
+    }
+    html.desm-mobile-mode .desm-cards-count { font-size:13px; font-weight:600; color:#374151; }
+    html.desm-mobile-mode input.desm-chk { width:22px!important; height:22px!important; min-width:22px!important; min-height:22px!important; flex:0 0 22px; margin:0!important; accent-color:#2878e5; }
+    html.desm-mobile-mode .desm-card { position:relative; padding-left:44px!important; }
+    html.desm-mobile-mode .desm-card-chk { position:absolute; left:12px; top:12px; pointer-events:none; }
+    html.desm-mobile-mode .desm-card {
+      background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.14); padding:10px 12px 10px 14px;
+      margin-bottom:8px; border-left:4px solid #f59e0b; cursor:pointer; touch-action:manipulation;
+      -webkit-tap-highlight-color:transparent;
+    }
+    html.desm-mobile-mode .desm-card.desm-ok { border-left-color:#22c55e; }
+    html.desm-mobile-mode .desm-card.desm-sel { outline:2px solid #2878e5; outline-offset:-2px; background:#eef5ff; }
+    html.desm-mobile-mode .desm-card-no { font-weight:700; font-size:15px; color:#111827; word-break:break-all; line-height:1.3; }
+    html.desm-mobile-mode .desm-card-desc { font-size:14px; color:#1f2937; line-height:1.35; }
+    html.desm-mobile-mode .desm-card-sub { font-size:13px; color:#6b7686; line-height:1.35; }
+    html.desm-mobile-mode .desm-card-foot {
+      display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; font-size:13px; font-weight:600;
+    }
+    html.desm-mobile-mode .desm-card-ao { color:#1e88e5; }
+    html.desm-mobile-mode .desm-card-loc { display:inline-flex; align-items:center; gap:4px; min-width:0; color:#111827; }
+    html.desm-mobile-mode .desm-card-loctxt { text-decoration:underline; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* ===== Nút + icon SVG vẽ riêng (thay icon font) ===== */
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i[class*="fa-"]::before { content:none!important; }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i[class*="fa-"] {
+      display:inline-block!important; width:18px; height:18px; font-size:0!important; line-height:0; vertical-align:middle;
+      background-color:currentColor; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
+      -webkit-mask-position:center; mask-position:center; -webkit-mask-size:contain; mask-size:contain;
+    }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-trash { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-pencil-alt { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-search { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='M21 21l-4.3-4.3'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='M21 21l-4.3-4.3'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-sync { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 0 0-15-6.7L3 8M3 3v5h5M3 12a9 9 0 0 0 15 6.7L21 16M16 16h5v5'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 0 0-15-6.7L3 8M3 3v5h5M3 12a9 9 0 0 0 15 6.7L21 16M16 16h5v5'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-save { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2ZM17 21v-8H7v8M7 3v5h8'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2ZM17 21v-8H7v8M7 3v5h8'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-times-circle { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M15 9l-6 6M9 9l6 6'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M15 9l-6 6M9 9l6 6'/></svg>"); }
+    html.desm-mobile-mode :is(#toolbar, .desm-btns) i.fa-file { -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8ZM14 2v6h6'/></svg>"); mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8ZM14 2v6h6'/></svg>"); }
+    @media(max-width:800px) {
+      /* Thanh nút chức năng: nút bo tròn dạng viên thuốc, màu phẳng + đổ bóng nhẹ */
+      html.desm-mobile-mode.desm-mobile-mode #toolbar { gap:8px; padding:8px 10px!important; background:#f8fafc; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button {
+        height:38px!important; display:inline-flex!important; align-items:center; gap:6px;
+        padding:0 14px 0 10px!important; border:0!important; border-radius:999px!important;
+        color:#fff!important; font-size:13px!important; font-weight:600; letter-spacing:.1px;
+        background-image:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0))!important;
+        box-shadow:0 2px 6px rgba(15,23,42,.18)!important; transition:transform .08s ease, filter .15s ease;
+      }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button:active { transform:scale(.96); filter:brightness(.94); }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button .icon,
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button .text {
+        padding:0!important; background:transparent!important; display:inline-flex!important; align-items:center; color:inherit!important; opacity:1!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-danger { background-color:#e5484d!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-success { background-color:#12a37a!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-primary { background-color:#3b6fe0!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-info { background-color:#1b9fbd!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-secondary {
+        background-color:#e9edf3!important; color:#334155!important; box-shadow:inset 0 0 0 1px #cfd7e3!important; background-image:none!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmMoreToggle { width:40px; padding:0!important; justify-content:center; font-size:18px!important; line-height:1; }
+      /* Nút Search / Reset */
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button {
+        border:0!important; border-radius:12px!important; color:#fff;
+        background-image:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0))!important;
+        box-shadow:0 2px 6px rgba(15,23,42,.18)!important; transition:transform .08s ease;
+      }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button:active { transform:scale(.95); }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button .icon i { width:20px; height:20px; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-toggle { box-shadow:inset 0 0 0 1px #d5deee; border:0!important; }
+      html.desm-mobile-mode .desm-card { border-radius:14px!important; box-shadow:0 2px 8px rgba(15,23,42,.1)!important; }
+      html.desm-mobile-mode .desm-cards-bar { border-radius:14px!important; }
+    }
 
     html.desm-mobile-mode.desm-modal-open, html.desm-mobile-mode.desm-modal-open body { overflow:hidden!important; }
     /* ===== Hộp thoại có bản đồ (Location Update): giữ kích thước thật để bấm đúng ô vị trí ===== */

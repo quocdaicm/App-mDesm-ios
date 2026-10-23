@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1e3a9e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc83d"/>
+      <stop offset="1" stop-color="#ff8a1f"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9e6ff"/>
+      <stop offset="1" stop-color="#b7cffc"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a9c4fb"/>
+      <stop offset="1" stop-color="#7ea3f2"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <!-- bóng dưới hộp -->
+  <ellipse cx="512" cy="835" rx="270" ry="48" fill="#0b1f6b" opacity="0.28"/>
+  <!-- hộp kiện hàng -->
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <path d="M295 440 L512 565 L512 815 L295 690 Z" fill="url(#left)"/>
+    <path d="M729 440 L512 565 L512 815 L729 690 Z" fill="url(#right)"/>
+    <path d="M512 315 L729 440 L512 565 L295 440 Z" fill="#ffffff"/>
+    <!-- băng keo -->
+    <path d="M512 315 L585 357 L368 482 L295 440 Z" fill="#e3ecff" opacity="0.9"/>
+    <path d="M295 440 L512 565 L512 815 L295 690 Z" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="6"/>
+    <path d="M729 440 L512 565 L512 815 L729 690 Z" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="6"/>
+    <path d="M512 315 L729 440 L512 565 L295 440 Z" fill="none" stroke="#c9d9fb" stroke-width="6"/>
+  </g>
+  <!-- ghim vị trí -->
+  <ellipse cx="512" cy="452" rx="52" ry="20" fill="#1e3a9e" opacity="0.22"/>
+  <path d="M512 478 C512 478 396 372 396 296 a116 116 0 0 1 232 0 C628 372 512 478 512 478 Z" fill="url(#pin)" stroke="#ffffff" stroke-width="12" stroke-linejoin="round"/>
+  <circle cx="512" cy="296" r="44" fill="#ffffff"/>
+</svg>

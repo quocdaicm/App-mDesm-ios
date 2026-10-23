@@ -8,7 +8,9 @@
 - Cài đặt > "Mã HTML của trang": sao chép HTML trang đang mở hoặc lưu thành file .html (chia sẻ/Lưu vào Tệp), gồm iframe cùng domain; có tùy chọn ẩn giá trị ô nhập và bỏ script nội tuyến.
 - Chế độ Mobile có xử lý riêng cho DESM (SB Admin 2): menu trái thành ngăn kéo mở bằng nút ≡ (tự đóng khi chọn mục), thanh tab cuộn ngang, form tìm kiếm dựng lại thành lưới 2 cột (nhãn trên - ô nhập dưới), nút Search/Reset xếp ngang, thanh nút chức năng tự xuống dòng, ẩn footer. Rời chế độ Mobile thì khung form được tải lại để về bố cục gốc.
 - Màn hình có form tìm kiếm: thanh "Bộ lọc" (đếm số điều kiện đang dùng) + Search/Reset luôn hiện ở đầu; bấm Search thì bộ lọc tự thu gọn để thấy bảng kết quả, bấm lại để mở. Thanh nút chức năng (Save, Material Confirm...) thành một hàng cuộn ngang.
+- Lưới Package hiển thị dạng thẻ (Package No, mô tả, loại kiện, A/O, Location); chạm thẻ để chọn dòng, nút "Dạng: Thẻ/Bảng" trên thanh nút để đổi qua lại.
 - Thu gọn thanh trên để có thêm chỗ hiển thị trang.
+- Vào được trang DESM (đã qua đăng nhập) thì thanh địa chỉ phía trên và thanh nút phía dưới tự ẩn; còn một nút tròn nổi ở góc dưới bên phải để ẩn/hiện lại cả hai (kéo nút để dời vị trí). Rời DESM thì thanh tự hiện lại.
 - Cài đặt > "Sao chép cấu trúc trang đang mở": sao chép sơ đồ DOM (không gồm dữ liệu nhập) để tinh chỉnh CSS chính xác.
 - Cài đặt CSS bổ sung, được lưu cục bộ trên thiết bị bằng `@AppStorage`.
 - Quay lại/tiến/tải lại/về DESM/mở URL hiện tại bằng Safari.
@@ -21,6 +23,9 @@
 4. Đảm bảo chỉ có một file chứa `@main` (`DESMMobileApp.swift`).
 5. Trong Signing & Capabilities chọn Team của bạn; đổi Bundle Identifier nếu cần.
 6. Chọn iPhone làm Run Destination rồi nhấn Run.
+
+## Logo
+Icon đã được gắn sẵn vào project (DESMMobile/Assets.xcassets, AppIcon + AppLogo dùng ở thanh đầu app). Thư mục `Branding/` còn lưu bản gốc: `logo.svg` (vector) và `AppIcon-1024.png` (1024x1024, không trong suốt). Trong Xcode: tạo Assets.xcassets (nếu chưa có) > AppIcon > kéo `AppIcon-1024.png` vào ô 1024pt, Xcode tự cắt các cỡ còn lại.
 
 ## Lưu ý
 - Mã nguồn được tạo nhưng chưa được build bằng Xcode hoặc thử với tài khoản/SSO thật của DESM.
