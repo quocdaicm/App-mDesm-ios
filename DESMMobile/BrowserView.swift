@@ -498,7 +498,7 @@ final class BrowserModel: ObservableObject {
             if (!fr) {
               fr = D.createElement('iframe'); fr.id = 'desmDetailFrame'; fr.setAttribute('aria-hidden', 'true'); fr.tabIndex = -1;
               fr.src = '/page_crt.do?MENU_SEQ=197';
-              fr.style.cssText = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
+              fr.style.cssText = DI_HIDE;
               D.body.appendChild(fr);
             }
             var t0 = Date.now();
@@ -530,6 +530,7 @@ final class BrowserModel: ObservableObject {
                   if ((hit.length && stable >= 3 && el > 1500) || (!all.length && stable >= 6 && el > 4000) || el > 20000) {
                     done(hit.map(function(r) {
                       var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = gridText(G, r, c); });
+                      o._id = r.id;
                       return o;
                     }));
                     return;
@@ -540,6 +541,61 @@ final class BrowserModel: ObservableObject {
             }
             top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
               return new Promise(function(res) { run(function(rows) { if (rows) cache[pkg] = rows; cb(rows); res(); }); });
+            });
+          }
+          var DI_HIDE = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
+          // Chọn đúng các hạng mục trong lưới ẩn (xs = mảng) rồi bấm nút Location Update gốc của trang "Hạng mục chi tiết"
+          function diSelect(idoc, pkg, xs, cb) {
+            var top = diTop(idoc);
+            function same(G, r, x) {
+              return gridText(G, r, 'PACKAGE_NO') === pkg && gridText(G, r, 'MATERIAL_CODE') === x.MATERIAL_CODE &&
+                gridText(G, r, 'TAG_NO') === x.TAG_NO && gridText(G, r, 'DESCRIPTION') === x.DESCRIPTION;
+            }
+            function attempt(retried) {
+              diFrame(top, function(w) {
+                var G = w && diGrid(w); if (!G) { cb(false); return; }
+                var rows = diRows(G), targets = [], missing = false;
+                xs.forEach(function(x) {
+                  var t = null, byId = G.Rows[x._id];
+                  if (byId && targets.indexOf(byId) < 0 && same(G, byId, x)) t = byId;
+                  for (var i = 0; !t && i < rows.length; i++) if (targets.indexOf(rows[i]) < 0 && same(G, rows[i], x)) t = rows[i];
+                  if (t) targets.push(t); else missing = true;
+                });
+                if (missing) {
+                  if (retried) { cb(false); return; }
+                  try { delete (top.__desmDI || {})[pkg]; } catch (e) {}
+                  diLoad(idoc, pkg, function() { attempt(true); }); return;
+                }
+                try {
+                  rows.forEach(function(r) {
+                    var sel = !!r.Selected && r.Selected !== '0', want = targets.indexOf(r) >= 0;
+                    if (want !== sel) G.SelectRow(r, want ? 1 : 0);
+                  });
+                } catch (e) { cb(false); return; }
+                var btn = w.document.getElementById('btnLocationSetup');
+                if (!btn) { cb(false); return; }
+                btn.click(); cb(true);
+              });
+            }
+            attempt(false);
+          }
+          // Đưa khung ẩn lên toàn màn hình (để thao tác hộp thoại cập nhật vị trí của DESM), có thanh "Xong" để quay lại
+          function diShow(idoc, onClose) {
+            var top = diTop(idoc), D = top.document, fr = D.getElementById('desmDetailFrame'); if (!fr) { onClose(); return; }
+            var bar = D.createElement('div'); bar.id = 'desmDetailFrameBar';
+            bar.style.cssText = 'position:fixed;left:0;top:0;right:0;height:calc(52px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);' +
+              'background:#fff;border-bottom:1px solid #d9dee7;z-index:2147483200;display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;';
+            var b = D.createElement('button'); b.type = 'button'; b.textContent = '‹  Xong';
+            b.style.cssText = 'background:none;border:0;font-size:20px;padding:8px 14px;color:#111827;';
+            var t = D.createElement('div'); t.textContent = 'Cập nhật vị trí hạng mục';
+            t.style.cssText = 'font-size:16px;font-weight:700;padding-right:14px;color:#111827;';
+            bar.appendChild(b); bar.appendChild(t); D.body.appendChild(bar);
+            fr.style.cssText = 'position:fixed;left:0;top:calc(52px + env(safe-area-inset-top));width:100vw;height:calc(100vh - 52px - env(safe-area-inset-top));' +
+              'border:0;opacity:1;pointer-events:auto;z-index:2147483100;background:#fff;';
+            b.addEventListener('click', function() {
+              if (bar.parentNode) bar.parentNode.removeChild(bar);
+              fr.style.cssText = DI_HIDE;
+              onClose();
             });
           }
           // Màn hình chi tiết một kiện hàng (mở khi chạm thẻ ở chế độ "Chạm: Chi tiết"). Dữ liệu đọc từ dòng TreeGrid tương ứng.
@@ -650,10 +706,36 @@ final class BrowserModel: ObservableObject {
               dl.textContent = 'Detail Item List  ' + (shown ? '↑' : '↓');
             });
             function dash(v) { return v ? v : '-'; }
+            var chosen = [], itemCards = [], selAll = null, selTxt = null, selBar = null, lu = null;
+            function refreshSel() {
+              itemCards.forEach(function(ic) {
+                var on = chosen.indexOf(ic.x) >= 0;
+                ic.card.classList.toggle('desm-sel', on); ic.ck.checked = on;
+              });
+              if (selAll) {
+                selAll.checked = itemCards.length > 0 && chosen.length === itemCards.length;
+                selAll.indeterminate = chosen.length > 0 && chosen.length < itemCards.length;
+              }
+              if (selTxt) selTxt.textContent = 'Chọn tất cả · ' + itemCards.length + ' hạng mục' + (chosen.length ? ' · đã chọn ' + chosen.length : '');
+              if (lu) lu.textContent = chosen.length ? 'Location Update (' + chosen.length + ' hạng mục)' : 'Location Update';
+            }
             function renderItems(rows) {
               while (dis.firstChild) dis.removeChild(dis.firstChild);
+              chosen = []; itemCards = []; selAll = null; selTxt = null;
+              if (rows.length) {
+                selBar = el('label', 'desm-ditems-bar');
+                selAll = doc.createElement('input'); selAll.type = 'checkbox'; selAll.className = 'desm-chk';
+                selAll.addEventListener('change', function() {
+                  chosen = selAll.checked ? itemCards.map(function(ic) { return ic.x; }) : [];
+                  refreshSel();
+                });
+                selTxt = el('span', 'desm-cards-count', '');
+                selBar.appendChild(selAll); selBar.appendChild(selTxt); dis.appendChild(selBar);
+              }
               rows.forEach(function(x) {
                 var c = el('div', 'desm-ditem');
+                var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-ditem-chk';
+                c.appendChild(ck);
                 c.appendChild(el('div', 'desm-ditem-no', x.PACKAGE_NO));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.DESCRIPTION)));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.DRAWING_NO)));
@@ -667,22 +749,47 @@ final class BrowserModel: ObservableObject {
                 var p2 = doc.createElementNS(NS, 'path'); p2.setAttribute('d', pth.getAttribute('d'));
                 p2.setAttribute('fill', 'none'); p2.setAttribute('stroke', 'currentColor'); p2.setAttribute('stroke-width', '2');
                 sv2.appendChild(p2); lc2.appendChild(sv2); lc2.appendChild(el('span', '', dash(x.LOCATION)));
+                lc2.classList.add('desm-ditem-locbtn');
+                // Chạm ghim = cập nhật riêng hạng mục này; chạm thẻ = tích chọn (để cập nhật hàng loạt bằng nút ở đáy)
+                lc2.addEventListener('click', function(ev) { ev.stopPropagation(); updateItemsLoc([x]); });
+                c.addEventListener('click', function() {
+                  var i = chosen.indexOf(x); if (i >= 0) chosen.splice(i, 1); else chosen.push(x);
+                  refreshSel();
+                });
                 ft.appendChild(lc2); c.appendChild(ft); dis.appendChild(c);
+                itemCards.push({ x: x, card: c, ck: ck });
               });
               if (!rows.length) note.textContent = 'Không có hạng mục chi tiết nào cho kiện này.';
               else { note.textContent = ''; lines.lastChild.textContent = String(rows.length); }
+              refreshSel();
             }
-            note.textContent = 'Đang tải danh sách hạng mục…';
-            diLoad(idoc, pkgNo, function(rows) {
-              if (!ov.parentNode) return;
-              if (!rows) { note.textContent = 'Không tải được danh sách hạng mục (trang "Hạng mục chi tiết" chưa sẵn sàng). Đóng rồi mở lại để thử lần nữa.'; return; }
-              renderItems(rows);
-            });
+            function loadItems() {
+              note.textContent = 'Đang tải danh sách hạng mục…';
+              diLoad(idoc, pkgNo, function(rows) {
+                if (!ov.parentNode) return;
+                if (!rows) { note.textContent = 'Không tải được danh sách hạng mục (trang "Hạng mục chi tiết" chưa sẵn sàng). Đóng rồi mở lại để thử lần nữa.'; return; }
+                renderItems(rows);
+              });
+            }
+            // Cập nhật vị trí cho một hoặc nhiều hạng mục (như nút Location Update ở trang Hạng mục chi tiết)
+            function updateItemsLoc(xs) {
+              note.textContent = 'Đang mở cập nhật vị trí…';
+              diSelect(idoc, pkgNo, xs, function(ok) {
+                if (!ok) { note.textContent = 'Không chọn được hạng mục (lưới chưa sẵn sàng). Thử lại sau vài giây.'; return; }
+                note.textContent = '';
+                diShow(idoc, function() {
+                  try { delete (diTop(idoc).__desmDI || {})[pkgNo]; } catch (e) {}
+                  if (ov.parentNode) loadItems();
+                });
+              });
+            }
+            loadItems();
             body.appendChild(dl); body.appendChild(note); body.appendChild(dis);
             ov.appendChild(body);
             // Nút Location Update: chỉ chọn đúng kiện này rồi bấm nút cập nhật vị trí gốc của DESM
-            var lu = el('button', 'desm-detail-lu', 'Location Update'); lu.type = 'button';
+            lu = el('button', 'desm-detail-lu', 'Location Update'); lu.type = 'button';
             lu.addEventListener('click', function() {
+              if (chosen.length) { updateItemsLoc(chosen.slice()); return; }
               var btn = idoc.getElementById('btnLocationSetup');
               if (!btn) { note.textContent = 'Không tìm thấy nút cập nhật vị trí trên trang.'; return; }
               try {

@@ -348,6 +348,11 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-ditem-no { font-size:19px; font-weight:800; text-decoration:underline; word-break:break-all; }
     html.desm-mobile-mode .desm-ditem-l { font-size:17px; line-height:1.45; word-break:break-word; }
     html.desm-mobile-mode .desm-ditem-foot { display:flex; justify-content:space-between; gap:8px; font-size:16px; margin-top:2px; }
+    html.desm-mobile-mode .desm-ditem { position:relative; padding-left:48px!important; cursor:pointer; }
+    html.desm-mobile-mode .desm-ditem.desm-sel { outline:2px solid #2878e5; outline-offset:-2px; background:#eef5ff; }
+    html.desm-mobile-mode .desm-ditem-chk { position:absolute; left:12px; top:12px; pointer-events:none; }
+    html.desm-mobile-mode .desm-ditems-bar { display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:8px 12px; background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); cursor:pointer; }
+    html.desm-mobile-mode .desm-ditem-locbtn { padding:6px 0 6px 12px; cursor:pointer; }
     html.desm-mobile-mode .desm-detail-note { font-size:13px; color:#b45309; padding:0 4px 8px; }
     html.desm-mobile-mode .desm-detail-lu {
       flex:0 0 auto; margin:6px 12px calc(10px + env(safe-area-inset-bottom)); background:#1e88f5!important; color:#fff!important;
