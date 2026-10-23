@@ -433,10 +433,11 @@ enum MobileStyles {
     }
     html.desm-mobile-mode #tabs .ui-tabs-panel2 { position:relative; z-index:1; }
 
-    /* ===== Cuối trang: dải sóng SVG mỏng cuối danh sách thẻ ===== */
-    html.desm-mobile-mode #desmCards::after {
-      content:""; display:block; height:40px; margin:6px -10px 0; position:relative; top:14px; pointer-events:none;
-      background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 44' preserveAspectRatio='none'%3E %3Cdefs%3E %3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%230ea5e9'/%3E%3Cstop offset='.5' stop-color='%231d4ed8'/%3E%3Cstop offset='1' stop-color='%23172554'/%3E%3C/linearGradient%3E %3Cpattern id='d' width='12' height='12' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='2' cy='2' r='1' fill='%23fff' fill-opacity='.14'/%3E%3C/pattern%3E %3C/defs%3E %3Cpath d='M0 18 C70 6 130 28 205 17 S335 8 400 16 L400 44 L0 44Z' fill='%231d4ed8' fill-opacity='.16'/%3E %3Cpath d='M0 26 C80 14 150 34 230 25 S350 16 400 24 L400 44 L0 44Z' fill='url(%23g)'/%3E %3Cpath d='M0 26 C80 14 150 34 230 25 S350 16 400 24 L400 44 L0 44Z' fill='url(%23d)'/%3E %3Crect y='41' width='400' height='3' fill='%23fbbf24' fill-opacity='.9'/%3E %3C/svg%3E") center bottom/100% 100% no-repeat;
+    /* ===== Footer của app: thanh dưới cùng, nền SVG (chỉ ở khung chính, không lặp trong iframe) ===== */
+    html.desm-mobile-mode.desm-top body::after {
+      content:""; position:fixed; left:0; right:0; bottom:0; height:24px; z-index:1029; pointer-events:none;
+      background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 28' preserveAspectRatio='none'%3E %3Cdefs%3E %3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23172554'/%3E%3Cstop offset='.55' stop-color='%231d4ed8'/%3E%3Cstop offset='1' stop-color='%230ea5e9'/%3E%3C/linearGradient%3E %3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23fbbf24'/%3E%3Cstop offset='.5' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%2338bdf8' stop-opacity='0'/%3E%3C/linearGradient%3E %3Cpattern id='d' width='12' height='12' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='2' cy='2' r='1' fill='%23fff' fill-opacity='.14'/%3E%3C/pattern%3E %3C/defs%3E %3Crect width='400' height='28' fill='url(%23g)'/%3E %3Crect width='400' height='28' fill='url(%23d)'/%3E %3Cpath d='M0 12 C70 2 130 20 205 11 S335 3 400 10 L400 28 L0 28Z' fill='%23fff' fill-opacity='.10'/%3E %3Cpath d='M0 19 C80 10 150 25 230 18 S350 11 400 17 L400 28 L0 28Z' fill='%23fff' fill-opacity='.08'/%3E %3Crect width='400' height='2.5' fill='url(%23a)'/%3E %3C/svg%3E") center/100% 100% no-repeat;
+      border-radius:14px 14px 0 0; box-shadow:0 -3px 10px rgba(23,37,84,.25);
     }
     """#
 }

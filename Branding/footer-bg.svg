@@ -1,10 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 44" preserveAspectRatio="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 28" preserveAspectRatio="none">
 <defs>
-<linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0ea5e9"/><stop offset=".5" stop-color="#1d4ed8"/><stop offset="1" stop-color="#172554"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#172554"/><stop offset=".55" stop-color="#1d4ed8"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient>
+<linearGradient id="a" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset=".5" stop-color="#38bdf8"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></linearGradient>
 <pattern id="d" width="12" height="12" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#fff" fill-opacity=".14"/></pattern>
 </defs>
-<path d="M0 18 C70 6 130 28 205 17 S335 8 400 16 L400 44 L0 44Z" fill="#1d4ed8" fill-opacity=".16"/>
-<path d="M0 26 C80 14 150 34 230 25 S350 16 400 24 L400 44 L0 44Z" fill="url(#g)"/>
-<path d="M0 26 C80 14 150 34 230 25 S350 16 400 24 L400 44 L0 44Z" fill="url(#d)"/>
-<rect y="41" width="400" height="3" fill="#fbbf24" fill-opacity=".9"/>
+<rect width="400" height="28" fill="url(#g)"/>
+<rect width="400" height="28" fill="url(#d)"/>
+<path d="M0 12 C70 2 130 20 205 11 S335 3 400 10 L400 28 L0 28Z" fill="#fff" fill-opacity=".10"/>
+<path d="M0 19 C80 10 150 25 230 18 S350 11 400 17 L400 28 L0 28Z" fill="#fff" fill-opacity=".08"/>
+<rect width="400" height="2.5" fill="url(#a)"/>
 </svg>
