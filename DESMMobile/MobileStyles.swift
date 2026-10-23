@@ -157,6 +157,13 @@ enum MobileStyles {
         padding:0 12px; border:1px solid #cdd5e4; border-radius:10px; background:#f3f6fb; color:#2d4a8a;
         font-weight:600; font-size:14px;
       }
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-bar { flex-wrap:wrap; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick { flex:1 0 100%; display:flex; gap:6px; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick input {
+        flex:1 1 0; min-width:0; height:36px!important; min-height:36px!important; padding:0 10px!important;
+        border:1px solid #cdd5e4!important; border-radius:9px!important; background:#fff; font-size:14px!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field.desm-dup { display:none!important; }
       html.desm-mobile-mode.desm-mobile-mode .desm-btns { display:flex; gap:6px; flex:0 0 auto; }
       html.desm-mobile-mode.desm-mobile-mode .desm-btns button {
         height:40px!important; width:auto!important; min-width:44px; margin:0!important; padding:0!important;
@@ -227,6 +234,7 @@ enum MobileStyles {
     html.desm-mobile-mode .GridMain :is(th, td) { font-size:inherit!important; line-height:inherit!important; }
     html.desm-mobile-mode .GridMain button, html.desm-mobile-mode .GridMain .btn { min-height:0; }
 
+    html.desm-mobile-mode.desm-modal-open, html.desm-mobile-mode.desm-modal-open body { overflow:hidden!important; }
     /* ===== Hộp thoại có bản đồ (Location Update): giữ kích thước thật để bấm đúng ô vị trí ===== */
     html.desm-mobile-mode :is(.modal-body, .ui-dialog-content) {
       overflow:auto!important; -webkit-overflow-scrolling:touch; max-width:100%;
