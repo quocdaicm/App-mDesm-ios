@@ -1188,7 +1188,20 @@ struct BrowserView: View {
                 .overlay(alignment: .bottomTrailing) { barsToggleButton }
             if !model.barsHidden { bottomBar }
         }
-        .background(Color(.systemGroupedBackground))
+        .background(alignment: .bottom) {
+            ZStack(alignment: .bottom) {
+                Color(.systemGroupedBackground)
+                // Khi thanh dưới ẩn: tô dải an toàn dưới cùng (vùng thanh Home) cùng tông footer SVG, khỏi hở khoảng trắng
+                if model.barsHidden {
+                    LinearGradient(colors: [Color(red: 0.09, green: 0.15, blue: 0.33),
+                                            Color(red: 0.11, green: 0.31, blue: 0.85),
+                                            Color(red: 0.05, green: 0.65, blue: 0.91)],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(height: 80)
+                }
+            }
+            .ignoresSafeArea()
+        }
         .tint(.blue)
         .onChange(of: scenePhase) { phase in
             if phase != .active { model.saveSession() }
