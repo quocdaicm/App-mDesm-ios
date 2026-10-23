@@ -104,9 +104,17 @@ final class BrowserModel: ObservableObject {
         loadAddress()
     }
 
-    func cycleMode() {
-        layoutMode = layoutMode.next
+    func setMode(_ mode: LayoutMode) {
+        let old = layoutMode
+        layoutMode = mode
         applyStyles()
+        if old == .mobile && mode != .mobile {
+            webView?.evaluateJavaScript("window.__desmRevert && window.__desmRevert();", completionHandler: nil)
+        }
+    }
+
+    func cycleMode() {
+        setMode(layoutMode.next)
         showToast(layoutMode.title)
     }
 
@@ -169,6 +177,125 @@ final class BrowserModel: ObservableObject {
               }
             }
           }
+          function navHandlers(doc) {
+            if (doc.__desmNav || !doc.getElementById('accordionSidebar')) return;
+            doc.__desmNav = true;
+            var root = doc.documentElement;
+            doc.addEventListener('click', function(e) {
+              var c = w.__desmCfg;
+              if (!(c.mode === 'mobile' && allowed(doc))) return;
+              var t = e.target;
+              if (!t || !t.closest) return;
+              if (t.closest('#sidebarToggleTop')) {
+                e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                root.classList.toggle('desm-nav-open');
+                return;
+              }
+              if (!root.classList.contains('desm-nav-open')) return;
+              if (!t.closest('#accordionSidebar')) { root.classList.remove('desm-nav-open'); return; }
+              var a = t.closest('a');
+              if (a && (a.classList.contains('collapse-item') ||
+                  (a.classList.contains('nav-link') && !a.hasAttribute('data-toggle')))) {
+                setTimeout(function() { root.classList.remove('desm-nav-open'); }, 0);
+              }
+            }, true);
+          }
+          var CTL = 'input:not([type=hidden]),select,textarea';
+          function activeCount(t) {
+            var n = 0;
+            [].forEach.call(t.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),select,textarea'), function(c) {
+              if (c.readOnly || c.disabled) return;
+              if (c.tagName === 'SELECT') {
+                if (c.multiple) { if (c.selectedOptions && c.selectedOptions.length) n++; }
+                else if (c.value !== '') n++;
+              } else if ((c.value || '').trim()) n++;
+            });
+            return n;
+          }
+          function addFilterBar(doc, t) {
+            var outer = t.parentElement ? t.parentElement.closest('table') : null;
+            var anchor = outer || t;
+            var host = anchor.parentNode; if (!host) return;
+            var bar = doc.createElement('div'); bar.className = 'desm-filter-bar';
+            var tg = doc.createElement('button'); tg.type = 'button'; tg.className = 'desm-filter-toggle';
+            var lab = doc.createElement('span'); var chev = doc.createElement('span');
+            tg.appendChild(lab); tg.appendChild(chev);
+            var bx = doc.createElement('div'); bx.className = 'desm-btns';
+            bar.appendChild(tg); bar.appendChild(bx);
+            if (outer) {
+              [].filter.call(outer.querySelectorAll('button'), function(b) { return !t.contains(b); })
+                .forEach(function(b) { bx.appendChild(b); });
+            }
+            host.insertBefore(bar, anchor);
+            if (outer) outer.classList.add('desm-outer');
+            function setCollapsed(on) {
+              t.classList.toggle('desm-collapsed', on);
+              if (outer) outer.classList.toggle('desm-collapsed', on);
+            }
+            function refresh() {
+              var n = activeCount(t);
+              lab.textContent = 'Bộ lọc' + (n ? ' (' + n + ')' : '');
+              chev.textContent = t.classList.contains('desm-collapsed') ? '▾' : '▴';
+            }
+            tg.addEventListener('click', function() { setCollapsed(!t.classList.contains('desm-collapsed')); refresh(); });
+            t.addEventListener('change', refresh, true);
+            t.addEventListener('input', refresh, true);
+            bx.addEventListener('click', function(e) {
+              var b = e.target.closest ? e.target.closest('button') : null;
+              if (!b) return;
+              if (b === bx.firstElementChild || /search/i.test(b.id || '')) {
+                setTimeout(function() { setCollapsed(true); refresh(); }, 200);
+              }
+              setTimeout(refresh, 120);
+            }, false);
+            refresh();
+          }
+          function buildForm(doc, t) {
+            var groups = [], cur = null;
+            [].slice.call(t.rows).forEach(function(tr) {
+              [].slice.call(tr.cells).forEach(function(td) {
+                var hasCtl = !!td.querySelector(CTL);
+                var txt = (td.textContent || '').replace(/\s+/g, ' ').trim();
+                if (hasCtl) {
+                  if (!cur) { cur = { lbl: null, ctl: [] }; groups.push(cur); }
+                  cur.ctl.push(td);
+                } else if (txt) {
+                  cur = { lbl: td, ctl: [] }; groups.push(cur);
+                } else {
+                  td.classList.add('desm-empty');
+                }
+              });
+            });
+            var tb = doc.createElement('tbody'); tb.className = 'desm-tb';
+            groups.forEach(function(g) {
+              var tr = doc.createElement('tr'); tr.className = 'desm-field';
+              if (g.lbl) { g.lbl.classList.add('desm-lbl'); tr.appendChild(g.lbl); }
+              g.ctl.forEach(function(td) { tr.appendChild(td); });
+              var wide = !g.ctl.length || g.ctl.length > 1 ||
+                g.ctl.some(function(td) { return !!td.querySelector('select[multiple]'); });
+              if (wide) tr.classList.add('desm-wide');
+              tb.appendChild(tr);
+            });
+            [].forEach.call(t.tBodies, function(b) { b.classList.add('desm-orig'); });
+            t.appendChild(tb);
+            t.setAttribute('data-desm-form', '1');
+            if (!t.closest('.modal') && t.querySelectorAll(CTL).length >= 6) {
+              try { addFilterBar(doc, t); } catch (e) {}
+            }
+          }
+          function formify(doc) {
+            var ts = doc.querySelectorAll('table:not([data-desm-form]):not([data-desm-chk])');
+            for (var n = 0; n < ts.length; n++) {
+              var t = ts[n];
+              if (/(^|\s)TM/.test(t.className || '') || t.querySelector('table,th')) {
+                t.setAttribute('data-desm-chk', '1'); continue;
+              }
+              var nc = t.querySelectorAll(CTL).length;
+              if (nc < 3) { if (nc > 0) t.setAttribute('data-desm-chk', '1'); continue; }
+              try { buildForm(doc, t); } catch (e) { t.setAttribute('data-desm-chk', '1'); }
+            }
+          }
+          function enhance(doc) { navHandlers(doc); formify(doc); }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
             var c = w.__desmCfg;
@@ -180,9 +307,11 @@ final class BrowserModel: ObservableObject {
                 root.appendChild(style);
               } else if (style.textContent !== c.css) { style.textContent = c.css; }
               if (!root.classList.contains(CLS)) root.classList.add(CLS);
+              enhance(doc);
             } else {
               if (style) style.remove();
               if (root.classList.contains(CLS)) root.classList.remove(CLS);
+              if (root.classList.contains('desm-nav-open')) root.classList.remove('desm-nav-open');
             }
             if (doc === document && w === w.top) setViewport(doc);
           }
@@ -194,6 +323,18 @@ final class BrowserModel: ObservableObject {
             }
           }
           w.__desmApplyAll = function() { applyAll(document); };
+          // Rời chế độ Mobile: tải lại khung nào đã bị sắp xếp lại biểu mẫu để trở về bố cục gốc.
+          w.__desmRevert = function() {
+            (function r(doc) {
+              try {
+                if (doc.querySelector('[data-desm-form]')) { doc.defaultView.location.reload(); return; }
+                var fs = doc.querySelectorAll('iframe,frame');
+                for (var i = 0; i < fs.length; i++) {
+                  try { if (fs[i].contentDocument) r(fs[i].contentDocument); } catch (e) {}
+                }
+              } catch (e) {}
+            })(document);
+          };
           w.__desmApplyAll();
 
           if (!w.__desmInit) {
@@ -207,7 +348,12 @@ final class BrowserModel: ObservableObject {
               f.addEventListener('load', function() { try { if (f.contentDocument) applyAll(f.contentDocument); } catch (e) {} });
               try { if (f.contentDocument && f.contentDocument.readyState !== 'loading') applyAll(f.contentDocument); } catch (e) {}
             };
+            var lastForm = 0;
             var scan = function() {
+              if (w.__desmCfg.mode === 'mobile' && allowed(document)) {
+                var now = Date.now();
+                if (now - lastForm > 400) { lastForm = now; navHandlers(document); formify(document); }
+              }
               var fs = document.querySelectorAll('iframe,frame');
               for (var i = 0; i < fs.length; i++) watch(fs[i]);
             };
@@ -551,7 +697,7 @@ struct SettingsView: View {
                 Section("Chế độ hiển thị") {
                     Picker("Chế độ", selection: Binding(
                         get: { model.layoutMode },
-                        set: { model.layoutMode = $0; model.applyStyles() }
+                        set: { model.setMode($0) }
                     )) {
                         ForEach(LayoutMode.allCases) { Text($0.shortTitle).tag($0) }
                     }

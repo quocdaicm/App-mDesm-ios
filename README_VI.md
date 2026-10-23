@@ -6,6 +6,8 @@
 - CSS mobile được tiêm bằng WKUserScript ở document start (cả iframe), tự áp lại nếu trang xóa style/class; mặc định chỉ áp cho domain doosanenerbility.com (có công tắc).
 - 3 chế độ hiển thị (nút trên thanh đầu): Mobile (CSS sắp xếp lại bố cục, bảng biểu mẫu xếp dọc), Vừa màn hình (bản desktop thu nhỏ, chỉnh độ rộng trong Cài đặt), Gốc (không can thiệp).
 - Cài đặt > "Mã HTML của trang": sao chép HTML trang đang mở hoặc lưu thành file .html (chia sẻ/Lưu vào Tệp), gồm iframe cùng domain; có tùy chọn ẩn giá trị ô nhập và bỏ script nội tuyến.
+- Chế độ Mobile có xử lý riêng cho DESM (SB Admin 2): menu trái thành ngăn kéo mở bằng nút ≡ (tự đóng khi chọn mục), thanh tab cuộn ngang, form tìm kiếm dựng lại thành lưới 2 cột (nhãn trên - ô nhập dưới), nút Search/Reset xếp ngang, thanh nút chức năng tự xuống dòng, ẩn footer. Rời chế độ Mobile thì khung form được tải lại để về bố cục gốc.
+- Màn hình có form tìm kiếm: thanh "Bộ lọc" (đếm số điều kiện đang dùng) + Search/Reset luôn hiện ở đầu; bấm Search thì bộ lọc tự thu gọn để thấy bảng kết quả, bấm lại để mở. Thanh nút chức năng (Save, Material Confirm...) thành một hàng cuộn ngang.
 - Thu gọn thanh trên để có thêm chỗ hiển thị trang.
 - Cài đặt > "Sao chép cấu trúc trang đang mở": sao chép sơ đồ DOM (không gồm dữ liệu nhập) để tinh chỉnh CSS chính xác.
 - Cài đặt CSS bổ sung, được lưu cục bộ trên thiết bị bằng `@AppStorage`.
