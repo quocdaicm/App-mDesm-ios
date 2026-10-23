@@ -295,7 +295,91 @@ final class BrowserModel: ObservableObject {
               try { buildForm(doc, t); } catch (e) { t.setAttribute('data-desm-chk', '1'); }
             }
           }
-          function enhance(doc) { navHandlers(doc); formify(doc); }
+          function fixMaps(doc) {
+            var dl = doc.querySelectorAll('.modal, .ui-dialog');
+            for (var i = 0; i < dl.length; i++) {
+              var im = dl[i].querySelectorAll('img,canvas,svg');
+              for (var j = 0; j < im.length; j++) {
+                var m = im[j], r;
+                try { r = m.getBoundingClientRect(); } catch (e) { continue; }
+                if (r.width < 160 || r.height < 100) continue;
+                var box = m.parentElement; if (!box || box.hasAttribute('data-desm-map')) continue;
+                box.setAttribute('data-desm-map', '1');
+                var all = box.querySelectorAll('*');
+                for (var k = 0; k < all.length; k++) {
+                  var cs = null; try { cs = doc.defaultView.getComputedStyle(all[k]); } catch (e) {}
+                  if (cs && (cs.position === 'absolute' || /^(area|rect|polygon|path|circle)$/i.test(all[k].tagName))) {
+                    all[k].style.cursor = 'pointer';
+                    all[k].style.touchAction = 'manipulation';
+                  }
+                }
+              }
+            }
+          }
+          // Lưới Package: chỉ giữ thanh chọn tất cả + Package No. + Location (Location đặt ngay cạnh Package No.)
+          function gridText(G, row, c) {
+            var t = '';
+            try { if (G.GetString) t = G.GetString(row, c); } catch (e) {}
+            if (!t) { try { t = G.GetValue ? G.GetValue(row, c) : row[c]; } catch (e) {} }
+            return String(t == null ? '' : t).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          }
+          function colShown(G, c) {
+            var o = G.Cols[c]; if (!o) return false;
+            return !(o.Visible === 0 || o.Visible === false || o.Visible === '0');
+          }
+          function compactGrid(win, on) {
+            var list = win.TGGrids; if (!list || !list.length) return;
+            for (var gi = 0; gi < list.length; gi++) {
+              var G = list[gi];
+              if (!G || !G.Cols || !G.Rows || !G.Rows.Header || G.__desmFail) continue;
+              var keep = {}, found = 0;
+              for (var c in G.Cols) {
+                var tx = gridText(G, G.Rows.Header, c);
+                if (/^package\s*no\.?$/i.test(tx)) { keep[c] = 210; found++; }
+                else if (/^location$/i.test(tx)) { keep[c] = 150; found++; }
+              }
+              if (found < 2) continue;
+              G.__desmTry = (G.__desmTry || 0);
+              if (G.__desmTry > 12) continue;
+              var changed = false;
+              for (var c2 in G.Cols) {
+                if (c2 === 'Panel' || c2 === 'Group' || keep[c2] !== undefined) continue;
+                if (G.Cols[c2] && G.Cols[c2].CanHide === 0) continue;
+                try {
+                  var shown = colShown(G, c2);
+                  if (on && shown) { G.HideCol(c2); changed = true; }
+                  else if (!on && !shown) { G.ShowCol(c2); changed = true; }
+                } catch (e) { G.__desmFail = 1; return; }
+              }
+              for (var k in keep) {
+                try {
+                  if (!colShown(G, k)) { G.ShowCol(k); changed = true; }
+                  if (on && G.SetWidth && Math.round(G.GetWidth ? G.GetWidth(k) : 0) !== keep[k]) { G.SetWidth(k, keep[k]); changed = true; }
+                } catch (e) {}
+              }
+              G.__desmTry = changed ? G.__desmTry + 1 : 0;
+            }
+          }
+          function colToggle(doc) {
+            var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
+            if (win.__desmCompact === undefined) win.__desmCompact = true;
+            var tb = doc.getElementById('toolbar');
+            if (tb && !doc.getElementById('desmColToggle')) {
+              var bt = doc.createElement('button');
+              bt.type = 'button'; bt.id = 'desmColToggle'; bt.className = 'btn btn-secondary btn-sm';
+              bt.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                win.__desmCompact = !win.__desmCompact;
+                for (var i = 0; i < win.TGGrids.length; i++) if (win.TGGrids[i]) win.TGGrids[i].__desmTry = 0;
+                colToggle(doc);
+              });
+              tb.insertBefore(bt, tb.firstChild);
+            }
+            var b2 = doc.getElementById('desmColToggle');
+            if (b2) b2.textContent = win.__desmCompact ? 'Cột: Gọn' : 'Cột: Đủ';
+            compactGrid(win, win.__desmCompact);
+          }
+          function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
             var c = w.__desmCfg;
@@ -352,7 +436,7 @@ final class BrowserModel: ObservableObject {
             var scan = function() {
               if (w.__desmCfg.mode === 'mobile' && allowed(document)) {
                 var now = Date.now();
-                if (now - lastForm > 400) { lastForm = now; navHandlers(document); formify(document); }
+                if (now - lastForm > 400) { lastForm = now; navHandlers(document); formify(document); fixMaps(document); try { colToggle(document); } catch (e) {} }
               }
               var fs = document.querySelectorAll('iframe,frame');
               for (var i = 0; i < fs.length; i++) watch(fs[i]);

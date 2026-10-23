@@ -86,6 +86,37 @@ struct WebView: UIViewRepresentable {
             decisionHandler(.allow)
         }
 
+
+        // WKWebView mặc định KHÔNG hiện alert/confirm/prompt của trang (confirm luôn trả về false,
+        // làm các nút Lưu/Cập nhật vị trí âm thầm không chạy). Hiện hộp thoại thật để trang chạy đúng.
+        private func topController() -> UIViewController? {
+            let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+            var vc = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+            while let p = vc?.presentedViewController { vc = p }
+            return vc
+        }
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            guard let vc = topController() else { completionHandler(); return }
+            let a = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
+            vc.present(a, animated: true)
+        }
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            guard let vc = topController() else { completionHandler(false); return }
+            let a = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "Hủy", style: .cancel) { _ in completionHandler(false) })
+            a.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
+            vc.present(a, animated: true)
+        }
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+            guard let vc = topController() else { completionHandler(nil); return }
+            let a = UIAlertController(title: nil, message: prompt, preferredStyle: .alert)
+            a.addTextField { $0.text = defaultText }
+            a.addAction(UIAlertAction(title: "Hủy", style: .cancel) { _ in completionHandler(nil) })
+            a.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(a.textFields?.first?.text) })
+            vc.present(a, animated: true)
+        }
+
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 webView.load(URLRequest(url: url))

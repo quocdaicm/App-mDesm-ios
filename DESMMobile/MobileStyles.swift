@@ -12,7 +12,7 @@ enum MobileStyles {
       color:#1f2937!important;
     }
     html.desm-mobile-mode * { box-sizing:border-box; }
-    html.desm-mobile-mode img, html.desm-mobile-mode video, html.desm-mobile-mode canvas { max-width:100%; }
+    html.desm-mobile-mode :is(img, video, canvas):not(:is(.modal, .ui-dialog) *) { max-width:100%; }
     @media(max-width:800px) {
       html.desm-mobile-mode #wrapper, html.desm-mobile-mode #content,
       html.desm-mobile-mode #main, html.desm-mobile-mode .container,
@@ -22,8 +22,8 @@ enum MobileStyles {
       html.desm-mobile-mode form {
         width:auto!important; min-width:0!important; max-width:100%!important;
       }
-      html.desm-mobile-mode input:not([type=checkbox]):not([type=radio]):not([type=hidden]),
-      html.desm-mobile-mode select, html.desm-mobile-mode textarea {
+      html.desm-mobile-mode input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not(.GridMain *),
+      html.desm-mobile-mode select:not(.GridMain *), html.desm-mobile-mode textarea:not(.GridMain *) {
         min-width:0!important; max-width:100%!important; min-height:40px;
         font-size:16px!important; border-radius:9px!important;
       }
@@ -38,10 +38,10 @@ enum MobileStyles {
       }
 
       /* Bảng dữ liệu (có th): giữ dạng bảng, cho cuộn ngang */
-      html.desm-mobile-mode table {
+      html.desm-mobile-mode table:not(.GridMain *) {
         max-width:none; border-collapse:separate; border-spacing:0;
       }
-      html.desm-mobile-mode table th, html.desm-mobile-mode table td {
+      html.desm-mobile-mode :is(th, td):not(.GridMain *) {
         padding:8px 9px!important; font-size:13px!important; line-height:1.3!important;
       }
       html.desm-mobile-mode .table-responsive, html.desm-mobile-mode .dataTables_wrapper,
@@ -89,20 +89,26 @@ enum MobileStyles {
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] > colgroup { display:none!important; }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] > tbody.desm-orig { display:none!important; }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] > tbody.desm-tb {
-        display:grid!important; grid-template-columns:1fr 1fr; gap:8px 10px; padding:10px; width:100%!important;
+        display:flex!important; flex-direction:column; gap:6px; padding:8px 10px; width:100%!important;
       }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field {
-        display:flex!important; flex-direction:column; gap:4px; min-width:0; width:auto!important; height:auto!important;
+        display:flex!important; flex-direction:row; align-items:center; gap:8px; min-width:0; width:100%!important; height:auto!important;
       }
-      html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field.desm-wide { grid-column:1 / -1; }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field > td {
-        display:block!important; width:100%!important; min-width:0!important; height:auto!important;
+        display:block!important; flex:1 1 0; width:auto!important; min-width:0!important; height:auto!important;
         padding:0!important; text-align:left!important; border:0!important; white-space:normal!important;
       }
+      html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] tr.desm-field > td.desm-lbl { flex:0 0 36%!important; max-width:36%; }
+      html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] :is(select, input:not([type=checkbox]):not([type=radio]):not([type=hidden])) {
+        height:34px!important; min-height:34px!important; padding:0 8px!important; font-size:14px!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] textarea { min-height:34px!important; font-size:14px!important; }
+      html.desm-mobile-mode.desm-mobile-mode .SumoSelect > .CaptionCont { height:34px!important; min-height:34px!important; overflow:hidden; }
+      html.desm-mobile-mode.desm-mobile-mode .SumoSelect > .CaptionCont > span { line-height:32px!important; padding-right:24px; }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] td.desm-empty { display:none!important; }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] td.desm-lbl,
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] td.desm-lbl label {
-        font-size:12px!important; font-weight:600!important; color:#5a6478!important; margin:0!important;
+        font-size:13px!important; font-weight:600!important; color:#4a5468!important; margin:0!important; line-height:1.2!important;
       }
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] select,
       html.desm-mobile-mode.desm-mobile-mode table[data-desm-form] textarea,
@@ -215,5 +221,30 @@ enum MobileStyles {
       html.desm-mobile-mode #accordionSidebar .collapse-inner { min-width:0!important; }
       html.desm-mobile-mode #accordionSidebar .collapse-item { white-space:normal!important; padding:.65rem 1rem!important; font-size:.9rem!important; }
     }
+
+    /* ===== TreeGrid (lưới DESM): trả lại kích thước gốc, không để CSS chung chen vào ===== */
+    html.desm-mobile-mode .GridMain, html.desm-mobile-mode .GridMain * { -webkit-text-size-adjust:100%; }
+    html.desm-mobile-mode .GridMain :is(th, td) { font-size:inherit!important; line-height:inherit!important; }
+    html.desm-mobile-mode .GridMain button, html.desm-mobile-mode .GridMain .btn { min-height:0; }
+
+    /* ===== Hộp thoại có bản đồ (Location Update): giữ kích thước thật để bấm đúng ô vị trí ===== */
+    html.desm-mobile-mode :is(.modal-body, .ui-dialog-content) {
+      overflow:auto!important; -webkit-overflow-scrolling:touch; max-width:100%;
+    }
+    html.desm-mobile-mode :is(.modal, .ui-dialog) :is(area, [usemap], [data-desm-map], [data-desm-map] *) {
+      cursor:pointer; touch-action:manipulation; -webkit-user-select:none; user-select:none;
+      -webkit-touch-callout:none;
+    }
+    /* Canvas bản đồ (#canvasDlgDesmLocation, 1200x700): giữ đúng kích thước gốc để toạ độ bấm khớp, vùng chứa cuộn ngang/dọc */
+    html.desm-mobile-mode #canvasDlgDesmLocation {
+      width:1200px!important; height:700px!important; max-width:none!important; display:block;
+      touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+    }
+    html.desm-mobile-mode #dlgDesmLocation .table-responsive {
+      overflow:auto!important; -webkit-overflow-scrolling:touch; max-width:100%!important;
+      max-height:calc(100dvh - 190px);
+    }
+    html.desm-mobile-mode #dlgDesmLocation .modal-dialog { max-width:calc(100% - 16px)!important; margin:8px auto!important; }
+    html.desm-mobile-mode [data-desm-map] { overflow:auto!important; max-width:100%!important; }
     """#
 }
