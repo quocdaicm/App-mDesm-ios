@@ -469,6 +469,235 @@ final class BrowserModel: ObservableObject {
               G.__desmTry = changed ? G.__desmTry + 1 : 0;
             }
           }
+          // ===== Lấy danh sách Detail Item của một kiện: nạp trang "Hạng mục chi tiết" (MENU_SEQ=197) trong khung ẩn,
+          // điền Số kiện hàng rồi bấm Search và đọc lưới kết quả. Khung ẩn được giữ lại để lần sau dùng lại cho nhanh.
+          function diTop(idoc) { var w = idoc.defaultView; try { if (w.top.document && w.top.document.body) return w.top; } catch (e) {} return w; }
+          function diGrid(w) {
+            try {
+              for (var i = 0; i < w.TGGrids.length; i++) {
+                var g = w.TGGrids[i];
+                if (g && g.Cols && g.Cols.MATERIAL_CODE && g.Cols.PACKAGE_NO && g.Rows) return g;
+              }
+            } catch (e) {}
+            return null;
+          }
+          function diRows(G) {
+            var out = [];
+            function add(r) { if (r && r.Kind === 'Data' && !(r.Visible === 0 || r.Visible === '0' || r.Visible === false || r.Deleted)) out.push(r); }
+            try {
+              if (G.GetFirstVisible && G.GetNextVisible) {
+                var r0 = G.GetFirstVisible(), n = 0;
+                while (r0 && n++ < 5000) { add(r0); r0 = G.GetNextVisible(r0); }
+              }
+            } catch (e) { out = []; }
+            if (!out.length) { for (var id in G.Rows) add(G.Rows[id]); }
+            return out;
+          }
+          function diFrame(top, cb) {
+            var D = top.document, fr = D.getElementById('desmDetailFrame');
+            if (!fr) {
+              fr = D.createElement('iframe'); fr.id = 'desmDetailFrame'; fr.setAttribute('aria-hidden', 'true'); fr.tabIndex = -1;
+              fr.src = '/page_crt.do?MENU_SEQ=197';
+              fr.style.cssText = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
+              D.body.appendChild(fr);
+            }
+            var t0 = Date.now();
+            (function poll() {
+              var w = null; try { w = fr.contentWindow; } catch (e) {}
+              try {
+                if (w && diGrid(w) && w.document.getElementById('txtPackageNo') && w.document.getElementById('btnSearch')) { cb(w); return; }
+              } catch (e) {}
+              if (Date.now() - t0 > 25000) { cb(null); return; }
+              setTimeout(poll, 400);
+            })();
+          }
+          function diLoad(idoc, pkg, cb) {
+            var top = diTop(idoc), cache = top.__desmDI = top.__desmDI || {};
+            if (cache[pkg]) { cb(cache[pkg]); return; }
+            function run(done) {
+              diFrame(top, function(w) {
+                var G = w && diGrid(w);
+                if (!G) { done(null); return; }
+                var d = w.document, inp = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo');
+                function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new w.Event(n, { bubbles: true })); }); }
+                setv(inp, pkg); if (pl && pl.value) setv(pl, '');
+                d.getElementById('btnSearch').click();
+                var t0 = Date.now(), last = '', stable = 0;
+                (function poll() {
+                  var all = diRows(G), hit = all.filter(function(r) { return gridText(G, r, 'PACKAGE_NO') === pkg; });
+                  var sig = all.length + '|' + hit.length; stable = sig === last ? stable + 1 : 0; last = sig;
+                  var el = Date.now() - t0;
+                  if ((hit.length && stable >= 3 && el > 1500) || (!all.length && stable >= 6 && el > 4000) || el > 20000) {
+                    done(hit.map(function(r) {
+                      var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = gridText(G, r, c); });
+                      return o;
+                    }));
+                    return;
+                  }
+                  setTimeout(poll, 400);
+                })();
+              });
+            }
+            top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
+              return new Promise(function(res) { run(function(rows) { if (rows) cache[pkg] = rows; cb(rows); res(); }); });
+            });
+          }
+          // Màn hình chi tiết một kiện hàng (mở khi chạm thẻ ở chế độ "Chạm: Chi tiết"). Dữ liệu đọc từ dòng TreeGrid tương ứng.
+          function openDetail(idoc, G, rowId, no, onClose) {
+            var win = idoc.defaultView, r = G.Rows[rowId]; if (!r) return;
+            // Phủ toàn màn hình: dựng trên tài liệu ngoài cùng nếu cùng domain, không được thì dựng trong khung hiện tại
+            var doc = idoc;
+            try { if (win.top !== win && win.top.document && win.top.document.body) doc = win.top.document; } catch (e) { doc = idoc; }
+            var old = doc.getElementById('desmDetail'); if (old && old.parentNode) old.parentNode.removeChild(old);
+            function el(tag, cls, text) {
+              var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e;
+            }
+            function g(c) { return gridText(G, r, c); }
+            function num(c, d) {
+              var raw = null; try { raw = G.GetValue ? G.GetValue(r, c) : null; } catch (e) {}
+              var t = String(raw != null && raw !== '' && !isNaN(parseFloat(raw)) ? raw : g(c)).replace(/,/g, ''), v = parseFloat(t);
+              return isNaN(v) ? (t || '-') : v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+            }
+            function pair(c) { // "24.000/0.000" -> "24/0"
+              return g(c).split('/').map(function(x) {
+                var v = parseFloat(x.replace(/,/g, '')); return isNaN(v) ? x.trim() : String(v);
+              }).join('/');
+            }
+            function shortDate(t) { return /^\d\d\/\d\d\/\d\d$/.test(t) ? '20' + t : t; }
+            var pkgNo = g('PACKAGE_NO');
+            var ao = g('OUT_STATUS'), nLines = parseInt(ao.split('/')[0], 10);
+            var ov = el('div', 'desm-detail'); ov.id = 'desmDetail';
+            function close() {
+              if (ov.parentNode) ov.parentNode.removeChild(ov);
+              doc.documentElement.classList.remove('desm-detail-open');
+              if (onClose) onClose();
+            }
+            // Thanh trên: quay lại + tiêu đề
+            var top = el('div', 'desm-detail-top');
+            var back = el('button', 'desm-detail-back', '‹  Search'); back.type = 'button';
+            back.addEventListener('click', close);
+            top.appendChild(back); top.appendChild(el('div', 'desm-detail-title', 'Package'));
+            ov.appendChild(top);
+            var body = el('div', 'desm-detail-body');
+            // Khối thông tin chính
+            var m = el('div', 'desm-dcard');
+            m.appendChild(el('div', 'desm-d-h', '#' + no + ' ' + (g('PACKAGE_LIST_NO') || pkgNo)));
+            m.appendChild(el('div', 'desm-d-l', pkgNo));
+            if (g('DESCRIPTION')) m.appendChild(el('div', 'desm-d-l', g('DESCRIPTION')));
+            var lines = el('div', 'desm-d-l', 'Detail Item Lines ');
+            lines.appendChild(el('span', 'desm-d-red', isNaN(nLines) ? '-' : String(nLines)));
+            m.appendChild(lines);
+            var tri = el('div', 'desm-d-tri');
+            tri.appendChild(el('span', '', g('PACKAGE_STATUS') || 'N/A'));
+            tri.appendChild(el('span', '', ao || '-'));
+            tri.appendChild(el('span', '', pair('OUT_STATUS_QTY') || '-'));
+            m.appendChild(tri);
+            m.appendChild(el('div', 'desm-d-l', 'S/C & Excel Remarks ' + g('REMARKS')));
+            m.appendChild(el('hr', 'desm-d-hr'));
+            var tl = el('div', 'desm-d-two');
+            tl.appendChild(el('span', '', g('PACKAGE_TYPE') || '-'));
+            var lc = el('span', 'desm-d-loc');
+            var NS = 'http://www.w3.org/2000/svg';
+            var svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('width', '18'); svg.setAttribute('height', '18');
+            var pth = doc.createElementNS(NS, 'path');
+            pth.setAttribute('d', 'M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z');
+            pth.setAttribute('fill', 'none'); pth.setAttribute('stroke', 'currentColor'); pth.setAttribute('stroke-width', '2');
+            svg.appendChild(pth); lc.appendChild(svg); lc.appendChild(el('span', '', g('STORAGE_LOCATION') || '—'));
+            tl.appendChild(lc); m.appendChild(tl);
+            body.appendChild(m);
+            // Received / MRR Received / V/C
+            function triple(items) {
+              var b = el('div', 'desm-dband desm-dband3');
+              items.forEach(function(x) {
+                var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-k', x[0]));
+                c.appendChild(el('div', 'desm-dband-v' + (x[2] ? ' desm-u' : ''), x[1])); b.appendChild(c);
+              });
+              return b;
+            }
+            body.appendChild(triple([
+              ['Received', shortDate(g('RECEIPT_DATE')) || '-'],
+              ['MRR Received', shortDate(g('MRR_RECEIVED_DATE')) || '-'],
+              ['V/C', g('VISUAL_CHECK') || '-', true]
+            ]));
+            // Kích thước & trọng lượng
+            var dm = el('div', 'desm-dband desm-dband6');
+            [['L(cm)', num('L_CM', 3)], ['W(cm)', num('W_CM', 3)], ['H(cm)', num('H_CM', 3)],
+             ['CBM', num('VOLUME', 3)], ['Net(kg)', num('NET', 3)], ['Gross', num('GROSS', 3)]].forEach(function(x) {
+              var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-k', x[0]));
+              c.appendChild(el('div', 'desm-dband-v', x[1])); dm.appendChild(c);
+            });
+            body.appendChild(dm);
+            // SHORT / OVER / DMG / MISSING (chỉ xem)
+            function flag(c) {
+              var v = g(c).toUpperCase(), q = parseFloat(g(c + '_QTY').replace(/,/g, ''));
+              return (v && v !== '0' && v !== 'N' && v !== 'FALSE') || (!isNaN(q) && q > 0);
+            }
+            var fl = el('div', 'desm-dband desm-dband4');
+            [['SHORT', 'REPORT_SHORT'], ['OVER', 'REPORT_OVER'], ['DMG', 'REPORT_DMG'], ['MISSING', 'REPORT_MISSING']].forEach(function(x) {
+              var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-v', x[0]));
+              var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk';
+              cb.checked = flag(x[1]); cb.disabled = true; c.appendChild(cb); fl.appendChild(c);
+            });
+            body.appendChild(fl);
+            // Detail Item List: nạp tự động từ trang "Hạng mục chi tiết" theo mã kiện, bấm nút để thu gọn / mở lại
+            var dl = el('button', 'desm-detail-list', 'Detail Item List  ↑'); dl.type = 'button';
+            var note = el('div', 'desm-detail-note');
+            var dis = el('div', 'desm-ditems');
+            var shown = true;
+            dl.addEventListener('click', function() {
+              shown = !shown; dis.style.display = shown ? '' : 'none';
+              dl.textContent = 'Detail Item List  ' + (shown ? '↑' : '↓');
+            });
+            function dash(v) { return v ? v : '-'; }
+            function renderItems(rows) {
+              while (dis.firstChild) dis.removeChild(dis.firstChild);
+              rows.forEach(function(x) {
+                var c = el('div', 'desm-ditem');
+                c.appendChild(el('div', 'desm-ditem-no', x.PACKAGE_NO));
+                c.appendChild(el('div', 'desm-ditem-l', dash(x.DESCRIPTION)));
+                c.appendChild(el('div', 'desm-ditem-l', dash(x.DRAWING_NO)));
+                c.appendChild(el('div', 'desm-ditem-l', dash(x.TAG_NO)));
+                c.appendChild(el('div', 'desm-ditem-l', dash(x.REMARKS || x.COMMENTS)));
+                var ft = el('div', 'desm-ditem-foot');
+                ft.appendChild(el('span', '', dash(x.MATERIAL_CODE)));
+                var lc2 = el('span', 'desm-d-loc');
+                var sv2 = doc.createElementNS(NS, 'svg'); sv2.setAttribute('viewBox', '0 0 24 24');
+                sv2.setAttribute('width', '16'); sv2.setAttribute('height', '16');
+                var p2 = doc.createElementNS(NS, 'path'); p2.setAttribute('d', pth.getAttribute('d'));
+                p2.setAttribute('fill', 'none'); p2.setAttribute('stroke', 'currentColor'); p2.setAttribute('stroke-width', '2');
+                sv2.appendChild(p2); lc2.appendChild(sv2); lc2.appendChild(el('span', '', dash(x.LOCATION)));
+                ft.appendChild(lc2); c.appendChild(ft); dis.appendChild(c);
+              });
+              if (!rows.length) note.textContent = 'Không có hạng mục chi tiết nào cho kiện này.';
+              else { note.textContent = ''; lines.lastChild.textContent = String(rows.length); }
+            }
+            note.textContent = 'Đang tải danh sách hạng mục…';
+            diLoad(idoc, pkgNo, function(rows) {
+              if (!ov.parentNode) return;
+              if (!rows) { note.textContent = 'Không tải được danh sách hạng mục (trang "Hạng mục chi tiết" chưa sẵn sàng). Đóng rồi mở lại để thử lần nữa.'; return; }
+              renderItems(rows);
+            });
+            body.appendChild(dl); body.appendChild(note); body.appendChild(dis);
+            ov.appendChild(body);
+            // Nút Location Update: chỉ chọn đúng kiện này rồi bấm nút cập nhật vị trí gốc của DESM
+            var lu = el('button', 'desm-detail-lu', 'Location Update'); lu.type = 'button';
+            lu.addEventListener('click', function() {
+              var btn = idoc.getElementById('btnLocationSetup');
+              if (!btn) { note.textContent = 'Không tìm thấy nút cập nhật vị trí trên trang.'; return; }
+              try {
+                for (var id in G.Rows) {
+                  var x = G.Rows[id]; if (!x || x.Kind !== 'Data') continue;
+                  var s = !!x.Selected && x.Selected !== '0';
+                  if (id === rowId ? !s : s) G.SelectRow(x, id === rowId ? 1 : 0);
+                }
+              } catch (e) {}
+              close(); btn.click();
+            });
+            ov.appendChild(lu);
+            doc.documentElement.classList.add('desm-detail-open');
+            doc.body.appendChild(ov);
+          }
           // Lưới Package dạng thẻ (card): mỗi kiện hàng một thẻ gồm Package No, mô tả, loại kiện, A/O và Location.
           // Chạm thẻ = chọn dòng tương ứng trong lưới TreeGrid (ẩn bên dưới) để Location Update/Delete hoạt động.
           function cardView(doc) {
@@ -507,6 +736,24 @@ final class BrowserModel: ObservableObject {
             }
             var vb2 = doc.getElementById('desmViewToggle');
             if (vb2) vb2.textContent = on ? 'Dạng: Thẻ' : 'Dạng: Bảng';
+            // Tùy chọn khi chạm thẻ: "Chọn" (chọn dòng như cũ) hoặc "Chi tiết" (mở màn hình thông tin kiện hàng)
+            if (win.__desmTapDetail === undefined) {
+              var sv = ''; try { sv = win.localStorage.getItem('desmTapDetail') || ''; } catch (e) {}
+              win.__desmTapDetail = sv === '1';
+            }
+            if (tb && !doc.getElementById('desmTapToggle')) {
+              var tt = doc.createElement('button');
+              tt.type = 'button'; tt.id = 'desmTapToggle'; tt.className = 'btn btn-secondary btn-sm';
+              tt.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                win.__desmTapDetail = !win.__desmTapDetail;
+                try { win.localStorage.setItem('desmTapDetail', win.__desmTapDetail ? '1' : '0'); } catch (e2) {}
+                box.__sig = null; cardView(doc);
+              });
+              tb.appendChild(tt);
+            }
+            var tt2 = doc.getElementById('desmTapToggle');
+            if (tt2) tt2.textContent = win.__desmTapDetail ? 'Chạm: Chi tiết' : 'Chạm: Chọn';
             host.classList.toggle('desm-grid-off', on);
             box.style.display = on ? '' : 'none';
             if (!on) {
@@ -541,7 +788,7 @@ final class BrowserModel: ObservableObject {
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
-            var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n');
+            var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
             if (box.__sig === sig) return;
             box.__sig = sig;
             var keep = box.scrollTop;
@@ -566,10 +813,12 @@ final class BrowserModel: ObservableObject {
             bar.appendChild(el('span', 'desm-cards-count', 'Chọn tất cả · ' + items.length + ' kiện' + (nSel ? ' · đã chọn ' + nSel : '')));
             box.appendChild(bar);
             if (!items.length) box.appendChild(el('div', 'desm-cards-empty', 'Chưa có kiện hàng nào. Hãy nhập điều kiện lọc rồi bấm Search.'));
-            items.forEach(function(it) {
+            var tapDetail = !!win.__desmTapDetail;
+            items.forEach(function(it, idx) {
               var card = el('div', 'desm-card' + (it.sel ? ' desm-sel' : '') + (it.ok ? ' desm-ok' : ''));
               var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-card-chk';
               ck.checked = it.sel; card.appendChild(ck);
+              if (tapDetail) card.appendChild(el('span', 'desm-card-hit'));
               card.appendChild(el('div', 'desm-card-no', it.no));
               if (it.desc) card.appendChild(el('div', 'desm-card-desc', it.desc));
               var sub = [it.type, it.list].filter(function(x) { return x; }).join(' · ');
@@ -586,8 +835,13 @@ final class BrowserModel: ObservableObject {
               svg.appendChild(pth); loc.appendChild(svg);
               loc.appendChild(el('span', 'desm-card-loctxt', it.loc || '—'));
               foot.appendChild(loc); card.appendChild(foot);
-              card.addEventListener('click', function() {
+              card.addEventListener('click', function(ev) {
                 var r = G.Rows[it.id]; if (!r) return;
+                // Chế độ "Chi tiết": chạm vùng ô tích bên trái = chọn dòng, chạm chỗ khác = mở chi tiết
+                if (tapDetail && !(ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit'))) {
+                  openDetail(doc, G, it.id, idx + 1, function() { box.__sig = null; cardView(doc); });
+                  return;
+                }
                 try { G.SelectRow(r, isSel(r) ? 0 : 1); } catch (e) {}
                 box.__sig = null; cardView(doc);
               });
@@ -770,7 +1024,7 @@ final class BrowserModel: ObservableObject {
           function viText(n) {
             var p = n.parentNode; if (!p || p.nodeType !== 1) return;
             var tg = p.tagName; if (tg === 'SCRIPT' || tg === 'STYLE' || tg === 'TEXTAREA') return;
-            if (p.closest && p.closest('#desmCards')) return;
+            if (p.closest && p.closest('#desmCards, #desmDetail')) return;
             var v = n.nodeValue; if (!v || !/[A-Za-z]/.test(v)) return;
             var r = viLookup(v);
             if (r !== null) { if (r !== v) n.nodeValue = r; return; }
