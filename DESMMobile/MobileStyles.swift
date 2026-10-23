@@ -270,7 +270,12 @@ enum MobileStyles {
 
     /* ===== Lưới Package dạng thẻ ===== */
     html:not(.desm-mobile-mode) #desmCards { display:none!important; }
-    html.desm-mobile-mode .desm-grid-off { display:none!important; }
+    /* Ẩn lưới gốc nhưng vẫn giữ kích thước thật (không dùng display:none để TreeGrid còn tính toán được) */
+    html.desm-mobile-mode.desm-mobile-mode div.desm-grid-off[id] {
+      position:absolute!important; left:-200vw!important; top:0!important; width:100vw!important;
+      height:70vh!important; overflow:hidden!important; pointer-events:none!important;
+    }
+    html.desm-mobile-mode .desm-cards-empty { padding:24px 12px; text-align:center; color:#6b7686; font-size:14px; }
     html.desm-mobile-mode #desmCards {
       overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; background:#f3f6fb; max-width:100%;
     }

@@ -450,8 +450,15 @@ final class BrowserModel: ObservableObject {
               var g = win.TGGrids[gi];
               if (g && g.Cols && g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION && g.Rows) { G = g; break; }
             }
-            if (!G || !G.MainTag || !G.MainTag.parentNode) return;
-            var host = G.MainTag.parentNode;
+            if (!G || !G.MainTag) return;
+            // MainTag có thể là chính khung chứa lưới hoặc thẻ .GridMain bên trong: luôn lấy đúng khung chứa lưới
+            var gm = G.MainTag;
+            if (!(gm.classList && gm.classList.contains('GridMain')) && gm.querySelector) {
+              var inner = gm.querySelector('.GridMain'); if (inner) gm = inner;
+            }
+            var host = gm.parentNode;
+            // An toàn: không bao giờ ẩn khung đang chứa thanh lọc / thanh nút
+            if (!host || !host.parentNode || host.contains(doc.getElementById('toolbar')) || host.querySelector('.desm-filter-bar')) return;
             if (win.__desmCards === undefined) win.__desmCards = true;
             var on = !!win.__desmCards;
             var box = doc.getElementById('desmCards');
@@ -530,6 +537,7 @@ final class BrowserModel: ObservableObject {
             bar.appendChild(all);
             bar.appendChild(el('span', 'desm-cards-count', 'Chọn tất cả · ' + items.length + ' kiện' + (nSel ? ' · đã chọn ' + nSel : '')));
             box.appendChild(bar);
+            if (!items.length) box.appendChild(el('div', 'desm-cards-empty', 'Chưa có kiện hàng nào. Hãy nhập điều kiện lọc rồi bấm Search.'));
             items.forEach(function(it) {
               var card = el('div', 'desm-card' + (it.sel ? ' desm-sel' : '') + (it.ok ? ' desm-ok' : ''));
               var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-card-chk';
@@ -579,6 +587,21 @@ final class BrowserModel: ObservableObject {
               if (changed && !G.__desmHFail) { try { G.Rerender(); } catch (e) { try { G.Update && G.Update(); } catch (e2) {} } }
             }
           }
+          // Thanh cuối lưới (Style / Size / Scale): đặt mặc định Material - Normal - 90%, mỗi lần mở lưới chỉ áp một lần
+          function defaultToolbar(win) {
+            var list = win.TGGrids; if (!list || !list.length) return;
+            for (var gi = 0; gi < list.length; gi++) {
+              var G = list[gi];
+              if (!G || !G.Cols || !G.Cols.PACKAGE_NO || !G.Rows || !G.Rows.Header || G.__desmTbDone) continue;
+              G.__desmTbDone = 1;
+              try { if (G.Style !== undefined && String(G.Style) !== 'Material' && G.SetStyle) G.SetStyle('Material'); } catch (e) {}
+              try { if (G.Size !== undefined && String(G.Size) !== 'Normal' && G.SetSize) G.SetSize('Normal'); } catch (e) {}
+              try {
+                var cur = parseFloat(G.Scale);
+                if (G.SetScale && !(cur === 90 || cur === 0.9)) G.SetScale('90%');
+              } catch (e) {}
+            }
+          }
           function colToggle(doc) {
             var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
             if (win.__desmCompact === undefined) win.__desmCompact = true;
@@ -613,6 +636,7 @@ final class BrowserModel: ObservableObject {
             if (b2) b2.textContent = win.__desmCompact ? 'Cột: Gọn' : 'Cột: Đủ';
             compactGrid(win, win.__desmCompact);
             try { slimHeader(win, win.__desmCompact); } catch (e) {}
+            try { defaultToolbar(win); } catch (e) {}
             try { cardView(doc); } catch (e) {}
           }
           // Tự điền tài khoản ở trang đăng nhập: bắt tài khoản khi bấm Login, và hàm điền do app gọi
