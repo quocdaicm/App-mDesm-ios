@@ -18,7 +18,7 @@
 - Quay lại/tiến/tải lại/về DESM/mở URL hiện tại bằng Safari.
 - Tiếng Việt: ô Language của DESM có thêm mục "Tiếng Việt" (máy chủ chỉ có English/한국어/Russian nên app tự dịch phía máy khách). Chọn mục này hoặc bật Cài đặt > Ngôn ngữ > "Giao diện DESM bằng tiếng Việt" thì menu, nút, nhãn bộ lọc, tiêu đề cột, hộp thoại và alert/confirm của trang được dịch theo từ điển `Translations.swift` (khớp nguyên chuỗi; dữ liệu như mã kiện, mô tả hàng, vị trí giữ nguyên). Thiếu từ nào: Cài đặt > Ngôn ngữ > "Sao chép chuỗi chưa dịch", điền bản dịch sau dấu `=` rồi dán vào ô "Từ điển bổ sung" (mỗi dòng `English = Tiếng Việt`). Nên để ngôn ngữ gốc của trang là English.
 - Header kiểu SVG (chế độ Mobile): nền gradient xanh có sóng/chấm/đường nhấn vàng, nút ≡ kính mờ, ô Language dạng viên thuốc có icon quả địa cầu + mũi tên, thẻ tab có icon kiện hàng và nút đóng tròn. Toàn bộ icon/nền là SVG nhúng trong CSS (cuối `MobileStyles.swift`); bản gốc nền ở `Branding/header-bg.svg`.
-- Footer: không còn dải SVG trong trang; khi thanh nút dưới ẩn, vùng an toàn dưới cùng của iPhone (thanh Home) được tô gradient xanh cùng tông header. Nút nổi ẩn/hiện thanh và thanh dưới cùng của app dùng gradient xanh cùng tông.
+- Footer: thanh dưới cùng của app (và dải vùng an toàn dưới cùng khi thanh nút ẩn) được vẽ bằng Canvas theo `Branding/footer-bg.svg` (`FooterBackground` trong `BrowserView.swift`): gradient xanh, chấm mờ, hai lớp sóng, đường nhấn vàng ở mép trên; icon và chữ nút điều hướng màu trắng.
 - Không lưu mật khẩu, không gửi dữ liệu đến dịch vụ ngoài.
 
 ## Tạo project và build bằng Xcode

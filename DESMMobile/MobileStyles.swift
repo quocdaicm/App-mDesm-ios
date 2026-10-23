@@ -312,15 +312,72 @@ enum MobileStyles {
       position:fixed; left:0; top:0; right:0; bottom:0; z-index:2147483000; background:#f3f6fb; color:#111827;
       display:flex; flex-direction:column; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     }
+    /* Thanh trên cùng màn hình chi tiết: cùng nền SVG với header DESM (gradient xanh, sóng, chấm, đường nhấn vàng) */
     html.desm-mobile-mode .desm-detail-top {
-      position:relative; display:flex; align-items:center; justify-content:center; min-height:52px; padding-top:env(safe-area-inset-top);
-      background:#fff; border-bottom:1px solid #d9dee7; flex:0 0 auto;
+      position:relative; display:flex; align-items:center; justify-content:center; min-height:56px; padding-top:env(safe-area-inset-top);
+      box-sizing:content-box; color:#fff; flex:0 0 auto; z-index:2;
+      background-color:#1d4ed8; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 64' preserveAspectRatio='xMidYMid slice'%3E %3Cdefs%3E %3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23172554'/%3E%3Cstop offset='.55' stop-color='%231d4ed8'/%3E%3Cstop offset='1' stop-color='%230ea5e9'/%3E%3C/linearGradient%3E %3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23fbbf24'/%3E%3Cstop offset='.45' stop-color='%2338bdf8'/%3E%3Cstop offset='1' stop-color='%2338bdf8' stop-opacity='0'/%3E%3C/linearGradient%3E %3Cpattern id='d' width='12' height='12' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='2' cy='2' r='1' fill='%23fff' fill-opacity='.12'/%3E%3C/pattern%3E %3C/defs%3E %3Crect width='400' height='64' fill='url(%23g)'/%3E %3Crect width='400' height='64' fill='url(%23d)'/%3E %3Ccircle cx='362' cy='6' r='44' fill='%23fff' fill-opacity='.07'/%3E %3Ccircle cx='312' cy='62' r='26' fill='%23fff' fill-opacity='.06'/%3E %3Cpath d='M0 46 C60 26 120 62 205 42 S338 24 400 40 L400 64 L0 64Z' fill='%23fff' fill-opacity='.08'/%3E %3Cpath d='M0 54 C80 38 150 66 230 52 S350 40 400 52 L400 64 L0 64Z' fill='%23fff' fill-opacity='.07'/%3E %3Crect y='61' width='400' height='3' fill='url(%23a)'/%3E %3C/svg%3E")!important;
+      background-size:cover!important; background-position:center!important; background-repeat:no-repeat!important;
+      border:0!important; box-shadow:0 4px 14px rgba(23,37,84,.35)!important;
+      border-radius:0 0 18px 18px; padding-bottom:3px!important;
+    }
+    html.desm-mobile-mode nav.topbar #sidebarToggleTop {
+      display:inline-flex!important; align-items:center; justify-content:center;
+      width:40px; height:36px; padding:0!important; margin:0 8px 0 0!important; border-radius:12px!important;
+      background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='6' width='16' height='2.4' rx='1.2' fill='%23fff'/%3E%3Crect x='4' y='10.8' width='11' height='2.4' rx='1.2' fill='%23fff'/%3E%3Crect x='4' y='15.6' width='16' height='2.4' rx='1.2' fill='%23fff'/%3E%3C/svg%3E") center/24px 24px no-repeat, linear-gradient(160deg,rgba(255,255,255,.30),rgba(255,255,255,.10))!important;
+      border:1px solid rgba(255,255,255,.40)!important; box-shadow:0 2px 6px rgba(15,23,42,.25), inset 0 1px 0 rgba(255,255,255,.35)!important;
+      -webkit-tap-highlight-color:transparent; outline:none!important;
+    }
+    html.desm-mobile-mode nav.topbar #sidebarToggleTop i { display:none!important; }
+    html.desm-mobile-mode nav.topbar #sidebarToggleTop:active { transform:scale(.94); filter:brightness(1.1); }
+    html.desm-mobile-mode nav.topbar select#selLang {
+      -webkit-appearance:none!important; appearance:none!important;
+      min-width:132px; height:36px!important; padding:0 30px 0 36px!important; margin:0!important;
+      border-radius:999px!important; border:1px solid rgba(255,255,255,.45)!important;
+      background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18'/%3E%3Cpath d='M12 3c2.8 2.6 4.2 5.6 4.2 9s-1.4 6.4-4.2 9c-2.8-2.6-4.2-5.6-4.2-9S9.2 5.6 12 3z'/%3E%3C/svg%3E") 11px center/19px 19px no-repeat, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") right 10px center/13px 13px no-repeat,
+        linear-gradient(160deg,rgba(255,255,255,.30),rgba(255,255,255,.10))!important;
+      color:#fff!important; font:600 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif!important;
+      box-shadow:0 2px 6px rgba(15,23,42,.25), inset 0 1px 0 rgba(255,255,255,.35)!important; outline:none!important;
+    }
+    html.desm-mobile-mode nav.topbar select#selLang option { color:#0f172a; background:#fff; }
+    html.desm-mobile-mode nav.topbar .nav-item { padding-right:4px!important; }
+
+    /* Thanh tab */
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav {
+      position:relative; z-index:2; min-height:42px; align-items:flex-end;
+      background:linear-gradient(180deg,#dbeafe,#eff6ff)!important; border:0!important; border-bottom:1px solid #bfdbfe!important;
+      border-radius:0!important; padding:8px 8px 0!important;
+    }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li {
+      margin:0 5px 0 0!important; padding:0!important; border:1px solid #bfdbfe!important; border-bottom:0!important;
+      border-radius:12px 12px 0 0!important; background:rgba(255,255,255,.62)!important; display:flex; align-items:center;
+      height:34px; padding-right:8px!important;
+    }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li > a {
+      display:flex; align-items:center; gap:6px; color:#475569!important; font-weight:600!important; padding:0 4px 0 10px!important; line-height:34px;
+    }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li > a::before {
+      content:""; width:17px; height:17px; flex:0 0 17px; background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 8l-9-5-9 5v8l9 5 9-5z'/%3E%3Cpath d='M3 8l9 5 9-5'/%3E%3Cpath d='M12 13v8'/%3E%3C/svg%3E") center/17px 17px no-repeat;
+    }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li.ui-tabs-active {
+      background:#fff!important; border-color:#bfdbfe!important; border-top:3px solid #1d4ed8!important;
+      box-shadow:0 -3px 10px rgba(29,78,216,.16); height:36px;
+    }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li.ui-tabs-active > a { color:#1d4ed8!important; }
+    html.desm-mobile-mode #tabs > ul.ui-tabs-nav > li.ui-tabs-active > a::before { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d4ed8' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 8l-9-5-9 5v8l9 5 9-5z'/%3E%3Cpath d='M3 8l9 5 9-5'/%3E%3Cpath d='M12 13v8'/%3E%3C/svg%3E");
+      background-size:cover; background-position:center; background-repeat:no-repeat;
+      border:0; border-radius:0 0 18px 18px; padding-bottom:3px; box-shadow:0 4px 14px rgba(23,37,84,.35);
     }
     html.desm-mobile-mode .desm-detail-back {
-      position:absolute; left:6px; top:50%; transform:translateY(-50%); background:none!important; border:0!important;
-      color:#111827; font-size:20px; padding:6px 8px; box-shadow:none!important;
+      position:absolute; left:10px; top:calc(50% + env(safe-area-inset-top) / 2); transform:translateY(-50%);
+      display:inline-flex; align-items:center; gap:4px; height:36px; padding:0 14px 0 10px!important; margin:0;
+      color:#fff!important; font-size:16px; font-weight:600; border-radius:12px!important;
+      background:linear-gradient(160deg,rgba(255,255,255,.30),rgba(255,255,255,.10))!important;
+      border:1px solid rgba(255,255,255,.40)!important; box-shadow:0 2px 6px rgba(15,23,42,.25), inset 0 1px 0 rgba(255,255,255,.35)!important;
+      -webkit-tap-highlight-color:transparent; outline:none!important;
     }
-    html.desm-mobile-mode .desm-detail-title { font-size:17px; font-weight:700; }
+    html.desm-mobile-mode .desm-detail-back:active { transform:translateY(-50%) scale(.94); filter:brightness(1.1); }
+    html.desm-mobile-mode .desm-detail-title { font-size:18px; font-weight:800; color:#fff; letter-spacing:.3px; text-shadow:0 1px 3px rgba(15,23,42,.35); }
     html.desm-mobile-mode .desm-detail-body { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:12px 10px 14px; }
     html.desm-mobile-mode .desm-dcard { background:#fff; border-radius:14px; padding:14px 14px 12px; margin-bottom:10px; box-shadow:0 1px 4px rgba(15,23,42,.1); }
     html.desm-mobile-mode .desm-d-h { font-size:19px; font-weight:800; line-height:1.3; word-break:break-word; margin-bottom:4px; }
@@ -354,10 +411,17 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-ditems-bar { display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:8px 12px; background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); cursor:pointer; }
     html.desm-mobile-mode .desm-ditem-locbtn { padding:6px 0 6px 12px; cursor:pointer; }
     html.desm-mobile-mode .desm-detail-note { font-size:13px; color:#b45309; padding:0 4px 8px; }
+    /* Nút gọn dạng viên thuốc, canh giữa và chừa chỗ hai nút nổi (camera trái, ẩn/hiện thanh phải) */
     html.desm-mobile-mode .desm-detail-lu {
-      flex:0 0 auto; margin:6px 12px calc(10px + env(safe-area-inset-bottom)); background:#1e88f5!important; color:#fff!important;
-      border:0!important; border-radius:10px!important; font-size:20px; font-weight:700; min-height:54px;
+      flex:0 0 auto; align-self:center; box-sizing:border-box; width:calc(100% - 156px); min-width:190px; max-width:300px;
+      margin:6px 0 calc(14px + env(safe-area-inset-bottom)); padding:0 16px; min-height:46px;
+      background:linear-gradient(135deg,#1e88f5,#0ea5e9)!important; color:#fff!important;
+      border:1.5px solid rgba(255,255,255,.55)!important; border-radius:999px!important;
+      font-size:16px; font-weight:700; line-height:1.15; letter-spacing:.2px; text-align:center;
+      box-shadow:0 4px 12px rgba(30,136,245,.38), inset 0 1px 0 rgba(255,255,255,.25);
+      -webkit-tap-highlight-color:transparent; transition:transform .12s ease, box-shadow .12s ease;
     }
+    html.desm-mobile-mode .desm-detail-lu:active { transform:scale(.96); box-shadow:0 2px 6px rgba(30,136,245,.35); }
 
     /* ===== Nút + icon SVG vẽ riêng (thay icon font) ===== */
     html.desm-mobile-mode :is(#toolbar, .desm-btns) i[class*="fa-"]::before { content:none!important; }

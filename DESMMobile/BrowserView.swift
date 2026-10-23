@@ -586,14 +586,12 @@ final class BrowserModel: ObservableObject {
           function diShow(idoc, onClose) {
             var top = diTop(idoc), D = top.document, fr = D.getElementById('desmDetailFrame'); if (!fr) { onClose(); return; }
             var bar = D.createElement('div'); bar.id = 'desmDetailFrameBar';
-            bar.style.cssText = 'position:fixed;left:0;top:0;right:0;height:calc(52px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);' +
-              'background:#fff;border-bottom:1px solid #d9dee7;z-index:2147483200;display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;';
-            var b = D.createElement('button'); b.type = 'button'; b.textContent = '‹  Xong';
-            b.style.cssText = 'background:none;border:0;font-size:20px;padding:8px 14px;color:#111827;';
-            var t = D.createElement('div'); t.textContent = 'Cập nhật vị trí hạng mục';
-            t.style.cssText = 'font-size:16px;font-weight:700;padding-right:14px;color:#111827;';
+            bar.className = 'desm-detail-top desm-frame-bar';
+            bar.style.cssText = 'position:fixed;left:0;top:0;right:0;z-index:2147483200;';
+            var b = D.createElement('button'); b.type = 'button'; b.className = 'desm-detail-back'; b.textContent = '‹  Xong';
+            var t = D.createElement('div'); t.className = 'desm-detail-title'; t.textContent = 'Cập nhật vị trí hạng mục';
             bar.appendChild(b); bar.appendChild(t); D.body.appendChild(bar);
-            fr.style.cssText = 'position:fixed;left:0;top:calc(52px + env(safe-area-inset-top));width:100vw;height:calc(100vh - 52px - env(safe-area-inset-top));' +
+            fr.style.cssText = 'position:fixed;left:0;top:calc(59px + env(safe-area-inset-top));width:100vw;height:calc(100vh - 59px - env(safe-area-inset-top));' +
               'border:0;opacity:1;pointer-events:auto;z-index:2147483100;background:#fff;';
             b.addEventListener('click', function() {
               if (bar.parentNode) bar.parentNode.removeChild(bar);
@@ -1633,18 +1631,15 @@ struct BrowserView: View {
                 .overlay(alignment: .bottomTrailing) { barsToggleButton }
                 .overlay(alignment: .bottomLeading) { scanButton }
             if !model.barsHidden { bottomBar }
+            // Khi thanh dưới ẩn: vẽ footer SVG ngay vùng an toàn dưới cùng (thanh Home), cùng kiểu header
+            if model.barsHidden {
+                Color.clear.frame(height: 0)
+                    .background(FooterBackground().ignoresSafeArea(edges: .bottom))
+            }
         }
         .background(alignment: .bottom) {
             ZStack(alignment: .bottom) {
                 Color(.systemGroupedBackground)
-                // Khi thanh dưới ẩn: tô dải an toàn dưới cùng (vùng thanh Home) cùng tông footer SVG, khỏi hở khoảng trắng
-                if model.barsHidden {
-                    LinearGradient(colors: [Color(red: 0.09, green: 0.15, blue: 0.33),
-                                            Color(red: 0.11, green: 0.31, blue: 0.85),
-                                            Color(red: 0.05, green: 0.65, blue: 0.91)],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(height: 80)
-                }
             }
             .ignoresSafeArea()
         }
@@ -1797,12 +1792,8 @@ struct BrowserView: View {
                 if let url = model.webView?.url { UIApplication.shared.open(url) }
             }
         }
-        .padding(.top, 9).padding(.bottom, 5)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            LinearGradient(colors: [Color(red: 0.98, green: 0.75, blue: 0.14), Color(red: 0.22, green: 0.74, blue: 0.97), .clear],
-                           startPoint: .leading, endPoint: .trailing).frame(height: 2.5)
-        }
+        .padding(.top, 10).padding(.bottom, 5)
+        .background(FooterBackground().ignoresSafeArea(edges: .bottom))
     }
 
     private func navButton(_ symbol: String, title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -1811,10 +1802,58 @@ struct BrowserView: View {
                 Image(systemName: symbol).font(.system(size: 17, weight: .semibold))
                 Text(title).font(.system(size: 10, weight: .medium))
             }
-            .foregroundStyle(enabled ? Color.blue : Color.gray.opacity(0.4))
+            .foregroundStyle(enabled ? Color.white : Color.white.opacity(0.38))
             .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
         .disabled(!enabled)
+    }
+}
+
+/// Footer vẽ bằng Canvas theo Branding/footer-bg.svg: gradient xanh, chấm mờ, hai lớp sóng, đường nhấn vàng-xanh ở mép trên.
+struct FooterBackground: View {
+    private let c1 = Color(red: 23 / 255, green: 37 / 255, blue: 84 / 255)
+    private let c2 = Color(red: 29 / 255, green: 78 / 255, blue: 216 / 255)
+    private let c3 = Color(red: 14 / 255, green: 165 / 255, blue: 233 / 255)
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width, h = size.height
+            func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x / 400 * w, y: y / 28 * h) }
+            // nền gradient ngang
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .linearGradient(Gradient(stops: [.init(color: c1, location: 0), .init(color: c2, location: 0.55), .init(color: c3, location: 1)]),
+                                           startPoint: .zero, endPoint: CGPoint(x: w, y: 0)))
+            // chấm mờ
+            var dots = Path()
+            var y: CGFloat = 2
+            while y < h {
+                var x: CGFloat = 2
+                while x < w { dots.addEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)); x += 12 }
+                y += 12
+            }
+            ctx.fill(dots, with: .color(.white.opacity(0.14)))
+            // sóng 1
+            var a = Path()
+            a.move(to: pt(0, 12))
+            a.addCurve(to: pt(205, 11), control1: pt(70, 2), control2: pt(130, 20))
+            a.addCurve(to: pt(400, 10), control1: pt(280, 2), control2: pt(335, 3))
+            a.addLine(to: pt(400, 28)); a.addLine(to: pt(0, 28)); a.closeSubpath()
+            ctx.fill(a, with: .color(.white.opacity(0.10)))
+            // sóng 2
+            var b = Path()
+            b.move(to: pt(0, 19))
+            b.addCurve(to: pt(230, 18), control1: pt(80, 10), control2: pt(150, 25))
+            b.addCurve(to: pt(400, 17), control1: pt(310, 11), control2: pt(350, 11))
+            b.addLine(to: pt(400, 28)); b.addLine(to: pt(0, 28)); b.closeSubpath()
+            ctx.fill(b, with: .color(.white.opacity(0.08)))
+            // đường nhấn vàng -> xanh -> trong suốt ở mép trên
+            ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: 2.5)),
+                     with: .linearGradient(Gradient(stops: [
+                        .init(color: Color(red: 251 / 255, green: 191 / 255, blue: 36 / 255), location: 0),
+                        .init(color: Color(red: 56 / 255, green: 189 / 255, blue: 248 / 255), location: 0.5),
+                        .init(color: Color(red: 56 / 255, green: 189 / 255, blue: 248 / 255).opacity(0), location: 1)]),
+                                           startPoint: .zero, endPoint: CGPoint(x: w, y: 0)))
+        }
     }
 }
 
