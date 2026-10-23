@@ -156,6 +156,7 @@ struct WebView: UIViewRepresentable {
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         content.add(context.coordinator, name: "desmCred")
+        content.add(context.coordinator, name: "desmLang")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -178,6 +179,7 @@ struct WebView: UIViewRepresentable {
         uiView.removeObserver(coordinator, forKeyPath: #keyPath(WKWebView.canGoBack))
         uiView.removeObserver(coordinator, forKeyPath: #keyPath(WKWebView.canGoForward))
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmCred")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmLang")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -200,6 +202,13 @@ struct WebView: UIViewRepresentable {
         // Nhận tài khoản từ trang đăng nhập (khi bấm Login) và hỏi người dùng có muốn lưu để tự điền không.
         private var askedKeys = Set<String>()
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "desmLang" {
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any], let lang = d["lang"] as? String else { return }
+                DispatchQueue.main.async { self.model.setVietnamese(lang == "vi", fromPage: true) }
+                return
+            }
             guard message.name == "desmCred", CredStore.enabled,
                   let host = message.frameInfo.request.url?.host?.lowercased(),
                   host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),

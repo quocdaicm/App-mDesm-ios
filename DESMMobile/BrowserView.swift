@@ -77,6 +77,11 @@ final class BrowserModel: ObservableObject {
         didSet { UserDefaults.standard.set(compactHeader, forKey: "desmCompactHeader") }
     }
     @AppStorage("desmCustomCSS") var customCSS = ""
+    @AppStorage("desmCustomDict") var customDict = ""
+    /// Dịch giao diện web DESM sang tiếng Việt (lớp dịch phía app, không đổi ngôn ngữ phía máy chủ)
+    @Published var viLang: Bool {
+        didSet { UserDefaults.standard.set(viLang, forKey: "desmViLang") }
+    }
 
     weak var webView: WKWebView?
     weak var contentController: WKUserContentController?
@@ -88,6 +93,26 @@ final class BrowserModel: ObservableObject {
         fitWidth = w == 0 ? 1280 : w
         scopeOnly = ud.object(forKey: "desmScopeOnly") as? Bool ?? true
         compactHeader = ud.object(forKey: "desmCompactHeader") as? Bool ?? true
+        viLang = ud.object(forKey: "desmViLang") as? Bool ?? false
+    }
+
+    /// Bật/tắt tiếng Việt. fromPage = true khi người dùng chọn trong ô Language của trang (trang tự tải lại theo ngôn ngữ máy chủ).
+    func setVietnamese(_ on: Bool, fromPage: Bool = false) {
+        guard viLang != on else { return }
+        viLang = on
+        applyStyles()
+        if !on && !fromPage { webView?.reload() }   // tắt dịch: tải lại để trả về chữ gốc
+    }
+
+    private var customPairs: [[String]] {
+        customDict.split(whereSeparator: \.isNewline).compactMap { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { return nil }
+            guard let i = t.firstIndex(of: "=") else { return nil }
+            let k = t[..<i].trimmingCharacters(in: .whitespaces)
+            let v = t[t.index(after: i)...].trimmingCharacters(in: .whitespaces)
+            return (k.isEmpty || v.isEmpty) ? nil : [k, v]
+        }
     }
 
     func loadAddress() {
@@ -148,7 +173,10 @@ final class BrowserModel: ObservableObject {
             "fitWidth": fitWidth,
             "scope": scopeOnly,
             "hosts": BrowserModel.allowedHosts,
-            "css": MobileStyles.css + "\n" + customCSS
+            "css": MobileStyles.css + "\n" + customCSS,
+            "vi": viLang,
+            "dict": ViDict.pairs,
+            "custom": customPairs
         ]
         let json = (try? JSONSerialization.data(withJSONObject: config, options: []))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{\"mode\":\"off\"}"
@@ -251,7 +279,7 @@ final class BrowserModel: ObservableObject {
               }
               return null;
             }
-            var qp = pick(/^packing\s*list\s*no/i), qk = pick(/^package\s*no/i);
+            var qp = pick(/^(packing\s*list\s*no|số packing list)/i), qk = pick(/^(package\s*no|số kiện hàng)/i);
             if (qp || qk) {
               var qr = doc.createElement('div'); qr.className = 'desm-quick';
               [[qp, 'Packing List No.'], [qk, 'Package No.']].forEach(function(pair) {
@@ -713,6 +741,153 @@ final class BrowserModel: ObservableObject {
               try { win.scrollTo(sy[0], sy[1]); } catch (e) {}
             }
           }
+          // ===== Dịch giao diện sang tiếng Việt (chỉ khi bật trong Cài đặt hoặc chọn "Tiếng Việt" ở ô Language) =====
+          function viNorm(s) { return String(s).replace(/[\u200b\s]+/g, ' ').trim().toLowerCase(); }
+          function viMap() {
+            var c = w.__desmCfg, sig = (c.dict ? c.dict.length : 0) + ':' + (c.custom ? JSON.stringify(c.custom) : '');
+            if (w.__desmViSig === sig && w.__desmViM) return w.__desmViM;
+            var m = {};
+            (c.dict || []).concat(c.custom || []).forEach(function(p) { if (p && p.length > 1) m[viNorm(p[0])] = p[1]; });
+            w.__desmViSig = sig; w.__desmViM = m; return m;
+          }
+          function viLookup(str) {
+            var core = String(str).replace(/^[\s\u200b]+|[\s\u200b]+$/g, '');
+            if (!core) return null;
+            var v = viMap()[viNorm(core)];
+            if (v === undefined) return null;
+            var letters = core.replace(/[^A-Za-z]/g, '');
+            if (letters.length >= 3 && core === core.toUpperCase()) v = v.toUpperCase();
+            if (v === core) return null;
+            var lead = str.match(/^[\s\u200b]*/)[0], trail = str.match(/[\s\u200b]*$/)[0];
+            return lead + v + trail;
+          }
+          function viMiss(core) {
+            try {
+              if (!/^[A-Za-z][A-Za-z &\/\-\.\(\),:'’%]{1,70}$/.test(core)) return;
+              var t = w.top; t.__desmMiss = t.__desmMiss || {}; t.__desmMiss[core] = 1;
+            } catch (e) {}
+          }
+          function viText(n) {
+            var p = n.parentNode; if (!p || p.nodeType !== 1) return;
+            var tg = p.tagName; if (tg === 'SCRIPT' || tg === 'STYLE' || tg === 'TEXTAREA') return;
+            if (p.closest && p.closest('#desmCards')) return;
+            var v = n.nodeValue; if (!v || !/[A-Za-z]/.test(v)) return;
+            var r = viLookup(v);
+            if (r !== null) { if (r !== v) n.nodeValue = r; return; }
+            var cl = (p.getAttribute && p.getAttribute('class')) || '';
+            if (!/gridText|gridLinkText|TMCellBase/.test(cl)) viMiss(v.replace(/[\u200b\s]+/g, ' ').trim());
+          }
+          var VI_ATTR = ['placeholder', 'title', 'alt'];
+          function viAttrs(el) {
+            if (!el || el.nodeType !== 1) return;
+            VI_ATTR.forEach(function(a) {
+              var v = el.getAttribute(a); if (!v) return;
+              var r = viLookup(v); if (r !== null && r !== v) el.setAttribute(a, r);
+            });
+            if (el.tagName === 'INPUT' && /^(button|submit|reset)$/i.test(el.type || '')) {
+              var r2 = viLookup(el.value || ''); if (r2 !== null && r2 !== el.value) el.value = r2;
+            }
+          }
+          function viWalk(root) {
+            if (!root) return;
+            if (root.nodeType === 3) { viText(root); return; }
+            var doc = root.nodeType === 9 ? root : root.ownerDocument;
+            var base = root.nodeType === 9 ? root.documentElement : root;
+            if (!doc || !base || base.nodeType !== 1) return;
+            viAttrs(base);
+            var els = base.querySelectorAll('[placeholder],[title],[alt],input[type=button],input[type=submit],input[type=reset]');
+            for (var i = 0; i < els.length; i++) viAttrs(els[i]);
+            var tw = doc.createTreeWalker(base, 4, null), n;
+            while ((n = tw.nextNode())) viText(n);
+          }
+          function viPost(lang) {
+            try { w.webkit.messageHandlers.desmLang.postMessage({ lang: lang }); } catch (e) {}
+          }
+          // Thêm mục "Tiếng Việt" vào ô Language của DESM (máy chủ chỉ có en/ko/ru nên mục này do app xử lý)
+          function viLangSel(doc) {
+            var sel = doc.getElementById('selLang'); if (!sel || !allowed(doc)) return;
+            var c = w.__desmCfg;
+            if (!sel.querySelector('option[value="vi"]')) {
+              var o = doc.createElement('option'); o.value = 'vi'; o.textContent = 'Tiếng Việt'; sel.appendChild(o);
+            }
+            if (doc.activeElement !== sel) {
+              if (c.vi && sel.value !== 'vi') sel.value = 'vi';
+              else if (!c.vi && sel.value === 'vi') sel.value = '';
+            }
+            if (doc.__desmLangHook) return;
+            doc.__desmLangHook = true;
+            doc.addEventListener('change', function(e) {
+              var t = e.target;
+              if (!t || t.id !== 'selLang' || doc.__desmBypass) return;
+              if (t.value === 'vi') {
+                e.stopImmediatePropagation(); e.stopPropagation();
+                w.__desmCfg.vi = true; viPost('vi');
+                // Cho trang tải ở ngôn ngữ gốc English (từ điển dịch từ English sang Việt)
+                doc.__desmBypass = true; t.value = 'en';
+                try { t.dispatchEvent(new Event('change', { bubbles: true })); } catch (x) {}
+                doc.__desmBypass = false;
+                setTimeout(function() { viLangSel(doc); }, 300);
+                setTimeout(function() { viLangSel(doc); }, 1500);
+              } else if (t.value) {
+                w.__desmCfg.vi = false; viPost('site');
+              }
+            }, true);
+          }
+          function viInit() {
+            if (w.__desmViInit) return; w.__desmViInit = true;
+            ['alert', 'confirm', 'prompt'].forEach(function(nm) {
+              var o = w[nm]; if (typeof o !== 'function' || o.__desmVi) return;
+              var f = function(msg) {
+                var a = [].slice.call(arguments);
+                try {
+                  if (w.__desmCfg.vi && typeof a[0] === 'string') {
+                    var r = viLookup(a[0]);
+                    if (r === null) {
+                      var ch = false, parts = a[0].split('\n').map(function(l) { var x = viLookup(l); if (x !== null) { ch = true; return x; } return l; });
+                      if (ch) r = parts.join('\n');
+                    }
+                    if (r !== null) a[0] = r;
+                  }
+                } catch (e) {}
+                return o.apply(w, a);
+              };
+              f.__desmVi = 1; w[nm] = f;
+            });
+            var pend = [], queued = false;
+            function flush() {
+              queued = false;
+              if (!w.__desmCfg.vi) { pend = []; return; }
+              var list = pend; pend = [];
+              try {
+                if (list.length > 400) { viWalk(document); }
+                else list.forEach(function(x) { if (x.t === 'a') viAttrs(x.n); else if (x.n.isConnected !== false) viWalk(x.n); });
+                viLangSel(document);
+              } catch (e) {}
+            }
+            function push(t, n) {
+              pend.push({ t: t, n: n });
+              if (!queued) { queued = true; (w.requestAnimationFrame || w.setTimeout)(flush); }
+            }
+            try {
+              new MutationObserver(function(ms) {
+                if (!w.__desmCfg.vi) { try { viLangSel(document); } catch (e) {} return; }
+                for (var i = 0; i < ms.length; i++) {
+                  var m = ms[i];
+                  if (m.type === 'childList') { for (var j = 0; j < m.addedNodes.length; j++) push('w', m.addedNodes[j]); }
+                  else if (m.type === 'characterData') push('w', m.target);
+                  else if (m.type === 'attributes') push('a', m.target);
+                }
+              }).observe(document.documentElement, { childList: true, subtree: true, characterData: true,
+                attributes: true, attributeFilter: ['placeholder', 'title', 'alt', 'value'] });
+            } catch (e) {}
+          }
+          function viApply(doc) {
+            var c = w.__desmCfg;
+            try { if (allowed(doc)) viLangSel(doc); } catch (e) {}
+            if (!c.vi || !allowed(doc)) return;
+            viInit();
+            try { viWalk(doc); } catch (e) {}
+          }
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
@@ -732,6 +907,7 @@ final class BrowserModel: ObservableObject {
               if (root.classList.contains('desm-nav-open')) root.classList.remove('desm-nav-open');
             }
             if (doc === document && w === w.top) setViewport(doc);
+            viApply(doc);
           }
           function applyAll(doc) {
             apply(doc);
@@ -754,6 +930,7 @@ final class BrowserModel: ObservableObject {
             })(document);
           };
           w.__desmApplyAll();
+          if (w.__desmCfg.vi) { try { viInit(); } catch (e) {} }
 
           if (!w.__desmInit) {
             w.__desmInit = true;
@@ -814,6 +991,20 @@ final class BrowserModel: ObservableObject {
     func applyStyles() {
         installUserScript()
         evaluateNow()
+    }
+
+    /// Chép danh sách chuỗi tiếng Anh trên trang chưa có trong từ điển (dạng "English = ") để bổ sung bản dịch.
+    func copyMissingStrings(_ done: @escaping (String) -> Void) {
+        guard let webView = webView else { done("Chưa có trang để đọc."); return }
+        let js = "(function(){var m=window.__desmMiss||{};return Object.keys(m).sort().map(function(k){return k+' = ';}).join('\\n');})();"
+        webView.evaluateJavaScript(js) { result, _ in
+            if let text = result as? String, !text.isEmpty {
+                UIPasteboard.general.string = text
+                done("Đã sao chép \(text.split(separator: "\n").count) chuỗi chưa dịch. Dán vào khung chat, hoặc điền bản dịch sau dấu = rồi dán vào ô \"Từ điển bổ sung\".")
+            } else {
+                done("Chưa phát hiện chuỗi nào cần dịch. Hãy bật tiếng Việt và mở màn hình cần kiểm tra trước.")
+            }
+        }
     }
 
     // MARK: - Đọc cấu trúc trang để tinh chỉnh CSS
@@ -1014,12 +1205,22 @@ struct BrowserView: View {
 
     /// Nút nổi duy nhất để ẩn/hiện cả thanh trên và thanh dưới; kéo để dời vị trí.
     private var barsToggleButton: some View {
-        Image(systemName: model.barsHidden ? "chevron.down.circle.fill" : "chevron.up.circle.fill")
-            .font(.system(size: 30))
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(.white, Color.blue)
-            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-            .opacity(0.8)
+        Image(systemName: model.barsHidden ? "chevron.down" : "chevron.up")
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+            .background(
+                Circle().fill(LinearGradient(colors: [Color(red: 0.09, green: 0.15, blue: 0.33),
+                                                      Color(red: 0.11, green: 0.31, blue: 0.85),
+                                                      Color(red: 0.05, green: 0.65, blue: 0.91)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+            )
+            .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
+            .overlay(alignment: .bottom) {
+                Capsule().fill(Color(red: 0.98, green: 0.75, blue: 0.14)).frame(width: 16, height: 3).offset(y: -5)
+            }
+            .shadow(color: Color(red: 0.09, green: 0.15, blue: 0.33).opacity(0.45), radius: 6, y: 3)
+            .opacity(0.92)
             .padding(12)
             .offset(x: fabOffset.width + fabDrag.width, y: fabOffset.height + fabDrag.height)
             .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() } }
@@ -1115,6 +1316,10 @@ struct BrowserView: View {
         }
         .padding(.top, 9).padding(.bottom, 5)
         .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            LinearGradient(colors: [Color(red: 0.98, green: 0.75, blue: 0.14), Color(red: 0.22, green: 0.74, blue: 0.97), .clear],
+                           startPoint: .leading, endPoint: .trailing).frame(height: 2.5)
+        }
     }
 
     private func navButton(_ symbol: String, title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -1178,6 +1383,24 @@ struct SettingsView: View {
 
                     Text("Mobile: sắp xếp lại bố cục bằng CSS. Vừa màn hình: hiển thị bản desktop thu nhỏ vừa màn hình, có thể phóng to bằng hai ngón. Gốc: không can thiệp.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Ngôn ngữ") {
+                    Toggle("Giao diện DESM bằng tiếng Việt", isOn: Binding(
+                        get: { model.viLang },
+                        set: { model.setVietnamese($0) }
+                    ))
+                    Text("Dịch nhãn, nút, menu, tiêu đề cột, hộp thoại của trang DESM sang tiếng Việt (dữ liệu như mã kiện, mô tả hàng, vị trí giữ nguyên). Cũng có thể chọn \"Tiếng Việt\" ngay ở ô Language trên trang. Nên để ngôn ngữ gốc của trang là English.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("Từ điển bổ sung (mỗi dòng: English = Tiếng Việt)").font(.footnote.weight(.semibold))
+                    TextEditor(text: $model.customDict)
+                        .font(.system(.footnote, design: .monospaced))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .frame(minHeight: 100)
+                    Button("Áp dụng từ điển") { model.applyStyles(); model.showToast("Đã áp dụng từ điển"); dismiss() }
+                    Button("Sao chép chuỗi chưa dịch") {
+                        model.copyMissingStrings { message = $0 }
+                    }
                 }
                 Section("Đăng nhập") {
                     Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)

@@ -14,12 +14,15 @@
 - Cài đặt > "Sao chép cấu trúc trang đang mở": sao chép sơ đồ DOM (không gồm dữ liệu nhập) để tinh chỉnh CSS chính xác.
 - Cài đặt CSS bổ sung, được lưu cục bộ trên thiết bị bằng `@AppStorage`.
 - Quay lại/tiến/tải lại/về DESM/mở URL hiện tại bằng Safari.
+- Tiếng Việt: ô Language của DESM có thêm mục "Tiếng Việt" (máy chủ chỉ có English/한국어/Russian nên app tự dịch phía máy khách). Chọn mục này hoặc bật Cài đặt > Ngôn ngữ > "Giao diện DESM bằng tiếng Việt" thì menu, nút, nhãn bộ lọc, tiêu đề cột, hộp thoại và alert/confirm của trang được dịch theo từ điển `Translations.swift` (khớp nguyên chuỗi; dữ liệu như mã kiện, mô tả hàng, vị trí giữ nguyên). Thiếu từ nào: Cài đặt > Ngôn ngữ > "Sao chép chuỗi chưa dịch", điền bản dịch sau dấu `=` rồi dán vào ô "Từ điển bổ sung" (mỗi dòng `English = Tiếng Việt`). Nên để ngôn ngữ gốc của trang là English.
+- Header kiểu SVG (chế độ Mobile): nền gradient xanh có sóng/chấm/đường nhấn vàng, nút ≡ kính mờ, ô Language dạng viên thuốc có icon quả địa cầu + mũi tên, thẻ tab có icon kiện hàng và nút đóng tròn. Toàn bộ icon/nền là SVG nhúng trong CSS (cuối `MobileStyles.swift`); bản gốc nền ở `Branding/header-bg.svg`.
+- Cuối trang: cuối danh sách thẻ Package có dải sóng SVG mỏng (cao 40px, đường nhấn vàng), bản gốc `Branding/footer-bg.svg`; nút nổi ẩn/hiện thanh và thanh dưới cùng của app đổi sang gradient xanh cùng tông header.
 - Không lưu mật khẩu, không gửi dữ liệu đến dịch vụ ngoài.
 
 ## Tạo project và build bằng Xcode
 1. Cần máy Mac và Xcode. Tạo **iOS > App**, Product Name `DESMMobile`, Interface `SwiftUI`, Language `Swift`, Deployment Target iOS 16+.
 2. Xóa `ContentView.swift` mẫu khỏi target.
-3. Thêm toàn bộ file `.swift` trong thư mục `DESMMobile` vào project và bật target membership.
+3. Thêm toàn bộ file `.swift` (gồm `Translations.swift`) trong thư mục `DESMMobile` vào project và bật target membership.
 4. Đảm bảo chỉ có một file chứa `@main` (`DESMMobileApp.swift`).
 5. Trong Signing & Capabilities chọn Team của bạn; đổi Bundle Identifier nếu cần.
 6. Chọn iPhone làm Run Destination rồi nhấn Run.
