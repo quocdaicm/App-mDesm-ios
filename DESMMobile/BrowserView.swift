@@ -53,6 +53,8 @@ final class BrowserModel: ObservableObject {
     /// Ẩn thanh trên + thanh dưới (tự ẩn khi vào được trang DESM, bấm nút nổi để hiện lại)
     @Published var barsHidden = false
     private var wasInDesm = false
+    /// Đang ở trong DESM (không phải trang đăng nhập): dùng để hiện nút quét camera
+    @Published var inDesm = false
 
     /// Gọi sau mỗi lần tải xong trang: vừa vào được DESM (không phải trang đăng nhập) thì tự ẩn thanh; rời DESM thì hiện lại.
     func updateBars(for url: URL?) {
@@ -61,6 +63,7 @@ final class BrowserModel: ObservableObject {
         let inDesm = BrowserModel.allowedHosts.contains { host == $0 || host.hasSuffix("." + $0) } && !path.contains("login")
         if inDesm && !wasInDesm { withAnimation(.easeInOut(duration: 0.2)) { barsHidden = true } }
         if !inDesm && barsHidden { withAnimation(.easeInOut(duration: 0.2)) { barsHidden = false } }
+        if self.inDesm != inDesm { self.inDesm = inDesm }
         wasInDesm = inDesm
     }
 
@@ -823,6 +826,16 @@ final class BrowserModel: ObservableObject {
             var host = gm.parentNode;
             // An toàn: không bao giờ ẩn khung đang chứa thanh lọc / thanh nút
             if (!host || !host.parentNode || host.contains(doc.getElementById('toolbar')) || host.querySelector('.desm-filter-bar')) return;
+            // Cho phần quét camera mở thẳng màn hình chi tiết của một kiện theo id dòng
+            win.__desmOpenPkg = function(id) {
+              try {
+                var r0 = G.Rows[id]; if (!r0) return false;
+                var list = diRows(G), n = 1;
+                for (var k = 0; k < list.length; k++) { if (list[k].id === id) { n = k + 1; break; } }
+                openDetail(doc, G, id, n, function() { var b2 = doc.getElementById('desmCards'); if (b2) b2.__sig = null; cardView(doc); });
+                return true;
+              } catch (e) { return false; }
+            };
             if (win.__desmCards === undefined) win.__desmCards = true;
             var on = !!win.__desmCards;
             var box = doc.getElementById('desmCards');
@@ -1249,6 +1262,64 @@ final class BrowserModel: ObservableObject {
             viInit();
             try { viWalk(doc); } catch (e) {}
           }
+          // ===== Quét camera Package No: điền ô Số kiện hàng, Search, rồi mở chi tiết (hoặc chọn dòng) =====
+          function pkgGridOf(win) {
+            try {
+              for (var i = 0; win.TGGrids && i < win.TGGrids.length; i++) {
+                var g = win.TGGrids[i];
+                if (g && g.Cols && g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION && g.Rows) return g;
+              }
+            } catch (e) {}
+            return null;
+          }
+          function isShown(el) { try { return el.offsetWidth > 0 && el.offsetHeight > 0; } catch (e) { return false; } }
+          function pkgDoc(doc, depth) {
+            try {
+              if (doc.getElementById('txtPackageNo') && doc.getElementById('btnSearch') && pkgGridOf(doc.defaultView)) return doc;
+            } catch (e) {}
+            if (depth > 3) return null;
+            var fs = doc.querySelectorAll('iframe,frame');
+            for (var i = 0; i < fs.length; i++) {
+              var f = fs[i];
+              if (f.id === 'desmDetailFrame' || !isShown(f)) continue;
+              try { var d = f.contentDocument; if (d) { var r = pkgDoc(d, depth + 1); if (r) return r; } } catch (e) {}
+            }
+            return null;
+          }
+          function pkgNorm(s) { return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+          function scanMsg(o) { try { w.webkit.messageHandlers.desmScanResult.postMessage(o); } catch (e) {} }
+          w.__desmFindPkg = function(cfg) {
+            var d = pkgDoc(document, 0);
+            if (!d) { scanMsg({ status: 'nopage' }); return; }
+            var win = d.defaultView, G = pkgGridOf(win);
+            var inp = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo'), key = pkgNorm(cfg.key);
+            function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new win.Event(n, { bubbles: true })); }); }
+            setv(inp, cfg.term);
+            if (pl && pl.value) setv(pl, '');
+            d.getElementById('btnSearch').click();
+            var t0 = Date.now(), last = '', stable = 0;
+            (function poll() {
+              var rows = diRows(G);
+              var hits = rows.filter(function(r) { var v = pkgNorm(gridText(G, r, 'PACKAGE_NO')); return v && v.slice(-key.length) === key; });
+              var sig = rows.length + '|' + hits.length; stable = sig === last ? stable + 1 : 0; last = sig;
+              var el = Date.now() - t0;
+              var done = (hits.length && stable >= 2 && el > 1200) ||
+                (!rows.length && stable >= 6 && el > 6000) ||
+                (rows.length && !hits.length && stable >= 5 && el > 6000) || el > 20000;
+              if (!done) { setTimeout(poll, 400); return; }
+              if (!hits.length) { scanMsg({ status: 'notfound', term: cfg.term }); return; }
+              if (hits.length > 1) { scanMsg({ status: 'multi', n: hits.length }); return; }
+              var r = hits[0];
+              if (cfg.open && win.__desmOpenPkg && win.__desmOpenPkg(r.id)) { scanMsg({ status: 'opened' }); return; }
+              try {
+                rows.forEach(function(x) {
+                  var s0 = !!x.Selected && x.Selected !== '0', want = x === r;
+                  if (s0 !== want) G.SelectRow(x, want ? 1 : 0);
+                });
+              } catch (e) {}
+              scanMsg({ status: 'ok', term: gridText(G, r, 'PACKAGE_NO') });
+            })();
+          };
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
@@ -1517,10 +1588,23 @@ final class BrowserModel: ObservableObject {
     }
 }
 
+extension BrowserModel {
+    /// Quét xong: điền Số kiện hàng, Search rồi mở chi tiết kiện (theo cài đặt) trong trang DESM đang mở.
+    func runScan(_ c: PkgCandidate) {
+        let open = UserDefaults.standard.object(forKey: "desmScanOpenDetail") as? Bool ?? true
+        let cfg: [String: Any] = ["term": c.term, "key": c.key, "open": open]
+        guard let d = try? JSONSerialization.data(withJSONObject: cfg),
+              let js = String(data: d, encoding: .utf8) else { return }
+        showToast("Đang tìm \(c.display)…")
+        webView?.evaluateJavaScript("window.__desmFindPkg ? window.__desmFindPkg(\(js)) : 0;", completionHandler: nil)
+    }
+}
+
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var fabOffset: CGSize = .zero
+    @State private var showScanner = false
     @GestureState private var fabDrag: CGSize = .zero
 
     var body: some View {
@@ -1547,6 +1631,7 @@ struct BrowserView: View {
                 }
                 .animation(.easeInOut(duration: 0.2), value: model.toast)
                 .overlay(alignment: .bottomTrailing) { barsToggleButton }
+                .overlay(alignment: .bottomLeading) { scanButton }
             if !model.barsHidden { bottomBar }
         }
         .background(alignment: .bottom) {
@@ -1573,9 +1658,31 @@ struct BrowserView: View {
         )) {
             Button("Đóng", role: .cancel) { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
+        .fullScreenCover(isPresented: $showScanner) {
+            PackageScannerView { c in model.runScan(c) }
+        }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
                 .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// Nút nổi mở camera quét Package No (chữ in hoặc viết tay)
+    @ViewBuilder private var scanButton: some View {
+        if model.inDesm {
+            Button { showScanner = true } label: {
+                Image(systemName: "camera.viewfinder")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(Circle().fill(LinearGradient(colors: [Color(red: 0.11, green: 0.31, blue: 0.85),
+                                                                      Color(red: 0.05, green: 0.65, blue: 0.91)],
+                                                             startPoint: .topLeading, endPoint: .bottomTrailing)))
+                    .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
+                    .shadow(color: Color(red: 0.09, green: 0.15, blue: 0.33).opacity(0.45), radius: 6, y: 3)
+            }
+            .padding(12)
+            .accessibilityLabel("Quét số kiện hàng bằng camera")
         }
     }
 
@@ -1733,6 +1840,7 @@ struct SettingsView: View {
     @AppStorage("desmRememberLogin") private var rememberLogin = true
     @AppStorage("desmAutofill") private var autofill = true
     @AppStorage("desmExportStripScripts") private var stripScripts = true
+    @AppStorage("desmScanOpenDetail") private var scanOpenDetail = true
 
     var body: some View {
         NavigationStack {
@@ -1777,6 +1885,11 @@ struct SettingsView: View {
                     Button("Sao chép chuỗi chưa dịch") {
                         model.copyMissingStrings { message = $0 }
                     }
+                }
+                Section("Quét Package No (camera)") {
+                    Toggle("Quét xong mở luôn chi tiết kiện", isOn: $scanOpenDetail)
+                    Text("Bấm nút camera ở góc dưới bên trái khi đang ở màn hình Package. App đọc số Package No trên tem (chữ in hoặc viết tay, kể cả viết tắt kiểu DE-LS-01-07), điền ô Số kiện hàng rồi Search. Tắt công tắc này để chỉ tìm và chọn dòng, không mở chi tiết. Nếu không có dòng khớp chính xác thì app báo không tìm thấy, không mở nhầm kiện.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Đăng nhập") {
                     Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)

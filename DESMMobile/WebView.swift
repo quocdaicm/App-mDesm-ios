@@ -157,6 +157,7 @@ struct WebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         content.add(context.coordinator, name: "desmCred")
         content.add(context.coordinator, name: "desmLang")
+        content.add(context.coordinator, name: "desmScanResult")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -180,6 +181,7 @@ struct WebView: UIViewRepresentable {
         uiView.removeObserver(coordinator, forKeyPath: #keyPath(WKWebView.canGoForward))
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmCred")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmLang")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmScanResult")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -202,6 +204,23 @@ struct WebView: UIViewRepresentable {
         // Nhận tài khoản từ trang đăng nhập (khi bấm Login) và hỏi người dùng có muốn lưu để tự điền không.
         private var askedKeys = Set<String>()
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "desmScanResult" {
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any], let st = d["status"] as? String else { return }
+                let term = (d["term"] as? String) ?? ""
+                let n = (d["n"] as? Int) ?? 0
+                DispatchQueue.main.async {
+                    switch st {
+                    case "nopage": self.model.showToast("Hãy mở màn hình Package (có ô Số kiện hàng) rồi quét lại")
+                    case "notfound": self.model.showToast("Không tìm thấy kiện \(term)")
+                    case "multi": self.model.showToast("\(n) kiện khớp, chạm để chọn kiện")
+                    case "ok": self.model.showToast("Đã chọn kiện \(term)")
+                    default: break
+                    }
+                }
+                return
+            }
             if message.name == "desmLang" {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
