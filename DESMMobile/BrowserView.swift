@@ -379,6 +379,51 @@ final class BrowserModel: ObservableObject {
             if (b2) b2.textContent = win.__desmCompact ? 'Cột: Gọn' : 'Cột: Đủ';
             compactGrid(win, win.__desmCompact);
           }
+          // Tự điền tài khoản ở trang đăng nhập: bắt tài khoản khi bấm Login, và hàm điền do app gọi
+          function findUser(doc, pw) {
+            var root = pw.form || doc, list = root.querySelectorAll('input'), u = null;
+            for (var i = 0; i < list.length; i++) {
+              var x = list[i], t = (x.type || 'text').toLowerCase();
+              if (x === pw) break;
+              if (/^(text|email|tel|number)$/.test(t) && !x.disabled && x.offsetParent !== null) u = x;
+            }
+            return u;
+          }
+          function setVal(el, v) {
+            if (!el) return;
+            try {
+              var d = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value');
+              if (d && d.set) d.set.call(el, v); else el.value = v;
+            } catch (e) { el.value = v; }
+            ['input', 'change'].forEach(function(n) { el.dispatchEvent(new Event(n, { bubbles: true })); });
+          }
+          w.__desmFill = function(u, p) {
+            var pw = document.querySelector('input[type=password]');
+            if (!pw || pw.value) return false;
+            var us = findUser(document, pw);
+            if (us && !us.value) setVal(us, u);
+            setVal(pw, p);
+            return true;
+          };
+          function credHook(doc) {
+            if (doc.__desmCred || w !== w.top) return;
+            var pw = doc.querySelector('input[type=password]');
+            if (!pw || !allowed(doc)) return;
+            doc.__desmCred = true;
+            var grab = function() {
+              try {
+                var p = doc.querySelector('input[type=password]'); if (!p || !p.value) return;
+                var u = findUser(doc, p); if (!u || !u.value) return;
+                w.webkit.messageHandlers.desmCred.postMessage({ u: u.value, p: p.value });
+              } catch (e) {}
+            };
+            doc.addEventListener('submit', grab, true);
+            doc.addEventListener('click', function(e) {
+              var t = e.target && e.target.closest ? e.target.closest('button,input[type=submit],input[type=button],a') : null;
+              if (t && /log\s*in|login|sign\s*in|đăng nhập/i.test((t.id || '') + ' ' + (t.className || '') + ' ' + (t.textContent || t.value || ''))) grab();
+            }, true);
+            doc.addEventListener('keydown', function(e) { if (e.key === 'Enter') grab(); }, true);
+          }
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
@@ -434,6 +479,7 @@ final class BrowserModel: ObservableObject {
             };
             var lastForm = 0;
             var scan = function() {
+              try { credHook(document); } catch (e) {}
               if (w.__desmCfg.mode === 'mobile' && allowed(document)) {
                 var now = Date.now();
                 if (now - lastForm > 400) { lastForm = now; navHandlers(document); formify(document); fixMaps(document); try { colToggle(document); } catch (e) {} }
@@ -617,6 +663,7 @@ final class BrowserModel: ObservableObject {
 
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(spacing: 0) {
@@ -643,6 +690,9 @@ struct BrowserView: View {
         }
         .background(Color(.systemGroupedBackground))
         .tint(.blue)
+        .onChange(of: scenePhase) { phase in
+            if phase != .active { model.saveSession() }
+        }
         .alert("Không mở được địa chỉ", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -773,6 +823,8 @@ struct SettingsView: View {
     @State private var message: String?
     @State private var shareItem: ShareItem?
     @AppStorage("desmExportStripValues") private var stripValues = true
+    @AppStorage("desmRememberLogin") private var rememberLogin = true
+    @AppStorage("desmAutofill") private var autofill = true
     @AppStorage("desmExportStripScripts") private var stripScripts = true
 
     var body: some View {
@@ -799,6 +851,20 @@ struct SettingsView: View {
                     Toggle("Thu gọn thanh trên", isOn: $model.compactHeader)
 
                     Text("Mobile: sắp xếp lại bố cục bằng CSS. Vừa màn hình: hiển thị bản desktop thu nhỏ vừa màn hình, có thể phóng to bằng hai ngón. Gốc: không can thiệp.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Đăng nhập") {
+                    Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
+                    Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
+                    Button("Xóa tài khoản đã lưu", role: .destructive) {
+                        CredStore.clear()
+                        model.showToast("Đã xóa tài khoản đã lưu")
+                    }
+                    Button("Xóa phiên đã lưu", role: .destructive) {
+                        SessionStore.clear()
+                        model.showToast("Đã xóa phiên đã lưu")
+                    }
+                    Text("Phiên đăng nhập và tài khoản (chỉ khi bạn đồng ý lưu) được giữ trong Keychain của máy này, không gửi đi đâu khác. Nếu máy chủ DESM đã hết hạn phiên thì app hiện lại trang đăng nhập và tự điền sẵn tài khoản; bạn bấm Login để vào.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("CSS bổ sung") {
