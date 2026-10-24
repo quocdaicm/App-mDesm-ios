@@ -305,6 +305,34 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-card-loc { display:inline-flex; align-items:center; gap:4px; min-width:0; color:#111827; }
     html.desm-mobile-mode .desm-card-loctxt { text-decoration:underline; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+    /* ===== Danh sách dạng thẻ cho RSI / MRR / MRF / MPR ===== */
+    html:not(.desm-mobile-mode) #desmGenCards { display:none!important; }
+    html.desm-mobile-mode #desmGenCards { overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; background:#f3f6fb; max-width:100%; }
+    html.desm-mobile-mode #desmGenCards.desm-gtable { padding-bottom:4px; }
+    html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gall,
+    html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gq,
+    html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gcnt,
+    html.desm-mobile-mode #desmGenCards.desm-gtable .desm-glist { display:none!important; }
+    html.desm-mobile-mode .desm-gbar {
+      display:flex; align-items:center; gap:8px; margin:0 0 8px; padding:8px 10px; background:#fff;
+      border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:sticky; top:0; z-index:5;
+    }
+    html.desm-mobile-mode .desm-gq { flex:1 1 auto; min-width:0; height:34px; border:1px solid #d5dbe5; border-radius:8px; padding:0 10px; font-size:14px; }
+    html.desm-mobile-mode .desm-gcnt { flex:0 0 auto; font-size:12px; font-weight:600; color:#374151; white-space:nowrap; }
+    html.desm-mobile-mode .desm-gbtn { flex:0 0 auto; height:34px; padding:0 12px; border:0; border-radius:8px; background:#e8f0fe; color:#1d4ed8; font-weight:600; font-size:13px; }
+    html.desm-mobile-mode .desm-gcard.desm-g-ok { border-left-color:#22c55e; }
+    html.desm-mobile-mode .desm-gcard.desm-g-bad { border-left-color:#ef4444; }
+    html.desm-mobile-mode .desm-gtop { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+    html.desm-mobile-mode .desm-gpill { flex:0 0 auto; font-size:12px; font-weight:700; padding:2px 8px; border-radius:999px; background:#e5e7eb; color:#374151; }
+    html.desm-mobile-mode .desm-gpill.desm-gp-ok { background:#dcfce7; color:#166534; }
+    html.desm-mobile-mode .desm-gpill.desm-gp-wait { background:#fef3c7; color:#92400e; }
+    html.desm-mobile-mode .desm-gpill.desm-gp-bad { background:#fee2e2; color:#991b1b; }
+    html.desm-mobile-mode .desm-gkv { display:flex; gap:8px; margin-top:3px; font-size:13px; line-height:1.35; }
+    html.desm-mobile-mode .desm-gk { flex:0 0 38%; max-width:38%; color:#6b7686; }
+    html.desm-mobile-mode .desm-gv { flex:1 1 auto; min-width:0; color:#111827; word-break:break-word; }
+    html.desm-mobile-mode .desm-gmore { display:none; margin-top:8px; padding-top:6px; border-top:1px dashed #d5dbe5; }
+    html.desm-mobile-mode .desm-gcard.desm-gopen .desm-gmore { display:block; }
+
     /* ===== Màn hình chi tiết kiện hàng ===== */
     html.desm-mobile-mode .desm-card-hit { position:absolute; left:0; top:0; bottom:0; width:46px; z-index:2; }
     html.desm-detail-open, html.desm-detail-open body { overflow:hidden!important; }

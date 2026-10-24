@@ -967,6 +967,168 @@ final class BrowserModel: ObservableObject {
             });
             box.scrollTop = keep;
           }
+          // ===== Danh sách dạng thẻ cho các lưới khác (RSI, MRR, MRF, MPR...): mỗi dòng một thẻ, chạm thẻ để mở rộng toàn bộ cột,
+          // chạm vùng ô tích bên trái để chọn dòng (các nút Confirm/Delete... của trang vẫn dùng dòng đã chọn).
+          function genGridOf(win) {
+            var best = null, bh = -1;
+            try {
+              for (var i = 0; win.TGGrids && i < win.TGGrids.length; i++) {
+                var g = win.TGGrids[i];
+                if (!g || !g.Cols || !g.Rows || !g.Rows.Header || !g.MainTag) continue;
+                if (g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION) continue; // lưới Package đã có cardView riêng
+                if (g.Cols.MATERIAL_CODE && g.Cols.PACKAGE_NO) continue;     // lưới Hạng mục chi tiết
+                var hit = /(^|[\s_])(RSI|MRR|MRF|MPR)(_|\s|$)/i.test(Object.keys(g.Cols).join(' '));
+                if (!hit) {
+                  for (var c in g.Cols) { if (/(^|\W)(RSI|MRR|MRF|MPR)(\W|$)/i.test(gridText(g, g.Rows.Header, c))) { hit = true; break; } }
+                }
+                if (!hit) continue;
+                var h = 0; try { h = g.MainTag.offsetHeight || 0; } catch (e) {}
+                if (h > bh) { best = g; bh = h; }
+              }
+            } catch (e) {}
+            return best;
+          }
+          function genericCards(doc) {
+            var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
+            try { var fe = win.frameElement; if (fe && (fe.id === 'desmDetailFrame' || !isShown(fe))) return; } catch (e) {}
+            var G = genGridOf(win); if (!G) return;
+            var gm = G.MainTag;
+            if (!(gm.classList && gm.classList.contains('GridMain')) && gm.querySelector) {
+              var inner = gm.querySelector('.GridMain'); if (inner) gm = inner;
+            }
+            var host = gm.parentNode;
+            if (!host || !host.parentNode || host.contains(doc.getElementById('toolbar')) || host.querySelector('.desm-filter-bar')) return;
+            if (win.__desmGen === undefined) {
+              var sv = ''; try { sv = win.localStorage.getItem('desmGenCards') || ''; } catch (e) {}
+              win.__desmGen = sv !== '0';
+            }
+            win.__desmGenOpen = win.__desmGenOpen || {};
+            var on = !!win.__desmGen;
+            function el(tag, cls, text) {
+              var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e;
+            }
+            function isSel(r) { return !!r.Selected && r.Selected !== '0'; }
+            var box = doc.getElementById('desmGenCards');
+            if (!box) {
+              box = el('div', ''); box.id = 'desmGenCards';
+              host.parentNode.insertBefore(box, host.nextSibling);
+              var bar = el('div', 'desm-gbar');
+              var all = doc.createElement('input'); all.type = 'checkbox'; all.className = 'desm-chk desm-gall';
+              var q = doc.createElement('input'); q.type = 'search'; q.className = 'desm-gq'; q.placeholder = 'Lọc nhanh trong danh sách…';
+              var cnt = el('span', 'desm-gcnt', '');
+              var tg = el('button', 'desm-gbtn', ''); tg.type = 'button';
+              var list = el('div', 'desm-glist');
+              bar.appendChild(all); bar.appendChild(q); bar.appendChild(cnt); bar.appendChild(tg);
+              box.appendChild(bar); box.appendChild(list);
+              box.__all = all; box.__q = q; box.__cnt = cnt; box.__tg = tg; box.__list = list;
+              q.addEventListener('input', function() { box.__sig = null; genericCards(doc); });
+              tg.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                win.__desmGen = !win.__desmGen;
+                try { win.localStorage.setItem('desmGenCards', win.__desmGen ? '1' : '0'); } catch (e2) {}
+                box.__sig = null; genericCards(doc);
+              });
+              all.addEventListener('change', function() {
+                var want = all.checked ? 1 : 0;
+                (box.__rowsShown || []).forEach(function(r) { if (isSel(r) !== !!want) { try { G.SelectRow(r, want); } catch (e) {} } });
+                box.__sig = null; genericCards(doc);
+              });
+            }
+            box.__tg.textContent = on ? 'Dạng: Thẻ' : 'Dạng: Bảng';
+            host.classList.toggle('desm-grid-off', on);
+            box.classList.toggle('desm-gtable', !on);
+            if (!on) {
+              box.style.height = '';
+              if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
+              box.__sig = 'off'; return;
+            }
+            box.__wasOn = true;
+            try {
+              var topY = box.getBoundingClientRect().top;
+              box.style.height = Math.max(160, win.innerHeight - topY - 4) + 'px';
+            } catch (e) {}
+            // Cột hiển thị (có tiêu đề), phân loại: số phiếu, trạng thái, ngày, còn lại
+            var cols = [];
+            for (var c in G.Cols) {
+              if (c === 'Panel' || c === 'Group' || !colShown(G, c)) continue;
+              var ht = gridText(G, G.Rows.Header, c); if (!ht) continue;
+              cols.push({ c: c, h: ht });
+            }
+            var titleCol = null, statCols = [], dateCols = [], restCols = [];
+            cols.forEach(function(x) {
+              if (!titleCol && (/(RSI|MRR|MRF|MPR)\W*(NO|NUMBER|#)/i.test(x.h) || /(RSI|MRR|MRF|MPR)_?(NO|NUMBER)$/i.test(x.c))) titleCol = x;
+            });
+            cols.forEach(function(x) {
+              if (x === titleCol) return;
+              if (/status|state/i.test(x.h)) statCols.push(x);
+              else if (/date|time|etd|atd|eta|ata/i.test(x.h)) dateCols.push(x);
+              else restCols.push(x);
+            });
+            if (!titleCol && restCols.length) titleCol = restCols.shift();
+            var rows = diRows(G), qv = pkgNorm(box.__q.value);
+            var items = rows.map(function(r) {
+              var o = { r: r, id: r.id, sel: isSel(r), all: cols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }) };
+              o.title = titleCol ? gridText(G, r, titleCol.c) : '';
+              o.stat = statCols.map(function(x) { return gridText(G, r, x.c); }).filter(function(v) { return v; })[0] || '';
+              o.dates = dateCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
+              o.rest = restCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
+              o.hay = pkgNorm(o.all.map(function(d) { return d.v; }).join(' '));
+              return o;
+            }).filter(function(o) { return !qv || o.hay.indexOf(qv) >= 0; });
+            box.__rowsShown = items.map(function(o) { return o.r; });
+            var nSel = items.filter(function(o) { return o.sel; }).length;
+            var sig = items.map(function(o) { return [o.id, o.sel ? 1 : 0, o.title, o.stat, o.all.length, o.all.map(function(d) { return d.v; }).join('~'), win.__desmGenOpen[o.id] ? 1 : 0].join('|'); }).join('\n') + '#' + qv;
+            if (box.__sig === sig) return;
+            box.__sig = sig;
+            box.__all.checked = items.length > 0 && nSel === items.length;
+            box.__all.indeterminate = nSel > 0 && nSel < items.length;
+            box.__cnt.textContent = items.length + ' dòng' + (nSel ? ' · chọn ' + nSel : '');
+            var list = box.__list, keep = box.scrollTop;
+            while (list.firstChild) list.removeChild(list.firstChild);
+            if (!items.length) {
+              list.appendChild(el('div', 'desm-cards-empty', qv ? 'Không có dòng nào khớp.' : 'Chưa có dữ liệu. Hãy nhập điều kiện lọc rồi bấm Search.'));
+            }
+            function tone(s) {
+              if (/reject|cancel|delete|fail|damage/i.test(s)) return 'bad';
+              if (/complete|confirm|approv|done|close|receiv|ok\b/i.test(s)) return 'ok';
+              if (s) return 'wait';
+              return '';
+            }
+            items.forEach(function(it) {
+              var t = tone(it.stat), open = !!win.__desmGenOpen[it.id];
+              var card = el('div', 'desm-card desm-gcard' + (t ? ' desm-g-' + t : '') + (it.sel ? ' desm-sel' : '') + (open ? ' desm-gopen' : ''));
+              var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-card-chk'; ck.checked = it.sel;
+              card.appendChild(ck); card.appendChild(el('span', 'desm-card-hit'));
+              var top = el('div', 'desm-gtop');
+              top.appendChild(el('div', 'desm-card-no', it.title || '—'));
+              if (it.stat) top.appendChild(el('span', 'desm-gpill' + (t ? ' desm-gp-' + t : ''), it.stat));
+              card.appendChild(top);
+              it.rest.slice(0, 3).forEach(function(d) {
+                var kv = el('div', 'desm-gkv'); kv.appendChild(el('span', 'desm-gk', d.h)); kv.appendChild(el('span', 'desm-gv', d.v)); card.appendChild(kv);
+              });
+              if (it.dates.length) {
+                var foot = el('div', 'desm-card-foot');
+                it.dates.slice(0, 2).forEach(function(d) { foot.appendChild(el('span', 'desm-card-ao', d.h + ': ' + d.v)); });
+                card.appendChild(foot);
+              }
+              var more = el('div', 'desm-gmore');
+              it.all.forEach(function(d) {
+                if (!d.v) return;
+                var kv = el('div', 'desm-gkv'); kv.appendChild(el('span', 'desm-gk', d.h)); kv.appendChild(el('span', 'desm-gv', d.v)); more.appendChild(kv);
+              });
+              card.appendChild(more);
+              card.addEventListener('click', function(ev) {
+                if (ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit')) {
+                  try { G.SelectRow(it.r, it.sel ? 0 : 1); } catch (e) {}
+                } else {
+                  win.__desmGenOpen[it.id] = !win.__desmGenOpen[it.id];
+                }
+                box.__sig = null; genericCards(doc);
+              });
+              list.appendChild(card);
+            });
+            box.scrollTop = keep;
+          }
           // Thu gọn chiều cao tiêu đề + hàng lọc của lưới (mặc định ~120px -> ~56px); tắt chế độ Gọn thì trả lại như cũ
           function slimHeader(win, on) {
             var list = win.TGGrids; if (!list || !list.length) return;
@@ -1038,6 +1200,7 @@ final class BrowserModel: ObservableObject {
             try { slimHeader(win, win.__desmCompact); } catch (e) {}
             try { defaultToolbar(win); } catch (e) {}
             try { cardView(doc); } catch (e) {}
+            try { genericCards(doc); } catch (e) {}
           }
           // Tự điền tài khoản ở trang đăng nhập: bắt tài khoản khi bấm Login, và hàm điền do app gọi
           function findUser(doc, pw) {
