@@ -739,13 +739,23 @@ final class BrowserModel: ObservableObject {
                 var btn = w.document.getElementById('btnLocationSetup');
                 if (!btn) { cb(false); return; }
                 btn.click(); cb(true);
+                // Hộp thoại bản đồ đo kích thước lúc mở: bắn thêm 'resize' để canvas/ảnh bản đồ tính lại và vẽ
+                [150, 600, 1500].forEach(function(ms) {
+                  setTimeout(function() { try { w.dispatchEvent(new w.Event('resize')); } catch (e) {} }, ms);
+                });
               });
             }
             attempt(false);
           }
           // Đưa khung ẩn lên toàn màn hình (để thao tác hộp thoại cập nhật vị trí của DESM), có thanh "Xong" để quay lại
           function diShow(idoc, onClose) {
-            var top = diTop(idoc), D = top.document, fr = D.getElementById('desmDetailFrame'); if (!fr) { onClose(); return; }
+            var top = diTop(idoc), D = top.document, fr = D.getElementById('desmDetailFrame');
+            if (!fr) {
+              fr = D.createElement('iframe'); fr.id = 'desmDetailFrame'; fr.tabIndex = -1;
+              fr.src = '/page_crt.do?MENU_SEQ=197'; fr.style.cssText = DI_HIDE; D.body.appendChild(fr);
+            }
+            if (D.getElementById('desmDetailFrameBar')) return;
+            fr.removeAttribute('aria-hidden');
             var bar = D.createElement('div'); bar.id = 'desmDetailFrameBar';
             bar.className = 'desm-detail-top desm-frame-bar';
             bar.style.cssText = 'position:fixed;left:0;top:0;right:0;z-index:2147483200;';
@@ -755,8 +765,13 @@ final class BrowserModel: ObservableObject {
             fr.style.cssText = 'position:fixed;left:0;top:calc(59px + env(safe-area-inset-top));width:100vw;height:calc(100vh - 59px - env(safe-area-inset-top));' +
               'border:0;opacity:1;pointer-events:auto;z-index:2147483100;background:#fff;';
             b.addEventListener('click', function() {
+              // Đóng hộp thoại bản đồ còn mở trong khung trước khi ẩn khung đi
+              try {
+                var fw = fr.contentWindow, dlg = fw.document.getElementById('dlgDesmLocation');
+                if (dlg && fw.jQuery) fw.jQuery(dlg).modal('hide');
+              } catch (e) {}
               if (bar.parentNode) bar.parentNode.removeChild(bar);
-              fr.style.cssText = DI_HIDE;
+              fr.style.cssText = DI_HIDE; fr.setAttribute('aria-hidden', 'true');
               onClose();
             });
           }
@@ -956,13 +971,16 @@ final class BrowserModel: ObservableObject {
             // Cập nhật vị trí cho một hoặc nhiều hạng mục (như nút Location Update ở trang Hạng mục chi tiết)
             function updateItemsLoc(xs) {
               note.textContent = 'Đang mở cập nhật vị trí…';
+              // Hiện khung lên toàn màn hình TRƯỚC khi bấm Location Update: hộp thoại bản đồ mở trong khung đang hiển thị
+              // (trước đây mở lúc khung còn ẩn ngoài màn hình nên bản đồ không tải/không vẽ được).
+              diShow(idoc, function() {
+                try { delete (diTop(idoc).__desmDI || {})[pkgNo]; } catch (e) {}
+                if (ov.parentNode) loadItems(true);
+              });
               diSelect(idoc, pkgNo, xs, function(ok) {
-                if (!ok) { note.textContent = 'Không chọn được hạng mục (lưới chưa sẵn sàng). Thử lại sau vài giây.'; return; }
-                note.textContent = '';
-                diShow(idoc, function() {
-                  try { delete (diTop(idoc).__desmDI || {})[pkgNo]; } catch (e) {}
-                  if (ov.parentNode) loadItems(true);
-                });
+                if (ok) { note.textContent = ''; return; }
+                note.textContent = 'Không chọn được hạng mục (lưới chưa sẵn sàng). Thử lại sau vài giây.';
+                try { var bk = diTop(idoc).document.querySelector('#desmDetailFrameBar .desm-detail-back'); if (bk) bk.click(); } catch (e) {}
               });
             }
             loadItems();
