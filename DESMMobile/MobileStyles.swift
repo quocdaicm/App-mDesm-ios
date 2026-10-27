@@ -448,9 +448,9 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-sub-filter { display:flex; gap:8px; margin-bottom:8px; }
     html.desm-mobile-mode .desm-sub-in { flex:1; min-width:0; height:42px; border:1px solid #cbd5e1; border-radius:10px; padding:0 12px; font-size:16px; background:#fff; color:#111827; }
     html.desm-mobile-mode .desm-detail-note { font-size:13px; color:#b45309; padding:0 4px 8px; }
-    /* Nút gọn dạng viên thuốc, canh giữa và chừa chỗ hai nút nổi (camera trái, ẩn/hiện thanh phải) */
+    /* Nút gọn dạng viên thuốc, canh giữa */
     html.desm-mobile-mode .desm-detail-lu {
-      flex:0 0 auto; align-self:center; box-sizing:border-box; width:calc(100% - 156px); min-width:190px; max-width:300px;
+      flex:0 0 auto; align-self:center; box-sizing:border-box; width:calc(100% - 48px); min-width:190px; max-width:320px;
       margin:6px 0 calc(14px + env(safe-area-inset-bottom)); padding:0 16px; min-height:46px;
       background:linear-gradient(135deg,#1e88f5,#0ea5e9)!important; color:#fff!important;
       border:1.5px solid rgba(255,255,255,.55)!important; border-radius:999px!important;

@@ -1107,7 +1107,7 @@ final class BrowserModel: ObservableObject {
               else { note.textContent = ''; lines.lastChild.textContent = String(rows.length); }
               refreshSel();
             }
-            var LSK = 'desmDI:' + pkgNo, shown = null;
+            var LSK = 'desmDI2:' + pkgNo, shown = null;
             function lsGet() { try { var v = JSON.parse(localStorage.getItem(LSK) || 'null'); return v && v.rows && v.rows.length ? v.rows : null; } catch (e) { return null; } }
             function lsSet(rows) { try { if (rows && rows.length) localStorage.setItem(LSK, JSON.stringify({ t: Date.now(), rows: rows })); } catch (e) {} }
             function lsDel() { try { localStorage.removeItem(LSK); } catch (e) {} }
@@ -2426,12 +2426,10 @@ extension BrowserModel {
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
     @Environment(\.scenePhase) private var scenePhase
-    @State private var fabOffset: CGSize = .zero
     @State private var showScanner = false
     @State private var showScanChoice = false
     @State private var showPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem? = nil
-    @GestureState private var fabDrag: CGSize = .zero
     @State private var selectedTab: DesmTab = .package
     @State private var showMore = false
 
@@ -2458,11 +2456,10 @@ struct BrowserView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: model.toast)
-                .overlay(alignment: .bottomTrailing) { barsToggleButton }
-                .overlay(alignment: .bottomLeading) { scanButton }
             // Trong DESM: footer 5 tab mới (luôn hiện). Ngoài DESM (trang đăng nhập...): thanh điều hướng cũ, ẩn thì chỉ còn dải an toàn.
             if model.inDesm {
                 DesmTabBar(selected: $selectedTab,
+                           onScan: { showScanChoice = true },
                            onSelect: { tab in
                                if tab == .more { showMore = true }
                                else { selectedTab = tab; model.openDesmTab(tab) }
@@ -2532,53 +2529,6 @@ struct BrowserView: View {
         .sheet(item: $model.shotItem) { item in
             ShareSheet(url: item.url)
         }
-    }
-
-    /// Nút nổi mở camera quét Package No (chữ in hoặc viết tay)
-    @ViewBuilder private var scanButton: some View {
-        if model.inDesm {
-            Button { showScanChoice = true } label: {
-                Image(systemName: "camera.viewfinder")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(Circle().fill(LinearGradient(colors: [Color(red: 0.20, green: 0.58, blue: 0.95),
-                                                                      Color(red: 0.30, green: 0.72, blue: 0.98)],
-                                                             startPoint: .topLeading, endPoint: .bottomTrailing)))
-                    .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
-                    .shadow(color: Color(red: 0.15, green: 0.40, blue: 0.80).opacity(0.30), radius: 6, y: 3)
-            }
-            .padding(12)
-            .accessibilityLabel("Quét số kiện hàng bằng camera")
-        }
-    }
-
-    /// Nút nổi duy nhất để ẩn/hiện cả thanh trên và thanh dưới; kéo để dời vị trí.
-    private var barsToggleButton: some View {
-        Image(systemName: model.barsHidden ? "chevron.down" : "chevron.up")
-            .font(.system(size: 17, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(width: 44, height: 44)
-            .background(
-                Circle().fill(LinearGradient(colors: [Color(red: 0.14, green: 0.40, blue: 0.88),
-                                                      Color(red: 0.20, green: 0.58, blue: 0.95)],
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
-            .overlay(alignment: .bottom) {
-                Capsule().fill(Color(red: 0.98, green: 0.75, blue: 0.14)).frame(width: 16, height: 3).offset(y: -5)
-            }
-            .shadow(color: Color(red: 0.15, green: 0.40, blue: 0.80).opacity(0.30), radius: 6, y: 3)
-            .opacity(0.92)
-            .padding(12)
-            .offset(x: fabOffset.width + fabDrag.width, y: fabOffset.height + fabDrag.height)
-            .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() } }
-            .gesture(
-                DragGesture(minimumDistance: 8)
-                    .updating($fabDrag) { v, state, _ in state = v.translation }
-                    .onEnded { v in fabOffset.width += v.translation.width; fabOffset.height += v.translation.height }
-            )
-            .accessibilityLabel(model.barsHidden ? "Hiện thanh công cụ" : "Ẩn thanh công cụ")
     }
 
     private func modeButton(size: CGFloat) -> some View {
@@ -2746,11 +2696,32 @@ private struct TabWave: Shape {
 
 struct DesmTabBar: View {
     @Binding var selected: DesmTab
+    var onScan: () -> Void
     var onSelect: (DesmTab) -> Void
+
+    /// Nút camera cố định ở giữa thanh: Kiện hàng, Nhập kho, [camera], Xuất kho, Thêm
+    private var scanItem: some View {
+        Button(action: onScan) {
+            Image(systemName: "camera.viewfinder")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(LinearGradient(colors: [Color(red: 0.20, green: 0.58, blue: 0.95),
+                                                                  Color(red: 0.30, green: 0.72, blue: 0.98)],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing)))
+                .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 2))
+                .shadow(color: Color(red: 0.15, green: 0.40, blue: 0.80).opacity(0.35), radius: 6, y: 3)
+                .offset(y: -8)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 64)
+        .accessibilityLabel("Quét số kiện hàng bằng camera")
+    }
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(DesmTab.allCases) { tab in
+            ForEach(DesmTab.allCases.filter { $0 != .report }) { tab in
+                if tab == .outbound { scanItem }
                 let on = tab == selected
                 Button { onSelect(tab) } label: {
                     VStack(spacing: 3) {
@@ -3338,7 +3309,7 @@ struct SettingsView: View {
         } header: {
             Text("Quét Package No")
         } footer: {
-            Text("Bấm nút camera ở góc dưới bên trái khi đang ở màn hình Package. App đọc Package No trên tem, điền ô Số kiện hàng rồi Search. Không có dòng khớp chính xác thì báo không tìm thấy, không mở nhầm kiện.")
+            Text("Bấm nút camera ở giữa thanh dưới khi đang ở màn hình Package. App đọc Package No trên tem, điền ô Số kiện hàng rồi Search. Không có dòng khớp chính xác thì báo không tìm thấy, không mở nhầm kiện.")
         }
     }
 
