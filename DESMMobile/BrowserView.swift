@@ -758,7 +758,8 @@ final class BrowserModel: ObservableObject {
               st = d.createElement('style'); st.id = 'desmFrameClean';
               st.textContent = 'html, body { background:transparent!important; }' +
                 'body * { visibility:hidden!important; }' +
-                '.modal, .modal *, .modal-backdrop { visibility:visible!important; }';
+                '.modal, .modal *, .modal-backdrop { visibility:visible!important; }' +
+                '#alert-success, #alert-failure, #alert-warning, #alert-success *, #alert-failure *, #alert-warning * { visibility:visible!important; }';
               (d.head || d.documentElement).appendChild(st);
             } catch (e) {}
           }
@@ -998,7 +999,7 @@ final class BrowserModel: ObservableObject {
                 renderItems(rows);
               }, nLines, true);
             }
-            // Lưu vị trí xong (saveDesmLocationCheck.do trả success OK sau khi bấm OK ở hộp thoại xác nhận) thì tự bấm "‹ Xong"
+            // Lưu vị trí thật xong (saveDesmLocation.do, sau khi bấm OK ở hộp thoại xác nhận) thì tự bấm "‹ Xong"
             // để quay về danh sách hạng mục của kiện (danh sách tự nạp lại). Chỉ tự quay lại 1 lần cho mỗi lần mở.
             function autoBackOnSave() {
               try {
@@ -1042,13 +1043,15 @@ final class BrowserModel: ObservableObject {
                 X.open = function(m, u) { try { this.__desmU = String(u == null ? '' : u); } catch (e) {} return oo.apply(this, arguments); };
                 X.send = function() {
                   var x = this;
-                  if (/saveDesmLocationCheck\.do/.test(x.__desmU || '')) {
+                  // CHÚ Ý: saveDesmLocationCheck.do chỉ là bước KIỂM TRA trước khi hiện hộp thoại xác nhận. Việc lưu thật là
+                  // saveDesmLocation.do (chạy sau khi bấm OK). Chỉ quay lại sau khi lưu thật thành công (không có "error").
+                  if (/saveDesmLocation\.do/.test(x.__desmU || '')) {
                     x.addEventListener('loadend', function() {
                       var good = false;
-                      try { good = x.status === 200 && /"success"\s*:\s*"OK"/i.test(x.responseText || ''); } catch (e) {}
+                      try { good = x.status === 200 && !/"error"\s*:\s*(?!null\b)/i.test(x.responseText || ''); } catch (e) {}
                       if (!good || !fw.__desmAutoBack) return;
                       fw.__desmAutoBack = 0;
-                      setTimeout(goBack, 700);
+                      setTimeout(goBack, 1300);
                     });
                   }
                   return os.apply(this, arguments);
