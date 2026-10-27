@@ -74,3 +74,32 @@ Nguồn: dump trang + file `plDetail.js` do người dùng gửi (2026-10-27).
 Nguyên nhân: `checkLoginForm` (WebView.swift) và thăm dò `probeSession` coi MỌI ô `input[type=password]` là trang đăng nhập, mà `main.do`
 của DESM có sẵn form/ô đổi mật khẩu (tài khoản ngoài @doosan.com) -> vào được main.do vẫn bị đẩy về login.do (lặp tối đa 3 lần/5 phút).
 Đã sửa: chỉ tính là trang đăng nhập khi có ĐÚNG MỘT ô mật khẩu đang hiển thị; bỏ dò ô mật khẩu trong HTML ở `probeSession`.
+
+## Nhật ký API nâng cấp (để làm màn tra cứu hàng gọi API trực tiếp)
+- Trang gửi từng request sang app qua message `desmNet`; app ghi vào file `Caches/desm-netlog.jsonl` (NetLogStore ở cuối BrowserView.swift), tối đa ~40 MB.
+- API dữ liệu lưu ĐỦ phản hồi (≤400 000 ký tự/request) và body (≤30 000); js/css/ảnh/font chỉ một dòng. Có thêm `ct` (content-type) và `len`.
+- Xuất 3 dạng trong Cài đặt: văn bản, JSON đầy đủ (`desm-api-full.json`), tóm tắt endpoint (`desm-api-summary.txt`: số lần gọi, query/body mẫu, tên trường phản hồi).
+- Quy trình: bật ghi -> thao tác tra cứu hàng -> lưu JSON + tóm tắt -> dựa vào đó viết client gọi thẳng `URLSession` với cookie phiên (xem `probeSession`).
+
+## Cài đặt sắp xếp lại
+Màn chính: Hiển thị, Ngôn ngữ, Quét Package No, Đăng nhập, rồi "Nâng cao & công cụ phát triển" (CSS bổ sung, từ điển bổ sung, nhật ký API, mã nguồn trang, tải địa chỉ).
+Đã bỏ trùng lặp: 2 nút xóa đăng nhập -> 1; 2 đoạn giải thích tự đăng nhập -> 1; nút "Áp dụng CSS/từ điển" (đã có "Xong"); "Sao chép" nhật ký API/HTML (quá dài, dùng lưu file);
+3 mục công cụ -> 1 màn "Nâng cao"; ô độ rộng thu nhỏ chỉ hiện khi chọn chế độ "Vừa màn hình".
+
+## Tự lưu cấu trúc & CSS từng màn hình
+Nâng cao > "Ghi từng màn hình". Script `snapRecorderSource` (trang chính) quét trang + iframe cùng domain mỗi 2,5 giây; màn nào nội dung ổn định (2 lần đo bằng nhau) thì gửi message `desmSnap`
+(path, HTML đã làm sạch, cây cấu trúc, danh sách + nội dung CSS). `SnapStore` lưu trong Caches/desm-snap; nút "Lưu tất cả màn hình" xuất 1 file: mục lục -> từng màn -> toàn bộ CSS.
+
+## Chụp ảnh toàn trang
+Nút "Chụp" ở thanh dưới -> `BrowserModel.captureFullPage()`: mở rộng khung cuộn/iframe, `createPDF` toàn bộ contentSize, vẽ PNG (≤12 000 px, ≤80 triệu điểm), khôi phục trang, mở bảng chia sẻ (Lưu vào Ảnh / Tệp). Quá dài -> xuất PDF.
+Hạn chế: bảng TreeGrid cuộn ảo chỉ có các dòng đang hiển thị.
+
+## Vuốt mép màn hình để quay lại/tiến
+`WebView.swift`: hai `UIScreenEdgePanGestureRecognizer` (trái = goBack, phải = goForward; ngưỡng 60 pt hoặc vận tốc 500) thay cho `allowsBackForwardNavigationGestures` (đã tắt để không chuyển hai lần). Công tắc: Cài đặt > Hiển thị (`desmEdgeSwipe`, mặc định bật).
+
+## Giao diện Header/Footer mới (2026-10-27)
+- Header (CSS, `MobileStyles.swift`): gradient `#173eae → #1761e8 → #27a8ed`, chấm + sóng sáng, bo đáy 26px, nút ≡ và ô Language dạng kính mờ 44px; thẻ tab bo 16px, viền trên xanh 4px. Chiều cao iframe tab đã trừ `7.2rem`.
+- Footer (SwiftUI, `BrowserView.swift`): `DesmTabBar` – 5 tab Kiện hàng / Nhập kho / Xuất kho / Báo cáo / Thêm, thẻ trắng nổi trên nền sóng xanh nhạt; luôn hiện khi đang ở DESM (`model.inDesm`). Ngoài DESM (đăng nhập) vẫn dùng thanh điều hướng cũ.
+- Tab mở menu DESM bằng JS `__desmOpenMenu(id, pattern)`; ánh xạ tab → mục menu nằm ở `enum DesmTab` (`menuId`, `pattern`). Chỉ `196` (Kiện hàng) là đã xác nhận; 3 tab còn lại đang khớp theo tên: Nhập kho = "Material Receiving", Xuất kho = "Outgoing Control", Báo cáo = "RSI Summary" — CHƯA kiểm chứng trên máy thật. Không khớp thì app mở ngăn kéo menu và báo toast.
+- "Thêm" (`MoreSheet`) chứa các nút cũ: Menu đầy đủ, Quay lại, Tiến, Tải lại, Về DESM, Chụp trang, Chế độ hiển thị, Ẩn/hiện thanh địa chỉ, Cài đặt.
+- Chưa build bằng Xcode trong môi trường tạo ra; JS đã `node --check`, SVG đã kiểm tra hợp lệ.

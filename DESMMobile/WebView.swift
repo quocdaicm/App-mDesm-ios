@@ -158,13 +158,23 @@ struct WebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
+        // Vuốt từ mép trái = quay lại, từ mép phải = tiến (tự xử lý để chạy ổn định cả với trang nhiều khung/iframe của DESM).
+        // Tắt cử chỉ có sẵn của WKWebView để không bị chuyển trang hai lần. Bật/tắt: Cài đặt > Hiển thị (desmEdgeSwipe).
+        webView.allowsBackForwardNavigationGestures = false
+        for edge in [UIRectEdge.left, UIRectEdge.right] {
+            let g = UIScreenEdgePanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.edgeSwipe(_:)))
+            g.edges = edge
+            webView.addGestureRecognizer(g)
+            webView.scrollView.panGestureRecognizer.require(toFail: g)
+        }
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         content.add(context.coordinator, name: "desmCred")
         content.add(context.coordinator, name: "desmLang")
         content.add(context.coordinator, name: "desmScanResult")
         content.add(context.coordinator, name: "desmSession")
+        content.add(context.coordinator, name: "desmNet")
+        content.add(context.coordinator, name: "desmSnap")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -190,11 +200,23 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmLang")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmScanResult")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmSession")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmNet")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmSnap")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        @objc func edgeSwipe(_ g: UIScreenEdgePanGestureRecognizer) {
+            guard g.state == .ended, BrowserModel.edgeSwipe, let wv = model.webView else { return }
+            let dx = g.translation(in: wv).x, vx = g.velocity(in: wv).x
+            if g.edges == .left, dx > 60 || vx > 500 {
+                if wv.canGoBack { wv.goBack() } else { model.showToast("Không còn trang trước") }
+            } else if g.edges == .right, dx < -60 || vx < -500 {
+                if wv.canGoForward { wv.goForward() } else { model.showToast("Không còn trang sau") }
+            }
+        }
+
         private let model: BrowserModel
         init(model: BrowserModel) { self.model = model }
 
@@ -230,6 +252,22 @@ struct WebView: UIViewRepresentable {
                     default: break
                     }
                 }
+                return
+            }
+            if message.name == "desmNet" {
+                // Nhật ký API: trang gửi từng request/phản hồi, app ghi vào file trong máy (chỉ khi người dùng bật ghi)
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any] else { return }
+                NetLogStore.append(d)
+                return
+            }
+            if message.name == "desmSnap" {
+                // Lưu cấu trúc/HTML/CSS từng màn hình (chỉ khi người dùng bật "Tự lưu từng màn hình")
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any] else { return }
+                SnapStore.save(d)
                 return
             }
             if message.name == "desmSession" {

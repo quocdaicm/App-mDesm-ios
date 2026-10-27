@@ -60,6 +60,7 @@ final class BrowserModel: ObservableObject {
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var showSettings = false
+    @Published var shotItem: ShareItem?      // ảnh chụp toàn trang chờ chia sẻ/lưu
     @Published var errorMessage: String?
     @Published var toast: String?
     /// Ẩn thanh trên + thanh dưới (tự ẩn khi vào được trang DESM, bấm nút nổi để hiện lại)
@@ -175,6 +176,18 @@ final class BrowserModel: ObservableObject {
     func cycleMode() {
         setMode(layoutMode.next)
         showToast(layoutMode.title)
+    }
+
+    /// Footer 5 tab: mở mục menu DESM tương ứng; không tìm thấy thì mở ngăn kéo menu để người dùng tự chọn.
+    func openDesmTab(_ tab: DesmTab) {
+        func q(_ v: String?) -> String { v.map { "'\($0)'" } ?? "null" }
+        let js = "window.__desmOpenMenu ? window.__desmOpenMenu(\(q(tab.menuId)), '\(tab.pattern)') : 0;"
+        webView?.evaluateJavaScript(js) { [weak self] r, _ in
+            if (r as? Int ?? 0) == 0 {
+                self?.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
+                self?.showToast("Chọn mục “\(tab.title)” trong menu")
+            }
+        }
     }
 
     func showToast(_ text: String) {
@@ -1649,6 +1662,25 @@ final class BrowserModel: ObservableObject {
               setTimeout(poll, 400);
             })();
           }
+          // Footer 5 tab: bấm mục menu bên trái theo tên (Anh/Việt). id = id thẻ <a> nếu biết (vd '196' = Kiện hàng). Trả 1 nếu bấm được.
+          w.__desmOpenMenu = function(id, pattern) {
+            var D; try { D = diTop(document).document; } catch (e) { D = document; }
+            var a = id ? D.getElementById(id) : null;
+            if (!a && pattern) {
+              var rx = new RegExp(pattern, 'i'), L = D.querySelectorAll('#accordionSidebar a');
+              for (var i = 0; i < L.length; i++) {
+                if (L[i].hasAttribute('data-toggle')) continue;
+                var tx = (L[i].textContent || '').replace(/\s+/g, ' ').trim();
+                if (tx && rx.test(tx)) { a = L[i]; break; }
+              }
+            }
+            if (!a) return 0;
+            try { a.click(); D.documentElement.classList.remove('desm-nav-open'); return 1; } catch (e) { return 0; }
+          };
+          w.__desmToggleDrawer = function() {
+            var D; try { D = diTop(document).document; } catch (e) { D = document; }
+            D.documentElement.classList.toggle('desm-nav-open');
+          };
           w.__desmFindPkg = function(cfg) {
             ensurePkgDoc(function(d) {
               if (!d) { scanMsg({ status: 'nopage' }); return; }
@@ -1880,6 +1912,9 @@ final class BrowserModel: ObservableObject {
         controller.addUserScript(WKUserScript(source: BrowserModel.netRecorderSource,
                                               injectionTime: .atDocumentStart,
                                               forMainFrameOnly: false))
+        controller.addUserScript(WKUserScript(source: BrowserModel.snapRecorderSource,
+                                              injectionTime: .atDocumentEnd,
+                                              forMainFrameOnly: true))
     }
 
     /// Áp ngay lên trang đang mở.
@@ -2137,6 +2172,8 @@ struct BrowserView: View {
     @State private var showPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem? = nil
     @GestureState private var fabDrag: CGSize = .zero
+    @State private var selectedTab: DesmTab = .package
+    @State private var showMore = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2163,9 +2200,16 @@ struct BrowserView: View {
                 .animation(.easeInOut(duration: 0.2), value: model.toast)
                 .overlay(alignment: .bottomTrailing) { barsToggleButton }
                 .overlay(alignment: .bottomLeading) { scanButton }
-            if !model.barsHidden { bottomBar }
-            // Khi thanh dưới ẩn: vẽ footer SVG ngay vùng an toàn dưới cùng (thanh Home), cùng kiểu header
-            if model.barsHidden {
+            // Trong DESM: footer 5 tab mới (luôn hiện). Ngoài DESM (trang đăng nhập...): thanh điều hướng cũ, ẩn thì chỉ còn dải an toàn.
+            if model.inDesm {
+                DesmTabBar(selected: $selectedTab,
+                           onSelect: { tab in
+                               if tab == .more { showMore = true }
+                               else { selectedTab = tab; model.openDesmTab(tab) }
+                           })
+            } else if !model.barsHidden {
+                bottomBar
+            } else {
                 Color.clear.frame(height: 0)
                     .background(FooterBackground().ignoresSafeArea(edges: .bottom))
             }
@@ -2216,9 +2260,16 @@ struct BrowserView: View {
                 }
             }
         }
+        .sheet(isPresented: $showMore) {
+            MoreSheet(model: model, onClose: { showMore = false })
+                .presentationDetents([.height(430)])
+        }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $model.shotItem) { item in
+            ShareSheet(url: item.url)
         }
     }
 
@@ -2230,11 +2281,11 @@ struct BrowserView: View {
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
-                    .background(Circle().fill(LinearGradient(colors: [Color(red: 0.11, green: 0.31, blue: 0.85),
-                                                                      Color(red: 0.05, green: 0.65, blue: 0.91)],
+                    .background(Circle().fill(LinearGradient(colors: [Color(red: 0.20, green: 0.58, blue: 0.95),
+                                                                      Color(red: 0.30, green: 0.72, blue: 0.98)],
                                                              startPoint: .topLeading, endPoint: .bottomTrailing)))
                     .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
-                    .shadow(color: Color(red: 0.09, green: 0.15, blue: 0.33).opacity(0.45), radius: 6, y: 3)
+                    .shadow(color: Color(red: 0.15, green: 0.40, blue: 0.80).opacity(0.30), radius: 6, y: 3)
             }
             .padding(12)
             .accessibilityLabel("Quét số kiện hàng bằng camera")
@@ -2248,16 +2299,15 @@ struct BrowserView: View {
             .foregroundStyle(.white)
             .frame(width: 44, height: 44)
             .background(
-                Circle().fill(LinearGradient(colors: [Color(red: 0.09, green: 0.15, blue: 0.33),
-                                                      Color(red: 0.11, green: 0.31, blue: 0.85),
-                                                      Color(red: 0.05, green: 0.65, blue: 0.91)],
+                Circle().fill(LinearGradient(colors: [Color(red: 0.14, green: 0.40, blue: 0.88),
+                                                      Color(red: 0.20, green: 0.58, blue: 0.95)],
                                              startPoint: .topLeading, endPoint: .bottomTrailing))
             )
             .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1.5))
             .overlay(alignment: .bottom) {
                 Capsule().fill(Color(red: 0.98, green: 0.75, blue: 0.14)).frame(width: 16, height: 3).offset(y: -5)
             }
-            .shadow(color: Color(red: 0.09, green: 0.15, blue: 0.33).opacity(0.45), radius: 6, y: 3)
+            .shadow(color: Color(red: 0.15, green: 0.40, blue: 0.80).opacity(0.30), radius: 6, y: 3)
             .opacity(0.92)
             .padding(12)
             .offset(x: fabOffset.width + fabDrag.width, y: fabOffset.height + fabDrag.height)
@@ -2348,9 +2398,7 @@ struct BrowserView: View {
             navButton("chevron.right", title: "Tiến", enabled: model.canGoForward) { model.goForward() }
             navButton("house.fill", title: "DESM", enabled: true) { model.home() }
             navButton("arrow.clockwise", title: "Tải lại", enabled: true) { model.reload() }
-            navButton("safari", title: "Safari", enabled: true) {
-                if let url = model.webView?.url { UIApplication.shared.open(url) }
-            }
+            navButton("camera.viewfinder", title: "Chụp", enabled: true) { model.captureFullPage() }
         }
         .padding(.top, 10).padding(.bottom, 5)
         .background(FooterBackground().ignoresSafeArea(edges: .bottom))
@@ -2366,6 +2414,168 @@ struct BrowserView: View {
             .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
         .disabled(!enabled)
+    }
+}
+
+// MARK: - Footer 5 tab (mẫu mới)
+
+/// 5 tab của footer. Muốn đổi mục menu DESM mà tab mở: sửa `menuId` (id thẻ <a> trong menu trái) hoặc `pattern` (regex tên mục, Anh|Việt).
+enum DesmTab: CaseIterable, Identifiable {
+    case package, inbound, outbound, report, more
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .package: return "Kiện hàng"
+        case .inbound: return "Nhập kho"
+        case .outbound: return "Xuất kho"
+        case .report: return "Báo cáo"
+        case .more: return "Thêm"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .package: return "shippingbox"
+        case .inbound: return "square.and.arrow.down"
+        case .outbound: return "square.and.arrow.up"
+        case .report: return "chart.bar.xaxis"
+        case .more: return "square.grid.2x2"
+        }
+    }
+    /// id thẻ <a> trong menu (đã biết: 196 = Kiện hàng). nil = tìm theo tên.
+    var menuId: String? { self == .package ? "196" : nil }
+    /// Tên mục menu (không phân biệt hoa thường, cả tiếng Anh và tiếng Việt).
+    var pattern: String {
+        switch self {
+        case .package: return "^(Package|Kiện hàng)$"
+        case .inbound: return "^(Material Receiving|Nhận vật tư)$"
+        case .outbound: return "^(Outgoing Control|Kiểm soát xuất kho)$"
+        case .report: return "^(RSI Summary|Tổng hợp RSI)$"
+        case .more: return ""
+        }
+    }
+}
+
+private extension Color {
+    static let tabBlue = Color(red: 47 / 255, green: 125 / 255, blue: 224 / 255)
+    static let tabBlueLight = Color(red: 150 / 255, green: 200 / 255, blue: 248 / 255)
+    static let tabInk = Color(red: 112 / 255, green: 133 / 255, blue: 160 / 255)
+}
+
+/// Sóng xanh nhạt phía sau thanh tab (như mẫu).
+private struct TabWave: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: r.height * 0.42))
+        p.addCurve(to: CGPoint(x: r.width * 0.55, y: r.height * 0.30),
+                   control1: CGPoint(x: r.width * 0.18, y: r.height * 0.10),
+                   control2: CGPoint(x: r.width * 0.35, y: r.height * 0.55))
+        p.addCurve(to: CGPoint(x: r.width, y: r.height * 0.22),
+                   control1: CGPoint(x: r.width * 0.75, y: r.height * 0.05),
+                   control2: CGPoint(x: r.width * 0.90, y: r.height * 0.40))
+        p.addLine(to: CGPoint(x: r.width, y: r.height)); p.addLine(to: CGPoint(x: 0, y: r.height)); p.closeSubpath()
+        return p
+    }
+}
+
+struct DesmTabBar: View {
+    @Binding var selected: DesmTab
+    var onSelect: (DesmTab) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(DesmTab.allCases) { tab in
+                let on = tab == selected
+                Button { onSelect(tab) } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 21, weight: on ? .semibold : .regular))
+                        Text(tab.title)
+                            .font(.system(size: 11, weight: on ? .bold : .medium))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    .foregroundStyle(on ? Color.tabBlue : Color.tabInk)
+                    .frame(maxWidth: .infinity).padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(on ? Color.tabBlue.opacity(0.09) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color.white)
+                .shadow(color: Color(red: 0.09, green: 0.25, blue: 0.55).opacity(0.16), radius: 12, y: -2)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Color.white.opacity(0.9), lineWidth: 1))
+        .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
+        .background(
+            ZStack {
+                Color(red: 0.95, green: 0.97, blue: 1.0)
+                TabWave().fill(LinearGradient(colors: [Color.tabBlueLight.opacity(0.45), Color.tabBlueLight.opacity(0.12)],
+                                              startPoint: .top, endPoint: .bottom))
+            }
+            .ignoresSafeArea(edges: .bottom)
+        )
+    }
+}
+
+/// Mục "Thêm": các nút điều hướng/công cụ cũ của thanh dưới + mở menu đầy đủ, Cài đặt.
+struct MoreSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    private struct Item: Identifiable {
+        let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
+    }
+    private var items: [Item] {
+        [
+            Item(symbol: "line.3.horizontal", title: "Menu đầy đủ") {
+                model.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
+            },
+            Item(symbol: "chevron.left", title: "Quay lại", enabled: model.canGoBack) { model.goBack() },
+            Item(symbol: "chevron.right", title: "Tiến", enabled: model.canGoForward) { model.goForward() },
+            Item(symbol: "arrow.clockwise", title: "Tải lại") { model.reload() },
+            Item(symbol: "house.fill", title: "Về DESM") { model.home() },
+            Item(symbol: "camera.viewfinder", title: "Chụp trang") { model.captureFullPage() },
+            Item(symbol: model.layoutMode.symbol, title: model.layoutMode.shortTitle) { model.cycleMode() },
+            Item(symbol: "rectangle.topthird.inset.filled", title: model.barsHidden ? "Hiện thanh địa chỉ" : "Ẩn thanh địa chỉ") {
+                withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() }
+            },
+            Item(symbol: "slider.horizontal.3", title: "Cài đặt") { model.showSettings = true },
+        ]
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Capsule().fill(Color.secondary.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8)
+            Text("Thêm").font(.system(size: 18, weight: .bold))
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                ForEach(items) { it in
+                    Button {
+                        onClose()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { it.action() }
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: it.symbol).font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(Color.tabBlue)
+                            Text(it.title).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                                .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.85)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 82)
+                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.tabBlue.opacity(0.08)))
+                        .opacity(it.enabled ? 1 : 0.4)
+                    }
+                    .buttonStyle(.plain).disabled(!it.enabled)
+                }
+            }
+            .padding(.horizontal, 16)
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -2429,14 +2639,14 @@ extension BrowserModel {
       function mask(s) {
         return String(s == null ? '' : s).replace(/((?:pass\w*|pwd|token|secret|auth\w*)["']?\s*[=:]\s*["']?)[^&"',}\s]*/gi, '$1***');
       }
+      // Gửi từng request sang app (desmNet) để lưu vào file trong máy: không bị giới hạn dung lượng localStorage, không cắt phản hồi API.
       function push(e) {
         if (!on()) return;
-        try {
-          var a = JSON.parse(localStorage.getItem(KEY) || '[]'); a.push(e);
-          if (a.length > 150) a = a.slice(-150);
-          localStorage.setItem(KEY, JSON.stringify(a));
-        } catch (x) {}
+        try { window.webkit.messageHandlers.desmNet.postMessage(e); } catch (x) {}
       }
+      // Tài nguyên tĩnh (script/css/ảnh/font) chỉ ghi dòng ngắn, không lưu nội dung
+      function isStatic(u) { return /\.(js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|map)(\?|#|$)/i.test(String(u == null ? '' : u)); }
+      function ctOf(x) { try { return (x.getResponseHeader('content-type') || '').split(';')[0]; } catch (e) { return ''; } }
       // Phát hiện hết phiên: XHR bị chuyển về trang đăng nhập / trả 401 / trả HTML có ô mật khẩu -> báo cho app (desmSession)
       var lastExp = 0;
       function pathOf(u) { try { return new URL(u, location.href).pathname; } catch (e) { return ''; } }
@@ -2471,9 +2681,11 @@ extension BrowserModel {
           if (d && on()) {
             d.b = b;
             x.addEventListener('loadend', function() {
-              var rt = ''; try { rt = (x.responseType === '' || x.responseType === 'text') ? x.responseText : '[' + x.responseType + ']'; } catch (e) {}
-              push({ t: new Date().toISOString(), via: 'xhr', page: location.pathname + location.search, method: d.m, url: cut(mask(d.u), 600),
-                     body: cut(mask(bodyText(d.b)), 1500), status: x.status, ms: Date.now() - d.t, resp: cut(mask(rt), 700) });
+              var st = isStatic(d.u), rt = '';
+              try { rt = (x.responseType === '' || x.responseType === 'text') ? x.responseText : '[' + x.responseType + ']'; } catch (e) {}
+              push({ t: new Date().toISOString(), via: 'xhr', page: location.pathname + location.search, method: d.m, url: cut(mask(new URL(d.u, location.href).href), 2000),
+                     body: cut(mask(bodyText(d.b)), 30000), status: x.status, ms: Date.now() - d.t, ct: ctOf(x), len: rt.length,
+                     resp: st ? '' : cut(mask(rt), 400000) });
             });
           }
           return sd.apply(this, arguments);
@@ -2487,9 +2699,13 @@ extension BrowserModel {
           var u = typeof inp === 'string' ? inp : (inp && inp.url), m = (init && init.method) || (inp && inp.method) || 'GET', b = init && init.body;
           return p.then(function(r) {
             try {
-              r.clone().text().then(function(tx) {
-                push({ t: new Date().toISOString(), via: 'fetch', page: location.pathname + location.search, method: m, url: cut(mask(u), 600),
-                       body: cut(mask(bodyText(b)), 1500), status: r.status, ms: Date.now() - t, resp: cut(mask(tx), 700) });
+              var st = isStatic(u), ct = (r.headers.get('content-type') || '').split(';')[0];
+              if (st) {
+                push({ t: new Date().toISOString(), via: 'fetch', page: location.pathname + location.search, method: m, url: cut(mask(u), 2000),
+                       body: '', status: r.status, ms: Date.now() - t, ct: ct, len: 0, resp: '' });
+              } else r.clone().text().then(function(tx) {
+                push({ t: new Date().toISOString(), via: 'fetch', page: location.pathname + location.search, method: m, url: cut(mask(u), 2000),
+                       body: cut(mask(bodyText(b)), 30000), status: r.status, ms: Date.now() - t, ct: ct, len: tx.length, resp: cut(mask(tx), 400000) });
               });
             } catch (e) {}
             return r;
@@ -2499,30 +2715,112 @@ extension BrowserModel {
     })();
     """#
 
+    /// Tự lưu cấu trúc + HTML + CSS của từng màn hình DESM (gồm cả màn nằm trong iframe) khi người dùng bật "Tự lưu từng màn hình".
+    /// Cứ 2,5 giây quét trang và các iframe cùng domain; màn nào nội dung đã ổn định thì gửi sang app (message "desmSnap"). Mỗi màn tối đa 3 lần/lần tải.
+    static let snapRecorderSource = #"""
+    (function() {
+      if (window.__desmSnap) return; window.__desmSnap = 1;
+      if (window !== window.top) return;
+      if (!/(^|\.)doosanenerbility\.com$/i.test(location.hostname)) return;
+      function on() { try { return localStorage.getItem('desmSnapOn') === '1'; } catch (e) { return false; } }
+      var last = {}, sentLen = {}, sentN = {}, cssSent = {}, busy = false;
+      function frames(doc, lvl, out) {
+        out.push(doc);
+        if (lvl > 3) return out;
+        var fs = doc.querySelectorAll('iframe,frame');
+        for (var i = 0; i < fs.length; i++) {
+          try { var d = fs[i].contentDocument; if (d && d.documentElement && d.location.origin === location.origin) frames(d, lvl + 1, out); } catch (e) {}
+        }
+        return out;
+      }
+      function clean(doc) {
+        var root = doc.documentElement.cloneNode(true);
+        var st = root.querySelector('#desm-mobile-custom-style'); if (st) st.remove();
+        root.classList.remove('desm-mobile-mode');
+        var vm = root.querySelector('meta[data-desm="1"]'); if (vm) vm.remove();
+        [].forEach.call(root.querySelectorAll('meta[data-desm-orig]'), function(m) {
+          m.setAttribute('content', m.getAttribute('data-desm-orig')); m.removeAttribute('data-desm-orig');
+        });
+        [].forEach.call(root.querySelectorAll('script'), function(s) { if (!s.getAttribute('src')) s.remove(); });
+        [].forEach.call(root.querySelectorAll('input'), function(i) {
+          if (!/^(button|submit|reset|checkbox|radio|image)$/i.test(i.getAttribute('type') || '')) i.removeAttribute('value');
+        });
+        [].forEach.call(root.querySelectorAll('textarea'), function(t) { t.textContent = ''; });
+        return '<!DOCTYPE html>\n' + root.outerHTML;
+      }
+      function outline(doc) {
+        var out = [], n = 0;
+        (function walk(el, d) {
+          if (n > 700 || d > 9) return;
+          var tag = el.tagName.toLowerCase();
+          if (/^(script|style|link|meta|noscript|br)$/.test(tag)) return;
+          n++;
+          var s = tag + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).join('.') : '');
+          if (el.children.length === 0) { var t = (el.textContent || '').trim().slice(0, 40); if (t) s += ' "' + t + '"'; }
+          out.push(new Array(d + 1).join('  ') + s);
+          for (var i = 0; i < el.children.length; i++) walk(el.children[i], d + 1);
+        })(doc.body || doc.documentElement, 0);
+        return out.join('\n');
+      }
+      async function tick() {
+        if (busy || !on()) return; busy = true;
+        try {
+          var list = frames(document, 0, []);
+          for (var i = 0; i < list.length; i++) {
+            var doc = list[i], path = '', search = '';
+            try { if (doc.location.href === 'about:blank') continue; path = doc.location.pathname; search = doc.location.search; } catch (e) { continue; }
+            if (!doc.body) continue;
+            var len = doc.documentElement.innerHTML.length;
+            if (last[path] !== len) { last[path] = len; continue; }   // đợi nội dung ổn định (2 lần đo liên tiếp bằng nhau)
+            if (sentLen[path] === len || (sentN[path] || 0) >= 3) continue;
+            sentLen[path] = len; sentN[path] = (sentN[path] || 0) + 1;
+            var links = [], files = [];
+            [].forEach.call(doc.querySelectorAll('link[rel~=stylesheet][href]'), function(l) { links.push(l.href); });
+            for (var k = 0; k < links.length; k++) {
+              var u = links[k]; if (cssSent[u]) continue; cssSent[u] = 1;
+              try { var r = await fetch(u, { credentials: 'include' }); files.push({ url: u, status: r.status, text: await r.text() }); } catch (e) {}
+            }
+            try {
+              window.webkit.messageHandlers.desmSnap.postMessage({ path: path, search: search, title: doc.title || '', t: new Date().toISOString(),
+                top: doc === document, html: clean(doc), outline: outline(doc), cssLinks: links, cssFiles: files });
+            } catch (e) {}
+          }
+        } catch (e) {}
+        busy = false;
+      }
+      setInterval(tick, 2500);
+    })();
+    """#
+
+    func setSnap(_ on: Bool) {
+        webView?.evaluateJavaScript("try{localStorage.setItem('desmSnapOn','\(on ? "1" : "0")')}catch(e){}", completionHandler: nil)
+    }
+
     func setNetLog(_ on: Bool) {
         webView?.evaluateJavaScript("try{localStorage.setItem('desmNetOn','\(on ? "1" : "0")')}catch(e){}", completionHandler: nil)
     }
 
     func clearNetLog() {
+        NetLogStore.clear()
         webView?.evaluateJavaScript("try{localStorage.removeItem('desmNetLog')}catch(e){}", completionHandler: nil)
     }
 
-    /// Đọc nhật ký API đã ghi (định dạng văn bản dễ đọc).
-    func fetchNetLog(done: @escaping (String?, String) -> Void) {
-        guard let webView = webView else { done(nil, "Chưa có trang để đọc."); return }
-        let js = #"""
-        (function() {
-          var a = []; try { a = JSON.parse(localStorage.getItem('desmNetLog') || '[]'); } catch (e) {}
-          if (!a.length) return '';
-          return a.map(function(e, i) {
-            return '#' + (i + 1) + ' ' + e.t + ' [' + e.via + '] ' + e.method + ' ' + e.url + '\n' +
-              '   màn hình: ' + e.page + '\n   body: ' + (e.body || '(rỗng)') + '\n   -> HTTP ' + e.status + ' (' + e.ms + ' ms)\n   phản hồi: ' + (e.resp || '(rỗng)');
-          }).join('\n\n');
-        })();
-        """#
-        webView.evaluateJavaScript(js) { result, error in
-            if let t = result as? String, !t.isEmpty { done(t, "") }
-            else { done(nil, error?.localizedDescription ?? "Chưa có request nào được ghi. Hãy bật ghi API, thao tác trên trang rồi quay lại.") }
+    enum NetLogFormat { case text, json, summary }
+
+    /// Đọc nhật ký API đã ghi (file trong máy). text = đọc từng request; json = máy đọc được, đủ phản hồi; summary = tóm tắt từng endpoint.
+    func fetchNetLog(format: NetLogFormat = .text, done: @escaping (String?, String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let entries = NetLogStore.entries()
+            let out: String
+            switch format {
+            case .text: out = NetLogStore.exportText(entries)
+            case .json: out = NetLogStore.exportJSON(entries)
+            case .summary: out = NetLogStore.exportSummary(entries)
+            }
+            DispatchQueue.main.async {
+                if entries.isEmpty { done(nil, "Chưa có request nào được ghi. Hãy bật ghi API, thao tác trên trang rồi quay lại.") }
+                else { done(out, "") }
+            }
         }
     }
 
@@ -2563,6 +2861,8 @@ extension BrowserModel {
     static let loginURL = "https://desm.doosanenerbility.com/login.do"
     /// Lần dùng cuối quá ngưỡng này thì coi như phiên đã hết, khỏi thăm dò.
     static let staleSessionAge: TimeInterval = 6 * 3600
+
+    static var edgeSwipe: Bool { UserDefaults.standard.object(forKey: "desmEdgeSwipe") as? Bool ?? true }
 
     static var autoReconnect: Bool { UserDefaults.standard.object(forKey: "desmAutoReconnect") as? Bool ?? true }
 
@@ -2708,6 +3008,8 @@ struct SettingsView: View {
     @AppStorage("desmExportStripScripts2") private var stripScripts = false
     @AppStorage("desmScanOpenDetail") private var scanOpenDetail = true
     @AppStorage("desmNetLogOn") private var netLogOn = false
+    @AppStorage("desmSnapOn") private var snapOn = false
+    @AppStorage("desmEdgeSwipe") private var edgeSwipe = true
     @State private var fetchPath = ""
 
     private func shareText(_ text: String, prefix: String, ext: String) {
@@ -2726,171 +3028,18 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Chế độ hiển thị") {
-                    Picker("Chế độ", selection: Binding(
-                        get: { model.layoutMode },
-                        set: { model.setMode($0) }
-                    )) {
-                        ForEach(LayoutMode.allCases) { Text($0.shortTitle).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-
-                    Stepper("Độ rộng khi thu nhỏ: \(model.fitWidth)px", value: Binding(
-                        get: { model.fitWidth },
-                        set: { model.fitWidth = $0; model.applyStyles() }
-                    ), in: 700...1800, step: 100)
-
-                    Toggle("Chỉ áp dụng cho DESM", isOn: Binding(
-                        get: { model.scopeOnly },
-                        set: { model.scopeOnly = $0; model.applyStyles() }
-                    ))
-                    Toggle("Thu gọn thanh trên", isOn: $model.compactHeader)
-
-                    Text("Mobile: sắp xếp lại bố cục bằng CSS. Vừa màn hình: hiển thị bản desktop thu nhỏ vừa màn hình, có thể phóng to bằng hai ngón. Gốc: không can thiệp.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Ngôn ngữ") {
-                    Toggle("Giao diện DESM bằng tiếng Việt", isOn: Binding(
-                        get: { model.viLang },
-                        set: { model.setVietnamese($0) }
-                    ))
-                    Text("Dịch nhãn, nút, menu, tiêu đề cột, hộp thoại của trang DESM sang tiếng Việt (dữ liệu như mã kiện, mô tả hàng, vị trí giữ nguyên). Cũng có thể chọn \"Tiếng Việt\" ngay ở ô Language trên trang. Nên để ngôn ngữ gốc của trang là English.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Text("Từ điển bổ sung (mỗi dòng: English = Tiếng Việt)").font(.footnote.weight(.semibold))
-                    TextEditor(text: $model.customDict)
-                        .font(.system(.footnote, design: .monospaced))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .frame(minHeight: 100)
-                    Button("Áp dụng từ điển") { model.applyStyles(); model.showToast("Đã áp dụng từ điển"); dismiss() }
-                    Button("Sao chép chuỗi chưa dịch") {
-                        model.copyMissingStrings { message = $0 }
-                    }
-                }
-                Section("Quét Package No (camera)") {
-                    Toggle("Quét xong mở luôn chi tiết kiện", isOn: $scanOpenDetail)
-                    Text("Bấm nút camera ở góc dưới bên trái khi đang ở màn hình Package. App đọc số Package No trên tem (chữ in hoặc viết tay, kể cả viết tắt kiểu DE-LS-01-07), điền ô Số kiện hàng rồi Search. Tắt công tắc này để chỉ tìm và chọn dòng, không mở chi tiết. Nếu không có dòng khớp chính xác thì app báo không tìm thấy, không mở nhầm kiện.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Đăng nhập") {
-                    Toggle("Tự đăng nhập lại khi hết phiên", isOn: $autoReconnect)
-                    Text("Khi phiên DESM hết hạn (qua đêm, để lâu), app tự quay về trang đăng nhập, điền tài khoản đã lưu và bấm Login. Cần bật \"Tự điền tài khoản\" và đã lưu tài khoản. Không có tài khoản lưu thì chỉ mở trang đăng nhập để bạn tự nhập.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
-                    Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
-                    Button("Xóa tài khoản đã lưu", role: .destructive) {
-                        CredStore.clear()
-                        model.showToast("Đã xóa tài khoản đã lưu")
-                    }
-                    Button("Xóa phiên đã lưu", role: .destructive) {
-                        SessionStore.clear()
-                        model.showToast("Đã xóa phiên đã lưu")
-                    }
-                    Text("Phiên đăng nhập và tài khoản (chỉ khi bạn đồng ý lưu) được giữ trong Keychain của máy này, không gửi đi đâu khác. Nếu máy chủ DESM đã hết hạn phiên thì app hiện lại trang đăng nhập và tự điền sẵn tài khoản; bạn bấm Login để vào.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("CSS bổ sung") {
-                    TextEditor(text: $model.customCSS)
-                        .font(.system(.footnote, design: .monospaced))
-                        .frame(minHeight: 120)
-                    Button("Áp dụng CSS") { model.applyStyles(); dismiss() }
-                    Button("Xóa CSS bổ sung", role: .destructive) {
-                        model.customCSS = ""
-                        model.applyStyles()
-                    }
-                }
-                Section("Hỗ trợ tinh chỉnh") {
-                    Button("Sao chép cấu trúc trang đang mở") {
-                        model.copyDiagnostics { message = $0 }
-                    }
-                    Text("Mở trang cần chỉnh (ví dụ màn hình Package), vào đây bấm nút trên rồi dán vào khung chat. Dữ liệu nhập trong ô không được sao chép.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Công cụ lấy mã & API (để tinh chỉnh)") {
-                    Toggle("Ghi lại các request API của trang", isOn: $netLogOn)
-                        .onChange(of: netLogOn) { model.setNetLog($0) }
-                    Button("Lưu nhật ký API thành file…") {
-                        model.fetchNetLog { text, error in
-                            guard let text = text else { message = error; return }
-                            shareText(text, prefix: "desm-api", ext: "txt")
-                        }
-                    }
-                    Button("Sao chép nhật ký API") {
-                        model.fetchNetLog { text, error in
-                            if let text = text { UIPasteboard.general.string = text; message = "Đã sao chép \(text.count) ký tự nhật ký API." }
-                            else { message = error }
-                        }
-                    }
-                    Button("Xóa nhật ký API", role: .destructive) {
-                        model.clearNetLog(); message = "Đã xóa nhật ký API."
-                    }
-                    Text("Bật công tắc, mở màn hình cần xem (đang ở trang DESM), thao tác như bấm Search, quét QR, cập nhật vị trí… rồi quay lại đây bấm lưu nhật ký và gửi cho tác giả. Nhật ký gồm địa chỉ API, tham số gửi đi và phần đầu của phản hồi; giá trị tên pass/token/secret được che. Nhớ tắt công tắc và xóa nhật ký khi xong.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    TextField("Địa chỉ cần tải, vd /resources/scripts/…js", text: $fetchPath)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Tải nội dung địa chỉ và lưu file…") {
-                        let path = fetchPath.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !path.isEmpty else { message = "Hãy nhập địa chỉ cần tải."; return }
-                        model.fetchURLText(path) { text, error in
-                            guard let text = text else { message = error; return }
-                            shareText(text, prefix: "desm-fetch", ext: "txt")
-                        }
-                    }
-                    Text("Tải file script, trang hoặc API dạng GET cùng domain bằng phiên đăng nhập hiện có (ví dụ /resources/scripts/material/plDetail.js hoặc /getXxx.do?PARAM=giá trị).")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Mã HTML của trang") {
-                    Button("Sao chép HTML trang đang mở") {
-                        model.fetchHTML(stripValues: stripValues, stripScripts: stripScripts) { html, error in
-                            if let html = html {
-                                UIPasteboard.general.string = html
-                                message = "Đã sao chép \(html.count) ký tự HTML. Nếu quá dài để dán vào chat, hãy dùng \"Lưu HTML thành file\"."
-                            } else {
-                                message = error
-                            }
-                        }
-                    }
-                    Button("Lưu HTML thành file…") {
-                        model.fetchHTML(stripValues: stripValues, stripScripts: stripScripts) { html, error in
-                            guard let html = html else { message = error; return }
-                            let formatter = DateFormatter()
-                            formatter.dateFormat = "yyyyMMdd-HHmmss"
-                            let url = FileManager.default.temporaryDirectory
-                                .appendingPathComponent("desm-page-\(formatter.string(from: Date())).html")
-                            do {
-                                try html.write(to: url, atomically: true, encoding: .utf8)
-                                shareItem = ShareItem(url: url)
-                            } catch {
-                                message = "Không lưu được file: \(error.localizedDescription)"
-                            }
-                        }
-                    }
-                    Button("Lưu script của trang (plDetail.js…)") {
-                        model.fetchScriptFiles { text, info in
-                            guard let text = text else { message = info; return }
-                            let formatter = DateFormatter()
-                            formatter.dateFormat = "yyyyMMdd-HHmmss"
-                            let url = FileManager.default.temporaryDirectory
-                                .appendingPathComponent("desm-scripts-\(formatter.string(from: Date())).txt")
-                            do {
-                                try text.write(to: url, atomically: true, encoding: .utf8)
-                                message = "Đã tải \(info) file script."
-                                shareItem = ShareItem(url: url)
-                            } catch {
-                                message = "Không lưu được file: \(error.localizedDescription)"
-                            }
-                        }
-                    }
-                    Text("Mở màn hình Hạng mục chi tiết (hoặc Package) trước, rồi bấm nút trên để lưu toàn bộ script của trang thành một file .txt.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Toggle("Ẩn giá trị trong ô nhập", isOn: $stripValues)
-                    Toggle("Bỏ mã script nội tuyến", isOn: $stripScripts)
-                    Text("Lấy HTML hiện tại của trang đang hiển thị (đã chạy script), gồm cả iframe cùng domain, không gồm CSS do app tiêm. HTML có thể chứa thông tin nội bộ, hãy kiểm tra trước khi chia sẻ. Giá trị bạn đang gõ trong ô nhập không nằm trong HTML.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                displaySection
+                languageSection
+                scanSection
+                loginSection
+                Section {
+                    NavigationLink("Nâng cao & công cụ phát triển") { advancedForm }
+                } footer: {
+                    Text("CSS và từ điển bổ sung, ghi API, lưu mã HTML/script của trang. Chỉ cần khi tinh chỉnh app.")
                 }
             }
-            .onAppear { model.setNetLog(netLogOn) }
-            .navigationTitle("Cài đặt giao diện")
+            .onAppear { model.setNetLog(netLogOn); model.setSnap(snapOn) }
+            .navigationTitle("Cài đặt")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Xong") { model.applyStyles(); dismiss() } } }
             .sheet(item: $shareItem) { item in
@@ -2903,5 +3052,535 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) { message = nil }
             } message: { Text(message ?? "") }
         }
+    }
+
+    // MARK: Cài đặt chính
+
+    private var displaySection: some View {
+        Section {
+            Picker("Chế độ", selection: Binding(
+                get: { model.layoutMode },
+                set: { model.setMode($0) }
+            )) {
+                ForEach(LayoutMode.allCases) { Text($0.shortTitle).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            if model.layoutMode == .fit {
+                Stepper("Độ rộng khi thu nhỏ: \(model.fitWidth)px", value: Binding(
+                    get: { model.fitWidth },
+                    set: { model.fitWidth = $0; model.applyStyles() }
+                ), in: 700...1800, step: 100)
+            }
+            Toggle("Chỉ áp dụng cho DESM", isOn: Binding(
+                get: { model.scopeOnly },
+                set: { model.scopeOnly = $0; model.applyStyles() }
+            ))
+            Toggle("Thu gọn thanh trên", isOn: $model.compactHeader)
+            Toggle("Vuốt mép màn hình để quay lại / tiến", isOn: $edgeSwipe)
+        } header: {
+            Text("Hiển thị")
+        } footer: {
+            Text("Mobile: sắp xếp lại bố cục cho màn hình nhỏ. Vừa màn hình: bản desktop thu nhỏ, phóng to bằng hai ngón. Gốc: không can thiệp. Vuốt từ mép trái để quay lại trang trước, từ mép phải để tiến.")
+        }
+    }
+
+    private var languageSection: some View {
+        Section {
+            Toggle("Giao diện DESM bằng tiếng Việt", isOn: Binding(
+                get: { model.viLang },
+                set: { model.setVietnamese($0) }
+            ))
+        } header: {
+            Text("Ngôn ngữ")
+        } footer: {
+            Text("Dịch nhãn, nút, menu, tiêu đề cột và hộp thoại; dữ liệu (mã kiện, mô tả hàng, vị trí) giữ nguyên. Nên để ngôn ngữ gốc của trang là English.")
+        }
+    }
+
+    private var scanSection: some View {
+        Section {
+            Toggle("Quét xong mở luôn chi tiết kiện", isOn: $scanOpenDetail)
+        } header: {
+            Text("Quét Package No")
+        } footer: {
+            Text("Bấm nút camera ở góc dưới bên trái khi đang ở màn hình Package. App đọc Package No trên tem, điền ô Số kiện hàng rồi Search. Không có dòng khớp chính xác thì báo không tìm thấy, không mở nhầm kiện.")
+        }
+    }
+
+    private var loginSection: some View {
+        Section {
+            Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
+            Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
+            Toggle("Tự đăng nhập lại khi hết phiên", isOn: $autoReconnect)
+            Button("Xóa tài khoản và phiên đã lưu", role: .destructive) {
+                CredStore.clear()
+                SessionStore.clear()
+                model.showToast("Đã xóa tài khoản và phiên đã lưu")
+            }
+        } header: {
+            Text("Đăng nhập")
+        } footer: {
+            Text("Tài khoản (chỉ khi bạn đồng ý lưu) và phiên được giữ trong Keychain của máy này. Khi phiên DESM hết hạn, app quay về trang đăng nhập, điền tài khoản đã lưu và tự bấm Login; cần bật \"Tự điền tài khoản\" và đã lưu tài khoản.")
+        }
+    }
+
+    // MARK: Nâng cao
+
+    private var advancedForm: some View {
+        Form {
+            Section {
+                TextEditor(text: $model.customCSS)
+                    .font(.system(.footnote, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .frame(minHeight: 110)
+                Button("Xóa CSS bổ sung", role: .destructive) { model.customCSS = ""; model.applyStyles() }
+            } header: {
+                Text("CSS bổ sung")
+            } footer: {
+                Text("Áp dụng khi bấm Xong.")
+            }
+
+            Section {
+                TextEditor(text: $model.customDict)
+                    .font(.system(.footnote, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .frame(minHeight: 110)
+                Button("Sao chép chuỗi chưa dịch") { model.copyMissingStrings { message = $0 } }
+            } header: {
+                Text("Từ điển bổ sung")
+            } footer: {
+                Text("Mỗi dòng: English = Tiếng Việt. Áp dụng khi bấm Xong.")
+            }
+
+            Section {
+                Toggle("Tự lưu cấu trúc & CSS từng màn hình", isOn: $snapOn)
+                    .onChange(of: snapOn) { model.setSnap($0) }
+                Button("Lưu tất cả màn hình đã ghi (1 file)…") {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let text = SnapStore.export()
+                        DispatchQueue.main.async {
+                            guard let text = text else { message = "Chưa ghi màn hình nào. Bật công tắc rồi mở lần lượt các màn hình DESM."; return }
+                            shareText(text, prefix: "desm-screens", ext: "txt")
+                        }
+                    }
+                }
+                Button("Xóa các màn hình đã ghi", role: .destructive) {
+                    SnapStore.clear(); message = "Đã xóa các màn hình đã ghi."
+                }
+            } header: {
+                Text("Ghi từng màn hình")
+            } footer: {
+                Text("Bật công tắc rồi vào lần lượt từng màn hình (menu) của DESM, chờ vài giây cho trang tải xong. App tự lưu cây cấu trúc, HTML và toàn bộ file CSS của từng màn, kể cả màn nằm trong khung con. Xong thì lưu một file duy nhất và gửi cho tác giả. Nhớ tắt công tắc và xóa khi xong.")
+            }
+
+            Section {
+                Toggle("Ghi lại các request API của trang", isOn: $netLogOn)
+                    .onChange(of: netLogOn) { model.setNetLog($0) }
+                Button("Lưu nhật ký API (JSON đầy đủ)…") {
+                    model.fetchNetLog(format: .json) { text, error in
+                        guard let text = text else { message = error; return }
+                        shareText(text, prefix: "desm-api-full", ext: "json")
+                    }
+                }
+                Button("Lưu tóm tắt các endpoint…") {
+                    model.fetchNetLog(format: .summary) { text, error in
+                        guard let text = text else { message = error; return }
+                        shareText(text, prefix: "desm-api-summary", ext: "txt")
+                    }
+                }
+                Button("Lưu nhật ký API (văn bản)…") {
+                    model.fetchNetLog { text, error in
+                        guard let text = text else { message = error; return }
+                        shareText(text, prefix: "desm-api", ext: "txt")
+                    }
+                }
+                Button("Xóa nhật ký API", role: .destructive) {
+                    model.clearNetLog(); message = "Đã xóa nhật ký API."
+                }
+            } header: {
+                Text("Nhật ký API")
+            } footer: {
+                Text("Bật công tắc, thao tác trên trang DESM (Search, quét, mở chi tiết…) rồi quay lại lưu file. Nhật ký nằm trong máy, có địa chỉ API, tham số và phản hồi đầy đủ của API dữ liệu; mật khẩu/token được che. Nhớ tắt và xóa khi xong.")
+            }
+
+            Section {
+                Button("Lưu HTML trang đang mở…") {
+                    model.fetchHTML(stripValues: stripValues, stripScripts: stripScripts) { html, error in
+                        guard let html = html else { message = error; return }
+                        shareText(html, prefix: "desm-page", ext: "html")
+                    }
+                }
+                Button("Lưu script của trang…") {
+                    model.fetchScriptFiles { text, info in
+                        guard let text = text else { message = info; return }
+                        message = "Đã tải \(info) file script."
+                        shareText(text, prefix: "desm-scripts", ext: "txt")
+                    }
+                }
+                Button("Sao chép cấu trúc trang đang mở") { model.copyDiagnostics { message = $0 } }
+                Toggle("Ẩn giá trị trong ô nhập", isOn: $stripValues)
+                Toggle("Bỏ mã script nội tuyến", isOn: $stripScripts)
+            } header: {
+                Text("Mã nguồn trang")
+            } footer: {
+                Text("Mở màn hình cần xem (Package, Hạng mục chi tiết…) trước. HTML có thể chứa thông tin nội bộ, hãy kiểm tra trước khi chia sẻ.")
+            }
+
+            Section {
+                TextField("Địa chỉ, vd /resources/scripts/…js", text: $fetchPath)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Tải nội dung địa chỉ và lưu file…") {
+                    let path = fetchPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !path.isEmpty else { message = "Hãy nhập địa chỉ cần tải."; return }
+                    model.fetchURLText(path) { text, error in
+                        guard let text = text else { message = error; return }
+                        shareText(text, prefix: "desm-fetch", ext: "txt")
+                    }
+                }
+            } header: {
+                Text("Tải địa chỉ")
+            } footer: {
+                Text("Tải script, trang hoặc API dạng GET cùng domain bằng phiên đăng nhập hiện có.")
+            }
+        }
+        .navigationTitle("Nâng cao")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Nhật ký API lưu thành file trong máy
+//
+// Trang gửi từng request/phản hồi (message "desmNet") khi người dùng bật "Ghi lại các request API"; app nối vào file JSON-lines
+// trong thư mục Caches (tối đa ~40 MB, quá thì bỏ nửa cũ). API dữ liệu được lưu đủ phản hồi (tới 400 000 ký tự mỗi request);
+// script/css/ảnh/font chỉ ghi một dòng. Mật khẩu/token đã được che từ phía trang. Xuất ra 3 dạng: text, json, tóm tắt endpoint.
+enum NetLogStore {
+    private static let q = DispatchQueue(label: "desm.netlog")
+    private static let maxBytes = 40_000_000
+    private static let staticPattern = #"\.(js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|otf|map)$"#
+
+    private static var fileURL: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("desm-netlog.jsonl")
+    }
+
+    static func append(_ obj: [String: Any]) {
+        q.async {
+            guard JSONSerialization.isValidJSONObject(obj), var data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+            data.append(0x0A)
+            let u = fileURL
+            if let h = try? FileHandle(forWritingTo: u) {
+                _ = try? h.seekToEnd()
+                try? h.write(contentsOf: data)
+                try? h.close()
+                let size = ((try? FileManager.default.attributesOfItem(atPath: u.path))?[.size] as? NSNumber)?.intValue ?? 0
+                if size > maxBytes { trimHalf(u) }
+            } else {
+                try? data.write(to: u)
+            }
+        }
+    }
+
+    private static func trimHalf(_ u: URL) {
+        guard let all = try? Data(contentsOf: u) else { return }
+        guard let nl = all[(all.startIndex + all.count / 2)...].firstIndex(of: 0x0A) else { return }
+        try? Data(all[(nl + 1)...]).write(to: u)
+    }
+
+    static func clear() {
+        q.sync { try? FileManager.default.removeItem(at: fileURL) }
+    }
+
+    static func entries() -> [[String: Any]] {
+        q.sync { () -> [[String: Any]] in
+            guard let data = try? Data(contentsOf: fileURL) else { return [] }
+            var out: [[String: Any]] = []
+            for line in data.split(separator: 0x0A) {
+                if let o = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] { out.append(o) }
+            }
+            return out
+        }
+    }
+
+    private static func str(_ e: [String: Any], _ k: String) -> String { (e[k] as? String) ?? "" }
+    private static func num(_ e: [String: Any], _ k: String) -> Int { (e[k] as? NSNumber)?.intValue ?? 0 }
+    private static func cut(_ s: String, _ n: Int) -> String { s.count > n ? String(s.prefix(n)) + "…[\(s.count) ký tự]" : s }
+
+    static func exportText(_ es: [[String: Any]]) -> String {
+        var parts: [String] = []
+        for (i, e) in es.enumerated() {
+            let body = str(e, "body"), resp = str(e, "resp")
+            let bodyText = body.isEmpty ? "(rỗng)" : body
+            let respText = resp.isEmpty ? "(rỗng)" : resp
+            var s = "#\(i + 1) \(str(e, "t")) [\(str(e, "via"))] \(str(e, "method")) \(str(e, "url"))\n"
+            s += "   màn hình: \(str(e, "page"))\n"
+            s += "   body: \(bodyText)\n"
+            s += "   -> HTTP \(num(e, "status")) (\(num(e, "ms")) ms) \(str(e, "ct")) \(num(e, "len")) ký tự\n"
+            s += "   phản hồi: \(respText)"
+            parts.append(s)
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    static func exportJSON(_ es: [[String: Any]]) -> String {
+        guard let d = try? JSONSerialization.data(withJSONObject: es, options: [.withoutEscapingSlashes]) else { return "[]" }
+        return String(decoding: d, as: UTF8.self)
+    }
+
+    /// Mô tả cấu trúc JSON phản hồi (tên trường), để biết app cần đọc trường nào.
+    private static func shape(_ resp: String) -> String {
+        guard let d = resp.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) else {
+            return resp.isEmpty ? "(rỗng)" : "(không phải JSON hoặc bị cắt) " + cut(resp, 300)
+        }
+        func keys(_ o: Any) -> String {
+            if let m = o as? [String: Any] { return "{" + m.keys.sorted().joined(separator: ", ") + "}" }
+            return "\(type(of: o))"
+        }
+        if let m = j as? [String: Any] {
+            var s = keys(m)
+            for (k, v) in m.sorted(by: { $0.key < $1.key }) {
+                if let a = v as? [Any] { s += "\n      \(k)[\(a.count)] mỗi phần tử: " + (a.first.map(keys) ?? "(trống)") }
+            }
+            return s
+        }
+        if let a = j as? [Any] { return "[\(a.count)] mỗi phần tử: " + (a.first.map(keys) ?? "(trống)") }
+        return "\(type(of: j))"
+    }
+
+    static func exportSummary(_ es: [[String: Any]]) -> String {
+        struct G {
+            var method = "", name = ""
+            var count = 0, totalMs = 0, maxLen = 0
+            var statuses = Set<Int>(), pages = Set<String>()
+            var query = "", body = "", resp = ""
+        }
+        var groups: [String: G] = [:]
+        var order: [String] = []
+        var staticCount = 0
+        for e in es {
+            let url = str(e, "url"), method = str(e, "method").uppercased()
+            let comps = URLComponents(string: url)
+            let path = comps?.path ?? url
+            if str(e, "resp").isEmpty, path.range(of: staticPattern, options: [.regularExpression, .caseInsensitive]) != nil { staticCount += 1; continue }
+            let name = (comps?.host ?? "") + path
+            let key = method + " " + name
+            if groups[key] == nil { groups[key] = G(method: method, name: name); order.append(key) }
+            var g = groups[key]!
+            g.count += 1; g.totalMs += num(e, "ms"); g.statuses.insert(num(e, "status"))
+            let page = str(e, "page"); if !page.isEmpty { g.pages.insert(page) }
+            if g.query.isEmpty, let q = comps?.query { g.query = q }
+            if g.body.isEmpty { g.body = str(e, "body") }
+            let len = num(e, "len")
+            if len >= g.maxLen || g.resp.isEmpty { g.maxLen = len; g.resp = str(e, "resp") }
+            groups[key] = g
+        }
+        var out = "TÓM TẮT API: \(order.count) endpoint (bỏ qua \(staticCount) tài nguyên tĩnh js/css/ảnh/font), \(es.count) request\n"
+        for key in order {
+            guard let g = groups[key] else { continue }
+            out += "\n== \(g.method) \(g.name) ==\n"
+            out += "  số lần gọi: \(g.count) | HTTP: \(g.statuses.sorted().map(String.init).joined(separator: ",")) | TB \(g.totalMs / max(g.count, 1)) ms | phản hồi lớn nhất: \(g.maxLen) ký tự\n"
+            out += "  màn hình: \(g.pages.sorted().prefix(4).joined(separator: " ; "))\n"
+            if !g.query.isEmpty { out += "  query mẫu: \(cut(g.query, 600))\n" }
+            if !g.body.isEmpty { out += "  body mẫu: \(cut(g.body, 800))\n" }
+            out += "  cấu trúc phản hồi: \(shape(g.resp))\n"
+        }
+        return out
+    }
+}
+
+
+// MARK: - Tự lưu cấu trúc/HTML/CSS từng màn hình
+//
+// Mỗi màn hình (theo pathname, kể cả màn trong iframe) lưu một file JSON trong Caches/desm-snap/screens; mỗi file CSS lưu một file ở css/.
+// Xuất gộp thành MỘT file văn bản: mục lục, rồi từng màn (cây cấu trúc + HTML), sau cùng toàn bộ CSS.
+enum SnapStore {
+    private static let q = DispatchQueue(label: "desm.snap")
+    private static var dir: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("desm-snap") }
+    private static var screensDir: URL { dir.appendingPathComponent("screens") }
+    private static var cssDir: URL { dir.appendingPathComponent("css") }
+
+    private static func safe(_ s: String) -> String {
+        var r = ""
+        for c in s.unicodeScalars { r.append(CharacterSet.alphanumerics.contains(c) || c == "." || c == "-" ? Character(c) : "_") }
+        return String(r.prefix(120))
+    }
+
+    static func save(_ d: [String: Any]) {
+        q.async {
+            guard let path = d["path"] as? String else { return }
+            let fm = FileManager.default
+            try? fm.createDirectory(at: screensDir, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: cssDir, withIntermediateDirectories: true)
+            var meta = d
+            let files = (d["cssFiles"] as? [[String: Any]]) ?? []
+            meta["cssFiles"] = nil
+            for f in files {
+                guard let url = f["url"] as? String, let text = f["text"] as? String else { continue }
+                let p = URLComponents(string: url)?.path ?? url
+                let st = (f["status"] as? NSNumber)?.intValue ?? 0
+                try? "/* ===== \(url) (HTTP \(st), \(text.count) ký tự) ===== */\n\(text)\n".write(to: cssDir.appendingPathComponent(safe(p) + ".txt"), atomically: true, encoding: .utf8)
+            }
+            if JSONSerialization.isValidJSONObject(meta), let data = try? JSONSerialization.data(withJSONObject: meta) {
+                try? data.write(to: screensDir.appendingPathComponent(safe(path) + ".json"))
+            }
+        }
+    }
+
+    static func clear() { q.sync { try? FileManager.default.removeItem(at: dir) } }
+
+    private static func screenFiles() -> [URL] {
+        let all = (try? FileManager.default.contentsOfDirectory(at: screensDir, includingPropertiesForKeys: nil)) ?? []
+        return all.filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    static func count() -> Int { q.sync { screenFiles().count } }
+
+    static func export() -> String? {
+        q.sync { () -> String? in
+            let files = screenFiles()
+            if files.isEmpty { return nil }
+            var screens: [[String: Any]] = []
+            for f in files {
+                if let data = try? Data(contentsOf: f), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] { screens.append(o) }
+            }
+            var out = "DESM — CẤU TRÚC, HTML VÀ CSS TỪNG MÀN HÌNH\n\nMỤC LỤC (\(screens.count) màn hình)\n"
+            for (i, s) in screens.enumerated() {
+                let html = (s["html"] as? String) ?? ""
+                let css = ((s["cssLinks"] as? [String]) ?? []).map { URLComponents(string: $0)?.path ?? $0 }.joined(separator: ", ")
+                out += "\(i + 1). \((s["path"] as? String) ?? "?")\((s["search"] as? String) ?? "")  | \((s["title"] as? String) ?? "")  | HTML \(html.count) ký tự | CSS: \(css.isEmpty ? "(không)" : css)\n"
+            }
+            for (i, s) in screens.enumerated() {
+                out += "\n\n########## MÀN \(i + 1): \((s["path"] as? String) ?? "?")\((s["search"] as? String) ?? "") ##########\n"
+                out += "Tiêu đề: \((s["title"] as? String) ?? "")  | Ghi lúc: \((s["t"] as? String) ?? "")  | \((s["top"] as? Bool) == true ? "trang chính" : "khung con (iframe)")\n"
+                out += "\n--- CÂY CẤU TRÚC ---\n\((s["outline"] as? String) ?? "")\n"
+                out += "\n--- HTML ---\n\((s["html"] as? String) ?? "")\n"
+            }
+            let cssFiles = ((try? FileManager.default.contentsOfDirectory(at: cssDir, includingPropertiesForKeys: nil)) ?? [])
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            out += "\n\n########## TOÀN BỘ CSS (\(cssFiles.count) file) ##########\n"
+            for f in cssFiles { out += "\n" + ((try? String(contentsOf: f, encoding: .utf8)) ?? "") }
+            return out
+        }
+    }
+}
+
+
+// MARK: - Chụp ảnh toàn bộ trang
+//
+// Cách làm: (1) tạm mở rộng các khung cuộn bên trong trang (iframe, vùng overflow auto/scroll/hidden) cho hiện hết chiều cao;
+// (2) WKWebView.createPDF với vùng = toàn bộ nội dung cuộn; (3) vẽ trang PDF thành ảnh PNG (giới hạn ~12 000 px cạnh dài, ~80 triệu điểm ảnh);
+// (4) khôi phục kiểu cũ của trang. Trang quá dài để thành PNG thì xuất PDF. Lưu ý: bảng TreeGrid chỉ vẽ các dòng đang hiển thị (cuộn ảo)
+// nên các dòng chưa cuộn tới có thể không có trong ảnh.
+extension BrowserModel {
+    static let shotExpandJS = #"""
+    (function() {
+      var saved = window.__desmShotSaved = [];
+      function fix(doc, lvl) {
+        var els = doc.querySelectorAll('*'), n = Math.min(els.length, 20000);
+        for (var i = 0; i < n; i++) {
+          var e = els[i], t = e.tagName;
+          if (t === 'HTML' || t === 'BODY' || t === 'IFRAME' || t === 'FRAME') continue;
+          if (e.clientHeight > 80 && e.scrollHeight > e.clientHeight + 20) {
+            var cs = doc.defaultView.getComputedStyle(e);
+            if (/(auto|scroll|hidden)/.test(cs.overflowY)) {
+              saved.push([e, e.style.cssText]);
+              e.style.setProperty('height', 'auto', 'important');
+              e.style.setProperty('max-height', 'none', 'important');
+              e.style.setProperty('overflow', 'visible', 'important');
+            }
+          }
+        }
+        if (lvl > 3) return;
+        var fs = doc.querySelectorAll('iframe,frame');
+        for (var j = 0; j < fs.length; j++) {
+          try {
+            var d = fs[j].contentDocument;
+            if (d && d.documentElement && d.location.origin === location.origin) {
+              fix(d, lvl + 1);
+              var h = Math.max(d.documentElement.scrollHeight, d.body ? d.body.scrollHeight : 0);
+              if (h > fs[j].clientHeight) {
+                saved.push([fs[j], fs[j].style.cssText]);
+                fs[j].style.setProperty('height', h + 'px', 'important');
+                fs[j].style.setProperty('min-height', h + 'px', 'important');
+                fs[j].setAttribute('scrolling', 'no');
+              }
+            }
+          } catch (e) {}
+        }
+      }
+      try { fix(document, 0); } catch (e) {}
+      return saved.length;
+    })();
+    """#
+
+    static let shotRestoreJS = #"""
+    (function() {
+      var s = window.__desmShotSaved || [];
+      for (var i = s.length - 1; i >= 0; i--) { try { s[i][0].style.cssText = s[i][1]; } catch (e) {} }
+      window.__desmShotSaved = [];
+    })();
+    """#
+
+    func captureFullPage() {
+        guard let wv = webView else { showToast("Chưa có trang để chụp"); return }
+        showToast("Đang chụp toàn trang…")
+        wv.evaluateJavaScript(BrowserModel.shotExpandJS) { _, _ in
+            // chờ trang dàn lại bố cục sau khi mở rộng
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                let size = wv.scrollView.contentSize
+                guard size.width > 1, size.height > 1 else {
+                    wv.evaluateJavaScript(BrowserModel.shotRestoreJS, completionHandler: nil)
+                    self.showToast("Không đo được kích thước trang"); return
+                }
+                let cfg = WKPDFConfiguration()
+                cfg.rect = CGRect(origin: .zero, size: size)
+                wv.createPDF(configuration: cfg) { result in
+                    wv.evaluateJavaScript(BrowserModel.shotRestoreJS, completionHandler: nil)
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success(let data): self.finishShot(pdf: data)
+                        case .failure(let e): self.showToast("Không chụp được: \(e.localizedDescription)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishShot(pdf: Data) {
+        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = f.string(from: Date())
+        let tmp = FileManager.default.temporaryDirectory
+        func sharePDF(_ note: String) {
+            let url = tmp.appendingPathComponent("desm-page-\(stamp).pdf")
+            do { try pdf.write(to: url); showToast(note); shotItem = ShareItem(url: url) }
+            catch { showToast("Không lưu được file: \(error.localizedDescription)") }
+        }
+        guard let provider = CGDataProvider(data: pdf as CFData), let doc = CGPDFDocument(provider), let page = doc.page(at: 1) else {
+            sharePDF("Không dựng được ảnh, xuất PDF"); return
+        }
+        let box = page.getBoxRect(.mediaBox)
+        guard box.width > 1, box.height > 1 else { sharePDF("Không dựng được ảnh, xuất PDF"); return }
+        var scale = UIScreen.main.scale
+        scale = min(scale, 12000 / max(box.width, box.height))
+        scale = min(scale, (80_000_000 / (box.width * box.height)).squareRoot())
+        if scale < 0.4 { sharePDF("Trang quá dài để thành ảnh, đã xuất PDF"); return }
+        let outSize = CGSize(width: (box.width * scale).rounded(), height: (box.height * scale).rounded())
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1; fmt.opaque = true
+        let img = UIGraphicsImageRenderer(size: outSize, format: fmt).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: outSize))
+            let c = ctx.cgContext
+            c.translateBy(x: 0, y: outSize.height)
+            c.scaleBy(x: scale, y: -scale)
+            c.translateBy(x: -box.minX, y: -box.minY)
+            c.drawPDFPage(page)
+        }
+        guard let png = img.pngData() else { sharePDF("Không tạo được PNG, đã xuất PDF"); return }
+        let url = tmp.appendingPathComponent("desm-page-\(stamp).png")
+        do { try png.write(to: url); shotItem = ShareItem(url: url) }
+        catch { showToast("Không lưu được file: \(error.localizedDescription)") }
     }
 }
