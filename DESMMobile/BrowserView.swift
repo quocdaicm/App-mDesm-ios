@@ -1008,14 +1008,33 @@ final class BrowserModel: ObservableObject {
                 function goBack() {
                   try { var bk = diTop(idoc).document.querySelector('#desmDetailFrameBar .desm-detail-back'); if (bk) bk.click(); } catch (e) {}
                 }
-                // Đóng hộp thoại bản đồ bằng dấu × thì cũng quay về chi tiết kiện (vì thanh "Xong" đã ẩn)
+                // Đóng/hủy xong mà không còn hộp thoại nào đang mở (bản đồ, xác nhận...) thì mới quay về chi tiết kiện.
+                // KHÔNG quay lại ngay khi hộp thoại bản đồ ẩn đi: DESM ẩn nó để hiện hộp thoại xác nhận (OK/Cancel).
+                function anyModalOpen() {
+                  var docs = [fw.document]; try { docs.push(diTop(idoc).document); } catch (e) {}
+                  for (var di = 0; di < docs.length; di++) {
+                    var ms = docs[di].querySelectorAll('.modal'), vw = docs[di].defaultView;
+                    for (var mi = 0; mi < ms.length; mi++) {
+                      try {
+                        var cs = vw.getComputedStyle(ms[mi]);
+                        if (cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') > 0.05 && ms[mi].offsetHeight > 0) return true;
+                      } catch (e) {}
+                    }
+                  }
+                  return false;
+                }
+                function backWhenIdle() {
+                  if (fw.__desmIdleTimer) return;
+                  var calm = 0, n = 0;
+                  fw.__desmIdleTimer = fw.setInterval(function() {
+                    n++;
+                    if (anyModalOpen()) calm = 0; else calm++;
+                    if (calm >= 3 || n > 100) { fw.clearInterval(fw.__desmIdleTimer); fw.__desmIdleTimer = 0; if (calm >= 3) goBack(); }
+                  }, 500);
+                }
                 if (fw.jQuery && !fw.__desmHideHook) {
                   fw.__desmHideHook = 1;
-                  var J = fw.jQuery, seen = false;
-                  J(fw.document).on('shown.bs.modal shown', '#dlgDesmLocation', function() { seen = true; });
-                  J(fw.document).on('hidden.bs.modal hidden', '#dlgDesmLocation', function() {
-                    if (!seen) return; seen = false; setTimeout(goBack, 250);
-                  });
+                  fw.jQuery(fw.document).on('hidden.bs.modal hidden', '#dlgDesmLocation', function() { backWhenIdle(); });
                 }
                 if (fw.__desmSaveHook) return;
                 fw.__desmSaveHook = 1;
