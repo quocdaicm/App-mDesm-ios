@@ -1,3 +1,8 @@
+// PackageScanner.swift — quét bằng camera/ảnh trong app:
+//  - Nhận diện Package No dạng OM4-xx-xx-0000-000 từ chữ in/viết tay (Vision), tự sửa nhầm O/0, I/1, S/5, hiểu dạng viết tắt.
+//  - Mã QR nhãn hạng mục: DETAIL!!!<mã>!!!<tên Packing List>!!!<Material Code> (QRDetail.parse).
+//  - Kết quả được BrowserModel chuyển thành lệnh JS (__desmFindPkg / __desmFindDetail) chạy trong trang DESM.
+// Xem DEV_NOTES.md.
 import SwiftUI
 import AVFoundation
 import Vision

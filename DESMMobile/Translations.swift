@@ -1,3 +1,6 @@
+// Translations.swift — từ điển Anh→Việt cho giao diện DESM (khớp nguyên chuỗi). Dịch phía máy khách, dữ liệu không bị đổi.
+// Bổ sung từ mới: Cài đặt > Ngôn ngữ > "Sao chép chuỗi chưa dịch" rồi điền vào "Từ điển bổ sung" (desmCustomDict).
+// Xem DEV_NOTES.md.
 import Foundation
 
 /// Từ điển Anh → Việt cho giao diện web DESM (khớp nguyên cả chuỗi, không phân biệt hoa/thường).

@@ -1,3 +1,7 @@
+// MobileStyles.swift — CSS của chế độ "Mobile" (tiêm vào trang DESM, mọi selector bắt đầu bằng html.desm-mobile-mode).
+// Gồm: ngăn kéo menu, form tìm kiếm lưới 2 cột, thanh Bộ lọc, thẻ Package/RSI..., header/footer SVG nhúng.
+// Muốn chỉnh nhanh không cần build lại: Cài đặt > CSS bổ sung (lưu ở desmCustomCSS, nối sau CSS này).
+// Xem DEV_NOTES.md.
 import Foundation
 
 enum MobileStyles {

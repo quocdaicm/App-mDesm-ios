@@ -1,3 +1,9 @@
+// WebView.swift — WKWebView bọc trang DESM.
+//  - SessionStore: lưu/khôi phục cookie phiên vào Keychain để mở app vẫn còn đăng nhập.
+//  - CredStore: tài khoản tự điền ở trang đăng nhập (Keychain, chỉ lưu khi người dùng đồng ý).
+//  - WebView + Coordinator: điều hướng, alert/confirm/prompt thật (WKWebView mặc định không hiện), nhận message từ JS
+//    (desmCred, desmLang, desmScanResult), tự điền tài khoản. Chỉ cho phép http/https/about.
+// Xem DEV_NOTES.md.
 import SwiftUI
 import WebKit
 import Security
@@ -158,14 +164,15 @@ struct WebView: UIViewRepresentable {
         content.add(context.coordinator, name: "desmCred")
         content.add(context.coordinator, name: "desmLang")
         content.add(context.coordinator, name: "desmScanResult")
+        content.add(context.coordinator, name: "desmSession")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
 
         // Nạp lại cookie đăng nhập đã lưu rồi mới tải trang (còn phiên -> vào thẳng, hết phiên -> trang đăng nhập)
-        let startURL = URL(string: model.address)
+        // Sau đó kiểm tra phiên còn dùng được không; hết phiên thì mở login.do và tự đăng nhập lại (BrowserModel.startLoad)
         SessionStore.restore(into: config.websiteDataStore.httpCookieStore) {
-            if let url = startURL { webView.load(URLRequest(url: url, timeoutInterval: 45)) }
+            model.startLoad(webView)
         }
         webView.addObserver(context.coordinator, forKeyPath: #keyPath(WKWebView.estimatedProgress), options: .new, context: nil)
         webView.addObserver(context.coordinator, forKeyPath: #keyPath(WKWebView.canGoBack), options: .new, context: nil)
@@ -182,6 +189,7 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmCred")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmLang")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmScanResult")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmSession")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -224,6 +232,13 @@ struct WebView: UIViewRepresentable {
                 }
                 return
             }
+            if message.name == "desmSession" {
+                // Trang báo phiên đã hết hạn (XHR bị đẩy về login / 401 / HTML đăng nhập)
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
+                DispatchQueue.main.async { if !self.model.reconnecting { self.model.reconnectSession(reason: "page") } }
+                return
+            }
             if message.name == "desmLang" {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
@@ -251,6 +266,16 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+        /// Trang không phải login.do nhưng lại hiện ô mật khẩu (máy chủ trả trang đăng nhập thay vì quay về login.do) = hết phiên.
+        private func checkLoginForm(_ webView: WKWebView) {
+            guard BrowserModel.autoReconnect, !model.reconnecting, let url = webView.url, let host = url.host?.lowercased(),
+                  host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                  !url.path.lowercased().contains("login") else { return }
+            webView.evaluateJavaScript("!!document.querySelector('input[type=password]')") { r, _ in
+                if (r as? Bool) == true { DispatchQueue.main.async { self.model.reconnectSession(reason: "loginform") } }
+            }
+        }
+
         private func autofillIfLogin(_ webView: WKWebView) {
             guard CredStore.enabled, let url = webView.url, let host = url.host?.lowercased(),
                   host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
@@ -262,6 +287,14 @@ struct WebView: UIViewRepresentable {
             let js = "window.__desmFill && window.__desmFill(\(su)[0], \(sp)[0]);"
             for delay in [0.0, 0.7, 1.8] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { webView.evaluateJavaScript(js, completionHandler: nil) }
+            }
+            // Đang kết nối lại sau khi hết phiên: tự bấm Login (tối đa 2 lần mỗi lần kết nối lại để không lặp khi sai mật khẩu)
+            if model.reconnecting, model.autoSubmitCount < 2 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                    guard self.model.reconnecting else { return }
+                    self.model.autoSubmitCount += 1
+                    webView.evaluateJavaScript("window.__desmSubmitLogin && window.__desmSubmitLogin();", completionHandler: nil)
+                }
             }
         }
 
@@ -278,7 +311,9 @@ struct WebView: UIViewRepresentable {
                 self.model.updateBars(for: webView.url)
                 self.model.evaluateNow()
                 self.model.saveSession()
+                self.model.sessionDidLoad(webView.url)
                 self.autofillIfLogin(webView)
+                self.checkLoginForm(webView)
             }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

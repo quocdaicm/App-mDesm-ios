@@ -1,3 +1,12 @@
+// BrowserView.swift — file trung tâm của app DESM Mobile.
+//  1) LayoutMode + BrowserModel: trạng thái app, cài đặt (@AppStorage), tạo và cài script tiêm vào trang.
+//  2) makeScript(): TOÀN BỘ JS tiêm vào mọi frame của DESM (giao diện mobile, lưới dạng thẻ, danh sách hạng mục, quét, Việt hoá).
+//     Chỉ mục hàm JS ở đầu script và trong DEV_NOTES.md §4.
+//  3) Tiện ích lấy HTML/script/nhật ký API/nội dung URL (phục vụ tinh chỉnh) — cuối file.
+//  4) BrowserView (thanh trên/dưới, nút nổi, quét) và SettingsView (Cài đặt).
+// Quy ước: JS nằm trong chuỗi thô #""" """# (viết \s, \n như JS thường; nội suy Swift là \#( )); mọi script phải idempotent.
+// Xem DEV_NOTES.md để biết những điều đã biết/chưa kiểm chứng về web DESM.
+
 import SwiftUI
 import PhotosUI
 import WebKit
@@ -37,6 +46,8 @@ enum LayoutMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Trạng thái trung tâm: địa chỉ, tiến trình, chế độ hiển thị, cài đặt (CSS bổ sung, từ điển, Việt hoá), tham chiếu tới
+/// WKWebView/WKUserContentController. Tạo script tiêm (makeScript) và cài vào trang (installUserScript/evaluateNow).
 final class BrowserModel: ObservableObject {
     static let homeURL = "https://desm.doosanenerbility.com/main.do?lang=en"
     /// Chỉ áp dụng giao diện cho các domain này khi bật "Chỉ áp dụng cho DESM".
@@ -54,6 +65,12 @@ final class BrowserModel: ObservableObject {
     /// Ẩn thanh trên + thanh dưới (tự ẩn khi vào được trang DESM, bấm nút nổi để hiện lại)
     @Published var barsHidden = false
     private var wasInDesm = false
+    // Tự kết nối lại khi hết phiên đăng nhập (xem extension "Tự kết nối lại" bên dưới)
+    var reconnecting = false          // đang trong quá trình đăng nhập lại tự động
+    var autoSubmitCount = 0           // số lần tự bấm Login trong lần kết nối lại này
+    var reconnectTimes: [Date] = []   // các lần kết nối lại gần đây (chặn lặp vô hạn)
+    var lastReconnectAt: Date?
+    var backgroundedAt: Date?         // lúc app xuống nền
     /// Đang ở trong DESM (không phải trang đăng nhập): dùng để hiện nút quét camera
     @Published var inDesm = false
 
@@ -186,6 +203,13 @@ final class BrowserModel: ObservableObject {
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{\"mode\":\"off\"}"
         return #"""
         (function() {
+          /* CHỈ MỤC (chi tiết trong DEV_NOTES.md §4)
+             Giao diện : allowed, setViewport, navHandlers, addFilterBar, buildForm, formify, fixMaps, slimHeader, defaultToolbar, modalLock
+             Lưới      : gridText, colShown, compactGrid, pkgGridOf, genGridOf, genericCards, cardView, openDetail, colToggle
+             Hạng mục  : diLoadFast (API /getIdsmOsDetailList.do) -> diLoad (khung ẩn MENU_SEQ=197, cách cũ), diSelect, diShow, diWarm
+             Quét      : __desmFindPkg/findPkgIn, __desmFindDetail/findDetailIn (QR: tra Material Code), ensurePkgDoc
+             Việt hoá  : vi* (viMap, viText, viWalk, viApply...)   Đăng nhập: findUser, __desmFill, credHook
+             Vòng áp   : apply, applyAll, __desmApplyAll, __desmRevert (script tự áp lại khi trang xoá style/tạo iframe mới) */
           var w = window;
           w.__desmCfg = \#(json);
           var ID = 'desm-mobile-custom-style', CLS = 'desm-mobile-mode';
@@ -512,7 +536,7 @@ final class BrowserModel: ObservableObject {
                 if (w && diGrid(w) && w.document.getElementById('txtPackageNo') && w.document.getElementById('btnSearch')) { cb(w); return; }
               } catch (e) {}
               if (Date.now() - t0 > 25000) { cb(null); return; }
-              setTimeout(poll, 400);
+              setTimeout(poll, 120);
             })();
           }
           // Đợi ô Dự án trong khung ẩn được điền (mặc định của trang); quá 10 giây thì chép từ trang Package / tab đang mở.
@@ -542,7 +566,7 @@ final class BrowserModel: ObservableObject {
             var d = w.document, t0 = Date.now(), copied = false;
             (function poll() {
               var c = d.getElementById('txtProjectCode');
-              if (c && c.value) { diCloseAlerts(top); cb(true); return; }
+              if (c && c.value) { try { top.__desmProj = c.value; } catch (e0) {} diCloseAlerts(top); cb(true); return; }
               var el = Date.now() - t0;
               if (el > 10000 && !copied) {
                 copied = true;
@@ -551,22 +575,35 @@ final class BrowserModel: ObservableObject {
                   c.value = p.code; var n = d.getElementById('txtProjectName'); if (n) n.value = p.name;
                   ['input', 'change'].forEach(function(e) { c.dispatchEvent(new w.Event(e, { bubbles: true })); });
                   try { c.classList.remove('validation-error'); if (n) n.classList.remove('validation-error'); } catch (e) {}
-                  diCloseAlerts(top); cb(true); return;
+                  try { top.__desmProj = p.code; } catch (e0) {} diCloseAlerts(top); cb(true); return;
                 }
               }
               if (el > 15000) { cb(false); return; }
-              setTimeout(poll, 300);
+              setTimeout(poll, 100);
             })();
           }
-          function diLoad(idoc, pkg, cb) {
+          // Mở sẵn khung ẩn "Hạng mục chi tiết" ngay khi màn hình Package hiện, để lúc mở kiện không phải chờ nạp trang
+          function diWarm(idoc) {
+            try {
+              var top = diTop(idoc);
+              if (top.__desmDIwarm) return;
+              top.__desmDIwarm = 1;
+              setTimeout(function() { diFrame(top, function() {}); }, 1200);
+            } catch (e) {}
+          }
+          // n = số hạng mục dự kiến (từ cột A/O "4/0"): đủ n dòng là xong ngay, khỏi đợi lưới "ổn định".
+          // skippable = true: nếu trong lúc chờ hàng đợi có yêu cầu mới hơn thì bỏ qua yêu cầu cũ.
+          function diLoad(idoc, pkg, cb, n, skippable) {
             var top = diTop(idoc), cache = top.__desmDI = top.__desmDI || {};
             if (cache[pkg]) { cb(cache[pkg]); return; }
+            var seq = top.__desmDIseq = (top.__desmDIseq || 0) + 1;
+            n = (n > 0) ? n : 0;
             function run(done) {
               diFrame(top, function(w) {
                 var G = w && diGrid(w);
                 if (!G) { done(null); return; }
                 var d = w.document, inp = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo');
-                function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new w.Event(n, { bubbles: true })); }); }
+                function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(e) { x.dispatchEvent(new w.Event(e, { bubbles: true })); }); }
                 // Ô Dự án (bắt buộc) do trang tự điền bất đồng bộ; bấm Search khi còn trống sẽ báo "required values have not been entered".
                 diProject(w, idoc, top, function(projOk) {
                 if (!projOk) { done(null); return; }
@@ -574,34 +611,91 @@ final class BrowserModel: ObservableObject {
                 var sv0 = d.getElementById('txtSearchValue1'); if (sv0 && sv0.value) setv(sv0, '');
                 d.getElementById('btnSearch').click();
                 var t0 = Date.now(), last = '', stable = 0;
+                function finish(hit) {
+                  // Có dự kiến n > 0 mà không thấy dòng nào = lần nạp hỏng (chưa phải kiện rỗng) → báo lỗi để thử lại
+                  if (!hit.length && n > 0) { done(null); return; }
+                  done(hit.map(function(r) {
+                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = gridText(G, r, c); });
+                    o._id = r.id;
+                    return o;
+                  }));
+                }
                 (function poll() {
                   var all = diRows(G), hit = all.filter(function(r) { return gridText(G, r, 'PACKAGE_NO') === pkg; });
                   var sig = all.length + '|' + hit.length; stable = sig === last ? stable + 1 : 0; last = sig;
                   var el = Date.now() - t0;
-                  if ((hit.length && stable >= 3 && el > 1500) || (!all.length && stable >= 6 && el > 4000) || el > 20000) {
-                    done(hit.map(function(r) {
-                      var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = gridText(G, r, c); });
-                      o._id = r.id;
-                      return o;
-                    }));
-                    return;
-                  }
-                  setTimeout(poll, 400);
+                  if ((n && hit.length >= n && stable >= 1 && el > 150) || (hit.length && stable >= 5 && el > 900) ||
+                      (!all.length && stable >= 20 && el > 5000) || el > 15000) { finish(hit); return; }
+                  setTimeout(poll, 100);
                 })();
                 });
               });
             }
             top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
-              return new Promise(function(res) { run(function(rows) { if (rows) cache[pkg] = rows; cb(rows); res(); }); });
+              return new Promise(function(res) {
+                if (cache[pkg]) { cb(cache[pkg]); res(); return; }
+                if (skippable && seq !== top.__desmDIseq) { res(); return; }
+                run(function(rows) {
+                  if (rows === null) {
+                    // Hỏng 1 lần: bỏ khung ẩn cũ, tạo lại khung mới rồi thử thêm một lần
+                    try { var old = top.document.getElementById('desmDetailFrame'); if (old && old.parentNode) old.parentNode.removeChild(old); } catch (e) {}
+                    run(function(rows2) {
+                      if (rows2 && (rows2.length || !n)) cache[pkg] = rows2;
+                      cb(rows2); res();
+                    });
+                    return;
+                  }
+                  if (rows.length || !n) cache[pkg] = rows;
+                  cb(rows); res();
+                });
+              });
             });
+          }
+          // Đường nhanh: gọi thẳng API của lưới "Hạng mục chi tiết" (/getIdsmOsDetailList.do) bằng jQuery của trang
+          // (kế thừa ajaxSetup/phiên đăng nhập) thay vì nạp trang ẩn rồi bấm Search. Lỗi thì quay về cách cũ (diLoad).
+          function diLoadFast(idoc, pkg, cb, n, skippable) {
+            var top = diTop(idoc), W = idoc.defaultView, $j = null;
+            try { $j = W.jQuery || W.$ || top.jQuery || top.$; } catch (e) {}
+            var proj = null; try { proj = top.__desmProj || (diFindProject(idoc, top) || {}).code; } catch (e) {}
+            function slow() { diLoad(idoc, pkg, cb, n, skippable); }
+            if (!$j || !$j.ajax || !proj) { slow(); return; }
+            var used = false;
+            function nz(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
+            function fail() { if (used) return; used = true; slow(); }
+            var param = { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: proj, PACKAGE_LIST_NO: '', PACKAGE_NO: pkg, DESCRIPTION: '', DRAWING_NO: '',
+              TAG_NO: '', QTY_TYPE: 'rsi', QTY: '', KEY1: '', VALUE1: '', LOCATION: '', SEQUENCE: '', VENDOR: '', ATTRIBUTE10: '',
+              TYPE: '', CATEGORY: '', SUB_CATEGORY: '', COMMENTS: '' };
+            try {
+              $j.ajax({
+                url: '/getIdsmOsDetailList.do', data: param, timeout: 15000,
+                success: function(data) {
+                  if (used) return;
+                  var list = data && data.results && data.results.list;
+                  if (!list || !list.length && data.results === 'Err') { fail(); return; }
+                  var hit = [].filter.call(list, function(r) { return r && nz(r.PACKAGE_NO) === nz(pkg); });
+                  if (!hit.length && n > 0) { fail(); return; }
+                  used = true;
+                  var rows = hit.map(function(r) {
+                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = nz(r[c]); });
+                    o._id = null;
+                    return o;
+                  });
+                  cb(rows);
+                  // Mở sẵn lưới ẩn ở nền để lúc chạm ghim/Location Update không phải đợi
+                  setTimeout(function() { try { diLoad(idoc, pkg, function() {}, n, true); } catch (e) {} }, 400);
+                },
+                error: fail
+              });
+            } catch (e) { fail(); }
           }
           var DI_HIDE = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
           // Chọn đúng các hạng mục trong lưới ẩn (xs = mảng) rồi bấm nút Location Update gốc của trang "Hạng mục chi tiết"
           function diSelect(idoc, pkg, xs, cb) {
             var top = diTop(idoc);
+            function nz(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
             function same(G, r, x) {
-              return gridText(G, r, 'PACKAGE_NO') === pkg && gridText(G, r, 'MATERIAL_CODE') === x.MATERIAL_CODE &&
-                gridText(G, r, 'TAG_NO') === x.TAG_NO && gridText(G, r, 'DESCRIPTION') === x.DESCRIPTION;
+              return nz(gridText(G, r, 'PACKAGE_NO')) === nz(pkg) && nz(gridText(G, r, 'MATERIAL_CODE')) === nz(x.MATERIAL_CODE) &&
+                nz(gridText(G, r, 'TAG_NO')) === nz(x.TAG_NO) && nz(gridText(G, r, 'DESCRIPTION')) === nz(x.DESCRIPTION);
             }
             function attempt(retried) {
               diFrame(top, function(w) {
@@ -813,13 +907,33 @@ final class BrowserModel: ObservableObject {
               else { note.textContent = ''; lines.lastChild.textContent = String(rows.length); }
               refreshSel();
             }
-            function loadItems() {
-              note.textContent = 'Đang tải danh sách hạng mục…';
-              diLoad(idoc, pkgNo, function(rows) {
+            var LSK = 'desmDI:' + pkgNo, shown = null;
+            function lsGet() { try { var v = JSON.parse(localStorage.getItem(LSK) || 'null'); return v && v.rows && v.rows.length ? v.rows : null; } catch (e) { return null; } }
+            function lsSet(rows) { try { if (rows && rows.length) localStorage.setItem(LSK, JSON.stringify({ t: Date.now(), rows: rows })); } catch (e) {} }
+            function lsDel() { try { localStorage.removeItem(LSK); } catch (e) {} }
+            function loadItems(fresh) {
+              if (fresh) { lsDel(); shown = null; }
+              var cached = fresh ? null : lsGet();
+              if (cached) { shown = JSON.stringify(cached); renderItems(cached); note.textContent = 'Đang cập nhật…'; }
+              else note.textContent = 'Đang tải danh sách hạng mục…';
+              diLoadFast(idoc, pkgNo, function(rows) {
                 if (!ov.parentNode) return;
-                if (!rows) { note.textContent = 'Không tải được danh sách hạng mục (trang "Hạng mục chi tiết" chưa sẵn sàng). Đóng rồi mở lại để thử lần nữa.'; return; }
+                if (rows && shown) {
+                  lsSet(rows);
+                  if (JSON.stringify(rows) !== shown) { shown = JSON.stringify(rows); renderItems(rows); } else note.textContent = '';
+                  return;
+                }
+                if (rows) lsSet(rows);
+                if (!rows && shown) { note.textContent = ''; return; }
+                if (!rows) {
+                  note.textContent = 'Không tải được danh sách hạng mục. ';
+                  var rb = el('button', 'desm-detail-list', 'Thử lại'); rb.type = 'button';
+                  rb.addEventListener('click', function() { loadItems(true); });
+                  note.appendChild(rb);
+                  return;
+                }
                 renderItems(rows);
-              });
+              }, nLines, true);
             }
             // Cập nhật vị trí cho một hoặc nhiều hạng mục (như nút Location Update ở trang Hạng mục chi tiết)
             function updateItemsLoc(xs) {
@@ -829,7 +943,7 @@ final class BrowserModel: ObservableObject {
                 note.textContent = '';
                 diShow(idoc, function() {
                   try { delete (diTop(idoc).__desmDI || {})[pkgNo]; } catch (e) {}
-                  if (ov.parentNode) loadItems();
+                  if (ov.parentNode) loadItems(true);
                 });
               });
             }
@@ -955,6 +1069,7 @@ final class BrowserModel: ObservableObject {
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
+            try { diWarm(box.ownerDocument); } catch (e) {}
             var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
             if (box.__sig === sig) return;
             box.__sig = sig;
@@ -1277,6 +1392,26 @@ final class BrowserModel: ObservableObject {
             setVal(pw, p);
             return true;
           };
+          // Tự bấm Login (chỉ app gọi khi đang kết nối lại sau khi hết phiên, đã có tài khoản lưu). Mỗi lần tải trang chỉ một lần.
+          w.__desmSubmitLogin = function() {
+            var pw = document.querySelector('input[type=password]');
+            if (!pw || !pw.value || w.__desmSubmitted) return false;
+            var u = findUser(document, pw);
+            if (u && !u.value) return false;
+            w.__desmSubmitted = true;
+            var form = pw.form, btn = null, cand = (form || document).querySelectorAll('button,input[type=submit],input[type=button],a');
+            for (var i = 0; i < cand.length; i++) {
+              var c = cand[i], t = (c.id || '') + ' ' + (c.className || '') + ' ' + (c.textContent || c.value || '');
+              if (/log\s*in|login|sign\s*in|đăng nhập/i.test(t) && c.offsetParent !== null) { btn = c; break; }
+            }
+            try {
+              if (btn) btn.click();
+              else if (form && form.requestSubmit) form.requestSubmit();
+              else if (form) form.submit();
+              else return false;
+            } catch (e) { return false; }
+            return true;
+          };
           function credHook(doc) {
             if (doc.__desmCred || w !== w.top) return;
             var pw = doc.querySelector('input[type=password]');
@@ -1561,6 +1696,7 @@ final class BrowserModel: ObservableObject {
             var top = diTop(document), mat = pkgNorm(cfg.material);
             var plk = pkgNorm(String(cfg.pl || '').replace(/^#\s*\d+\s*/, ''));
             function fail(st, n) { scanMsg({ status: st, term: cfg.material, n: n || 0 }); }
+            function slowRun() {
             top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
               return new Promise(function(res) {
                 var finished = false;
@@ -1608,6 +1744,43 @@ final class BrowserModel: ObservableObject {
                 });
               });
             });
+            }
+            // Đường nhanh: gọi thẳng API lưới Hạng mục chi tiết, lọc theo Material Code (KEY1='material'); không có kết quả/lỗi thì dùng cách cũ
+            var $j = null, proj = null, once = false;
+            try { var W0 = d0.defaultView; $j = W0.jQuery || W0.$ || top.jQuery || top.$; } catch (e) {}
+            try { proj = top.__desmProj || (diFindProject(d0, top) || {}).code; } catch (e) {}
+            function slowOnce() { if (once) return; once = true; slowRun(); }
+            if (!$j || !$j.ajax || !proj) { slowRun(); return; }
+            try {
+              $j.ajax({
+                url: '/getIdsmOsDetailList.do', timeout: 15000,
+                data: { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: proj, PACKAGE_LIST_NO: '', PACKAGE_NO: '', DESCRIPTION: '', DRAWING_NO: '',
+                  TAG_NO: '', QTY_TYPE: 'rsi', QTY: '', KEY1: 'material', VALUE1: cfg.material, LOCATION: '', SEQUENCE: '', VENDOR: '',
+                  ATTRIBUTE10: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', COMMENTS: '' },
+                success: function(data) {
+                  if (once) return;
+                  var list = data && data.results && data.results.list;
+                  if (!list || !list.length) { slowOnce(); return; }
+                  var hits = [].filter.call(list, function(r) { return r && pkgNorm(r.MATERIAL_CODE) === mat; });
+                  if (!hits.length) { slowOnce(); return; }
+                  if (hits.length > 1 && plk) {
+                    var byPl = hits.filter(function(r) {
+                      for (var c in r) { try { if (pkgNorm(r[c]).indexOf(plk) >= 0) return true; } catch (e) {} }
+                      return false;
+                    });
+                    if (byPl.length) hits = byPl;
+                  }
+                  var pkgs = [];
+                  hits.forEach(function(r) { var p = String(r.PACKAGE_NO == null ? '' : r.PACKAGE_NO).trim(); if (p && pkgs.indexOf(p) < 0) pkgs.push(p); });
+                  if (!pkgs.length) { slowOnce(); return; }
+                  once = true;
+                  if (pkgs.length > 1) { fail('dmulti', pkgs.length); return; }
+                  scanMsg({ status: 'dfound', term: pkgs[0] });
+                  w.__desmFindPkg({ term: pkgs[0], key: pkgs[0], open: cfg.open });
+                },
+                error: slowOnce
+              });
+            } catch (e) { slowOnce(); }
           }
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
@@ -1702,6 +1875,9 @@ final class BrowserModel: ObservableObject {
         guard let controller = contentController else { return }
         controller.removeAllUserScripts()
         controller.addUserScript(WKUserScript(source: makeScript(),
+                                              injectionTime: .atDocumentStart,
+                                              forMainFrameOnly: false))
+        controller.addUserScript(WKUserScript(source: BrowserModel.netRecorderSource,
                                               injectionTime: .atDocumentStart,
                                               forMainFrameOnly: false))
     }
@@ -1864,6 +2040,56 @@ final class BrowserModel: ObservableObject {
         """#
     }
 
+    /// Tải nội dung các file script của trang (tài nguyên /resources/scripts/... như plDetail.js) bằng phiên đăng nhập hiện có.
+    func fetchScriptFiles(done: @escaping (String?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang để đọc."); return }
+        let js = #"""
+        var list = [], seen = {};
+        function add(u) {
+          try {
+            var a = new URL(u, location.href);
+            if (a.origin !== location.origin || !/\.js$/i.test(a.pathname) || seen[a.pathname]) return;
+            seen[a.pathname] = 1; list.push(a.href);
+          } catch (e) {}
+        }
+        add('/resources/scripts/material/plDetail.js');
+        function scan(doc, l) {
+          [].forEach.call(doc.querySelectorAll('script[src]'), function(s) { add(s.src); });
+          if (l > 2) return;
+          [].forEach.call(doc.querySelectorAll('iframe,frame'), function(f) { try { if (f.contentDocument) scan(f.contentDocument, l + 1); } catch (e) {} });
+        }
+        scan(document, 0);
+        list = list.filter(function(h) {
+          var p = new URL(h).pathname;
+          return /\/resources\/scripts\//i.test(p) && !/\.min\.js$/i.test(p);
+        });
+        var out = [], ok = 0;
+        for (var i = 0; i < list.length; i++) {
+          var path = new URL(list[i]).pathname;
+          try {
+            var r = await fetch(list[i], { credentials: 'include', cache: 'no-store' });
+            var t = await r.text();
+            if (r.ok) ok++;
+            out.push('/* ===== ' + path + ' (HTTP ' + r.status + ', ' + t.length + ' ký tự) ===== */\n' + t);
+          } catch (e) {
+            out.push('/* ===== ' + path + ' (LỖI: ' + e + ') ===== */');
+          }
+        }
+        return ok + '/' + list.length + '\u0001' + out.join('\n\n');
+        """#
+        webView.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+            switch result {
+            case .success(let v):
+                if let str = v as? String, let sep = str.firstIndex(of: "\u{1}") {
+                    let head = String(str[..<sep]); let body = String(str[str.index(after: sep)...])
+                    done(body, head)
+                } else { done(nil, "Không có kết quả.") }
+            case .failure(let e):
+                done(nil, "Không tải được script: \(e.localizedDescription)")
+            }
+        }
+    }
+
     /// Lấy HTML hiện tại của trang (gồm iframe cùng origin). `done(html, lỗi)`.
     func fetchHTML(stripValues: Bool, stripScripts: Bool, done: @escaping (String?, String) -> Void) {
         guard let webView = webView else { done(nil, "Chưa có trang để đọc."); return }
@@ -1901,6 +2127,7 @@ extension BrowserModel {
     }
 }
 
+/// Màn hình chính: WebView + thanh địa chỉ/nút điều hướng (tự ẩn khi đã vào DESM), nút camera quét, toast và Cài đặt.
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -1951,7 +2178,8 @@ struct BrowserView: View {
         }
         .tint(.blue)
         .onChange(of: scenePhase) { phase in
-            if phase != .active { model.saveSession() }
+            if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date() }
+            else { model.appBecameActive() }
         }
         .alert("Không mở được địa chỉ", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -2189,6 +2417,271 @@ struct FooterBackground: View {
     }
 }
 
+extension BrowserModel {
+    /// Ghi lại request XHR/fetch của trang DESM (chỉ khi bật trong Cài đặt). Nhật ký nằm trong localStorage của trang, mật khẩu/token được che.
+    static let netRecorderSource = #"""
+    (function() {
+      if (window.__desmNet) return; window.__desmNet = 1;
+      if (!/(^|\.)doosanenerbility\.com$/i.test(location.hostname)) return;
+      var KEY = 'desmNetLog';
+      function on() { try { return localStorage.getItem('desmNetOn') === '1'; } catch (e) { return false; } }
+      function cut(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…[' + s.length + ' ký tự]' : s; }
+      function mask(s) {
+        return String(s == null ? '' : s).replace(/((?:pass\w*|pwd|token|secret|auth\w*)["']?\s*[=:]\s*["']?)[^&"',}\s]*/gi, '$1***');
+      }
+      function push(e) {
+        if (!on()) return;
+        try {
+          var a = JSON.parse(localStorage.getItem(KEY) || '[]'); a.push(e);
+          if (a.length > 150) a = a.slice(-150);
+          localStorage.setItem(KEY, JSON.stringify(a));
+        } catch (x) {}
+      }
+      // Phát hiện hết phiên: XHR bị chuyển về trang đăng nhập / trả 401 / trả HTML có ô mật khẩu -> báo cho app (desmSession)
+      var lastExp = 0;
+      function pathOf(u) { try { return new URL(u, location.href).pathname; } catch (e) { return ''; } }
+      function expired(why) {
+        var n = Date.now(); if (n - lastExp < 15000) return; lastExp = n;
+        try { window.webkit.messageHandlers.desmSession.postMessage({ why: why }); } catch (e) {}
+      }
+      function checkXhr(x, u) {
+        try {
+          if (/login/i.test(location.pathname)) return;
+          if (/login/i.test(pathOf(x.responseURL || '')) && !/login/i.test(pathOf(u))) { expired('redirect'); return; }
+          if (x.status === 401) { expired('401'); return; }
+          if (x.status === 200 && (x.responseType === '' || x.responseType === 'text')) {
+            var t = x.responseText;
+            if (t && t.length < 300000 && /^\s*</.test(t.slice(0, 60)) && /<html/i.test(t) && /<input[^>]+type=["']?password/i.test(t)) expired('loginhtml');
+          }
+        } catch (e) {}
+      }
+      function bodyText(b) {
+        if (b == null) return '';
+        if (typeof b === 'string') return b;
+        try { if (b instanceof URLSearchParams) return b.toString(); } catch (e) {}
+        try { if (b instanceof FormData) { var o = []; b.forEach(function(v, k) { o.push(k + '=' + (typeof v === 'string' ? v : '[file]')); }); return o.join('&'); } } catch (e) {}
+        return '[không phải văn bản]';
+      }
+      try {
+        var X = XMLHttpRequest.prototype, o = X.open, sd = X.send;
+        X.open = function(m, u) { this.__d = { m: m, u: u, t: Date.now() }; return o.apply(this, arguments); };
+        X.send = function(b) {
+          var d = this.__d, x = this;
+          if (d) x.addEventListener('loadend', function() { checkXhr(x, d.u); });
+          if (d && on()) {
+            d.b = b;
+            x.addEventListener('loadend', function() {
+              var rt = ''; try { rt = (x.responseType === '' || x.responseType === 'text') ? x.responseText : '[' + x.responseType + ']'; } catch (e) {}
+              push({ t: new Date().toISOString(), via: 'xhr', page: location.pathname + location.search, method: d.m, url: cut(mask(d.u), 600),
+                     body: cut(mask(bodyText(d.b)), 1500), status: x.status, ms: Date.now() - d.t, resp: cut(mask(rt), 700) });
+            });
+          }
+          return sd.apply(this, arguments);
+        };
+      } catch (e) {}
+      try {
+        var f = window.fetch;
+        if (f) window.fetch = function(inp, init) {
+          var t = Date.now(), p = f.apply(this, arguments);
+          if (!on()) return p;
+          var u = typeof inp === 'string' ? inp : (inp && inp.url), m = (init && init.method) || (inp && inp.method) || 'GET', b = init && init.body;
+          return p.then(function(r) {
+            try {
+              r.clone().text().then(function(tx) {
+                push({ t: new Date().toISOString(), via: 'fetch', page: location.pathname + location.search, method: m, url: cut(mask(u), 600),
+                       body: cut(mask(bodyText(b)), 1500), status: r.status, ms: Date.now() - t, resp: cut(mask(tx), 700) });
+              });
+            } catch (e) {}
+            return r;
+          });
+        };
+      } catch (e) {}
+    })();
+    """#
+
+    func setNetLog(_ on: Bool) {
+        webView?.evaluateJavaScript("try{localStorage.setItem('desmNetOn','\(on ? "1" : "0")')}catch(e){}", completionHandler: nil)
+    }
+
+    func clearNetLog() {
+        webView?.evaluateJavaScript("try{localStorage.removeItem('desmNetLog')}catch(e){}", completionHandler: nil)
+    }
+
+    /// Đọc nhật ký API đã ghi (định dạng văn bản dễ đọc).
+    func fetchNetLog(done: @escaping (String?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang để đọc."); return }
+        let js = #"""
+        (function() {
+          var a = []; try { a = JSON.parse(localStorage.getItem('desmNetLog') || '[]'); } catch (e) {}
+          if (!a.length) return '';
+          return a.map(function(e, i) {
+            return '#' + (i + 1) + ' ' + e.t + ' [' + e.via + '] ' + e.method + ' ' + e.url + '\n' +
+              '   màn hình: ' + e.page + '\n   body: ' + (e.body || '(rỗng)') + '\n   -> HTTP ' + e.status + ' (' + e.ms + ' ms)\n   phản hồi: ' + (e.resp || '(rỗng)');
+          }).join('\n\n');
+        })();
+        """#
+        webView.evaluateJavaScript(js) { result, error in
+            if let t = result as? String, !t.isEmpty { done(t, "") }
+            else { done(nil, error?.localizedDescription ?? "Chưa có request nào được ghi. Hãy bật ghi API, thao tác trên trang rồi quay lại.") }
+        }
+    }
+
+    /// Tải nội dung một địa chỉ cùng domain (script, trang, API GET) bằng phiên đăng nhập hiện có.
+    func fetchURLText(_ path: String, done: @escaping (String?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang để đọc."); return }
+        let js = #"""
+        var a;
+        try { a = new URL(u, location.href); } catch (e) { return 'LỖI: địa chỉ không hợp lệ'; }
+        if (a.origin !== location.origin) return 'LỖI: chỉ tải được địa chỉ cùng domain với trang đang mở (' + location.origin + ')';
+        var r = await fetch(a.href, { credentials: 'include', cache: 'no-store' });
+        var t = await r.text();
+        return 'HTTP ' + r.status + ' ' + (r.headers.get('content-type') || '') + ' ' + a.href + '\n\n' + t;
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["u": path], in: nil, in: .page) { result in
+            switch result {
+            case .success(let v):
+                if let t = v as? String { done(t, "") } else { done(nil, "Không có kết quả.") }
+            case .failure(let e):
+                done(nil, "Không tải được: \(e.localizedDescription)")
+            }
+        }
+    }
+}
+
+// MARK: - Tự kết nối lại khi hết phiên đăng nhập
+//
+// Vấn đề: sau một thời gian (hoặc qua đêm) phiên DESM phía máy chủ hết hạn, nhưng app vẫn nạp lại địa chỉ cũ với cookie cũ
+// nên trang trống/không chạy thay vì quay về trang đăng nhập. Cách xử lý:
+//  1) Khi mở app: khôi phục cookie rồi "thăm dò" main.do bằng URLSession; hết phiên (chuyển về login, 401, có ô mật khẩu, hoặc
+//     lần dùng cuối quá lâu và đã lưu tài khoản) thì xoá cookie cũ và mở https://desm.doosanenerbility.com/login.do.
+//  2) Khi app quay lại từ nền sau > 10 phút: thăm dò tương tự.
+//  3) Khi đang dùng: JS (netRecorderSource) phát hiện XHR bị đẩy về login/401/HTML đăng nhập -> message "desmSession".
+//  4) Ở trang đăng nhập: app tự điền tài khoản đã lưu (CredStore) và, nếu đang kết nối lại, tự bấm Login (__desmSubmitLogin).
+// Chống lặp: tối đa 3 lần kết nối lại / 5 phút và 2 lần tự bấm Login mỗi lần; sau đó chuyển sang đăng nhập thủ công.
+// Bật/tắt: Cài đặt > "Tự đăng nhập lại khi hết phiên" (khoá desmAutoReconnect, mặc định bật).
+extension BrowserModel {
+    static let loginURL = "https://desm.doosanenerbility.com/login.do"
+    /// Lần dùng cuối quá ngưỡng này thì coi như phiên đã hết, khỏi thăm dò.
+    static let staleSessionAge: TimeInterval = 6 * 3600
+
+    static var autoReconnect: Bool { UserDefaults.standard.object(forKey: "desmAutoReconnect") as? Bool ?? true }
+
+    func markActive() { UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "desmLastActive") }
+
+    private var lastActiveAge: TimeInterval? {
+        let t = UserDefaults.standard.double(forKey: "desmLastActive")
+        return t > 0 ? Date().timeIntervalSince1970 - t : nil
+    }
+
+    enum SessionProbe { case none, valid, expired, unknown }
+
+    /// Gọi sau mỗi lần tải xong một trang: vào được DESM (không phải trang đăng nhập) = kết nối lại thành công.
+    func sessionDidLoad(_ url: URL?) {
+        let host = url?.host?.lowercased() ?? ""
+        let path = url?.path.lowercased() ?? ""
+        guard host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"), !path.contains("login") else { return }
+        markActive()
+        if reconnecting { reconnecting = false; autoSubmitCount = 0 }
+    }
+
+    /// Xoá cookie DESM trong WKWebView (chỉ cookie; giữ localStorage/bộ nhớ đệm khác).
+    func clearDesmCookies(_ done: @escaping () -> Void) {
+        guard let store = webView?.configuration.websiteDataStore else { done(); return }
+        let types: Set<String> = [WKWebsiteDataTypeCookies]
+        store.fetchDataRecords(ofTypes: types) { records in
+            let mine = records.filter { $0.displayName.lowercased().contains("doosanenerbility") }
+            if mine.isEmpty { done(); return }
+            store.removeData(ofTypes: types, for: mine) { done() }
+        }
+    }
+
+    /// Thăm dò xem phiên còn dùng được không (không đụng tới WKWebView). Lỗi mạng -> .unknown (cứ nạp trang như thường).
+    func probeSession(_ completion: @escaping (SessionProbe) -> Void) {
+        guard let store = webView?.configuration.websiteDataStore.httpCookieStore else { completion(.unknown); return }
+        store.getAllCookies { cookies in
+            let mine = cookies.filter { $0.domain.lowercased().contains("doosanenerbility") }
+            if mine.isEmpty { completion(.none); return }
+            guard let url = URL(string: BrowserModel.homeURL) else { completion(.unknown); return }
+            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+            req.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: mine)
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.httpShouldSetCookies = false
+            cfg.timeoutIntervalForRequest = 8
+            URLSession(configuration: cfg).dataTask(with: req) { data, resp, err in
+                guard err == nil, let http = resp as? HTTPURLResponse else { completion(.unknown); return }
+                if http.statusCode == 401 { completion(.expired); return }
+                if http.statusCode >= 500 || http.statusCode == 0 { completion(.unknown); return }
+                let path = http.url?.path.lowercased() ?? ""
+                if path.contains("login") { completion(.expired); return }
+                let body = String(decoding: (data ?? Data()).prefix(300_000), as: UTF8.self).lowercased()
+                if body.contains("type=\"password\"") || body.contains("type='password'") || body.contains("type=password") {
+                    completion(.expired); return
+                }
+                completion(.valid)
+            }.resume()
+        }
+    }
+
+    /// Mở trang đăng nhập (sau khi xoá cookie cũ). `auto` = true: tự điền + tự bấm Login nếu có tài khoản lưu.
+    func openLogin(auto: Bool) {
+        guard let wv = webView, let url = URL(string: BrowserModel.loginURL) else { return }
+        reconnecting = auto
+        autoSubmitCount = 0
+        SessionStore.clear()
+        clearDesmCookies {
+            DispatchQueue.main.async { wv.load(URLRequest(url: url, timeoutInterval: 45)) }
+        }
+    }
+
+    /// Phiên đã hết: xoá phiên cũ và đăng nhập lại. Có giới hạn số lần để không lặp vô hạn.
+    func reconnectSession(reason: String) {
+        guard BrowserModel.autoReconnect else { return }
+        let now = Date()
+        if let last = lastReconnectAt, now.timeIntervalSince(last) < 10 { return }
+        reconnectTimes = reconnectTimes.filter { now.timeIntervalSince($0) < 300 }
+        if reconnectTimes.count >= 3 {
+            reconnecting = false
+            showToast("Không tự đăng nhập lại được, hãy đăng nhập thủ công")
+            return
+        }
+        reconnectTimes.append(now); lastReconnectAt = now
+        showToast(CredStore.load() != nil && CredStore.enabled ? "Phiên đã hết hạn, đang đăng nhập lại…" : "Phiên đã hết hạn, hãy đăng nhập lại")
+        openLogin(auto: true)
+    }
+
+    /// Mở app: khôi phục cookie xong thì kiểm tra phiên rồi mới nạp trang (đăng nhập lại nếu cần).
+    func startLoad(_ webView: WKWebView) {
+        let start = URL(string: address) ?? URL(string: BrowserModel.homeURL)!
+        guard BrowserModel.autoReconnect else { webView.load(URLRequest(url: start, timeoutInterval: 45)); return }
+        // Lâu không dùng + đã lưu tài khoản (đăng nhập lại êm) -> khỏi thăm dò, đăng nhập lại luôn.
+        // Chưa lưu tài khoản thì chỉ dựa vào thăm dò để không bắt người dùng gõ lại khi phiên vẫn còn.
+        if let age = lastActiveAge, age > BrowserModel.staleSessionAge, CredStore.enabled, CredStore.load() != nil {
+            DispatchQueue.main.async { self.openLogin(auto: true) }
+            return
+        }
+        probeSession { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .none: self.openLogin(auto: true)          // chưa có phiên: vào thẳng trang đăng nhập (tự điền nếu có tài khoản)
+                case .expired: self.reconnecting = true; self.reconnectTimes.append(Date()); self.lastReconnectAt = Date(); self.showToast("Phiên đã hết hạn, đang đăng nhập lại…"); self.openLogin(auto: true)
+                case .valid, .unknown: webView.load(URLRequest(url: start, timeoutInterval: 45))
+                }
+            }
+        }
+    }
+
+    /// App quay lại từ nền: nếu đã nằm nền lâu thì kiểm tra phiên (không làm gì khi đang ở trang đăng nhập).
+    func appBecameActive() {
+        guard BrowserModel.autoReconnect, let t = backgroundedAt else { return }
+        backgroundedAt = nil
+        guard Date().timeIntervalSince(t) > 600, inDesm else { return }
+        probeSession { [weak self] result in
+            DispatchQueue.main.async { if result == .expired || result == .none { self?.reconnectSession(reason: "foreground") } }
+        }
+    }
+}
+
 struct ShareItem: Identifiable {
     let id = UUID()
     let url: URL
@@ -2202,16 +2695,34 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+/// Cài đặt: chế độ hiển thị, CSS/từ điển bổ sung, đăng nhập, quét, và nhóm công cụ tinh chỉnh
+/// (cấu trúc trang, HTML/script, nhật ký API, tải nội dung địa chỉ). Xem DEV_NOTES.md §7.
 struct SettingsView: View {
     @ObservedObject var model: BrowserModel
     @Environment(\.dismiss) private var dismiss
     @State private var message: String?
     @State private var shareItem: ShareItem?
-    @AppStorage("desmExportStripValues") private var stripValues = true
+    @AppStorage("desmExportStripValues2") private var stripValues = false
     @AppStorage("desmRememberLogin") private var rememberLogin = true
     @AppStorage("desmAutofill") private var autofill = true
-    @AppStorage("desmExportStripScripts") private var stripScripts = true
+    @AppStorage("desmAutoReconnect") private var autoReconnect = true
+    @AppStorage("desmExportStripScripts2") private var stripScripts = false
     @AppStorage("desmScanOpenDetail") private var scanOpenDetail = true
+    @AppStorage("desmNetLogOn") private var netLogOn = false
+    @State private var fetchPath = ""
+
+    private func shareText(_ text: String, prefix: String, ext: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(formatter.string(from: Date())).\(ext)")
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            shareItem = ShareItem(url: url)
+        } catch {
+            message = "Không lưu được file: \(error.localizedDescription)"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -2263,6 +2774,9 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Đăng nhập") {
+                    Toggle("Tự đăng nhập lại khi hết phiên", isOn: $autoReconnect)
+                    Text("Khi phiên DESM hết hạn (qua đêm, để lâu), app tự quay về trang đăng nhập, điền tài khoản đã lưu và bấm Login. Cần bật \"Tự điền tài khoản\" và đã lưu tài khoản. Không có tài khoản lưu thì chỉ mở trang đăng nhập để bạn tự nhập.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
                     Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
                     Button("Xóa tài khoản đã lưu", role: .destructive) {
@@ -2293,6 +2807,39 @@ struct SettingsView: View {
                     Text("Mở trang cần chỉnh (ví dụ màn hình Package), vào đây bấm nút trên rồi dán vào khung chat. Dữ liệu nhập trong ô không được sao chép.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("Công cụ lấy mã & API (để tinh chỉnh)") {
+                    Toggle("Ghi lại các request API của trang", isOn: $netLogOn)
+                        .onChange(of: netLogOn) { model.setNetLog($0) }
+                    Button("Lưu nhật ký API thành file…") {
+                        model.fetchNetLog { text, error in
+                            guard let text = text else { message = error; return }
+                            shareText(text, prefix: "desm-api", ext: "txt")
+                        }
+                    }
+                    Button("Sao chép nhật ký API") {
+                        model.fetchNetLog { text, error in
+                            if let text = text { UIPasteboard.general.string = text; message = "Đã sao chép \(text.count) ký tự nhật ký API." }
+                            else { message = error }
+                        }
+                    }
+                    Button("Xóa nhật ký API", role: .destructive) {
+                        model.clearNetLog(); message = "Đã xóa nhật ký API."
+                    }
+                    Text("Bật công tắc, mở màn hình cần xem (đang ở trang DESM), thao tác như bấm Search, quét QR, cập nhật vị trí… rồi quay lại đây bấm lưu nhật ký và gửi cho tác giả. Nhật ký gồm địa chỉ API, tham số gửi đi và phần đầu của phản hồi; giá trị tên pass/token/secret được che. Nhớ tắt công tắc và xóa nhật ký khi xong.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    TextField("Địa chỉ cần tải, vd /resources/scripts/…js", text: $fetchPath)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("Tải nội dung địa chỉ và lưu file…") {
+                        let path = fetchPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !path.isEmpty else { message = "Hãy nhập địa chỉ cần tải."; return }
+                        model.fetchURLText(path) { text, error in
+                            guard let text = text else { message = error; return }
+                            shareText(text, prefix: "desm-fetch", ext: "txt")
+                        }
+                    }
+                    Text("Tải file script, trang hoặc API dạng GET cùng domain bằng phiên đăng nhập hiện có (ví dụ /resources/scripts/material/plDetail.js hoặc /getXxx.do?PARAM=giá trị).")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Mã HTML của trang") {
                     Button("Sao chép HTML trang đang mở") {
                         model.fetchHTML(stripValues: stripValues, stripScripts: stripScripts) { html, error in
@@ -2319,12 +2866,31 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    Button("Lưu script của trang (plDetail.js…)") {
+                        model.fetchScriptFiles { text, info in
+                            guard let text = text else { message = info; return }
+                            let formatter = DateFormatter()
+                            formatter.dateFormat = "yyyyMMdd-HHmmss"
+                            let url = FileManager.default.temporaryDirectory
+                                .appendingPathComponent("desm-scripts-\(formatter.string(from: Date())).txt")
+                            do {
+                                try text.write(to: url, atomically: true, encoding: .utf8)
+                                message = "Đã tải \(info) file script."
+                                shareItem = ShareItem(url: url)
+                            } catch {
+                                message = "Không lưu được file: \(error.localizedDescription)"
+                            }
+                        }
+                    }
+                    Text("Mở màn hình Hạng mục chi tiết (hoặc Package) trước, rồi bấm nút trên để lưu toàn bộ script của trang thành một file .txt.")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Toggle("Ẩn giá trị trong ô nhập", isOn: $stripValues)
                     Toggle("Bỏ mã script nội tuyến", isOn: $stripScripts)
                     Text("Lấy HTML hiện tại của trang đang hiển thị (đã chạy script), gồm cả iframe cùng domain, không gồm CSS do app tiêm. HTML có thể chứa thông tin nội bộ, hãy kiểm tra trước khi chia sẻ. Giá trị bạn đang gõ trong ô nhập không nằm trong HTML.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
+            .onAppear { model.setNetLog(netLogOn) }
             .navigationTitle("Cài đặt giao diện")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Xong") { model.applyStyles(); dismiss() } } }
