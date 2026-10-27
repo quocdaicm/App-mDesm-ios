@@ -2220,6 +2220,7 @@ struct BrowserView: View {
             }
             .ignoresSafeArea()
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)   // bàn phím phủ lên footer, không ép WebView (tránh lưới báo "Too small space" làm mất focus ô nhập)
         .tint(.blue)
         .onChange(of: scenePhase) { phase in
             if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date() }
@@ -2389,7 +2390,8 @@ struct BrowserView: View {
             }
         }
         .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 8)
-        .background(Color(.systemBackground))
+        .background(LinearGradient(colors: [Color(red: 0.81, green: 0.90, blue: 0.99), Color(red: 0.89, green: 0.94, blue: 1.0)],
+                                   startPoint: .top, endPoint: .bottom))
     }
 
     private var bottomBar: some View {
@@ -2400,7 +2402,12 @@ struct BrowserView: View {
             navButton("arrow.clockwise", title: "Tải lại", enabled: true) { model.reload() }
             navButton("camera.viewfinder", title: "Chụp", enabled: true) { model.captureFullPage() }
         }
-        .padding(.top, 10).padding(.bottom, 5)
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color.white)
+                .shadow(color: Color(red: 0.09, green: 0.25, blue: 0.55).opacity(0.16), radius: 12, y: -2)
+        )
+        .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
         .background(FooterBackground().ignoresSafeArea(edges: .bottom))
     }
 
@@ -2410,7 +2417,7 @@ struct BrowserView: View {
                 Image(systemName: symbol).font(.system(size: 17, weight: .semibold))
                 Text(title).font(.system(size: 10, weight: .medium))
             }
-            .foregroundStyle(enabled ? Color.white : Color.white.opacity(0.38))
+            .foregroundStyle(enabled ? Color.tabBlue : Color.tabInk.opacity(0.4))
             .frame(maxWidth: .infinity).contentShape(Rectangle())
         }
         .disabled(!enabled)
@@ -2586,43 +2593,10 @@ struct FooterBackground: View {
     private let c3 = Color(red: 14 / 255, green: 165 / 255, blue: 233 / 255)
 
     var body: some View {
-        Canvas { ctx, size in
-            let w = size.width, h = size.height
-            func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x / 400 * w, y: y / 28 * h) }
-            // nền gradient ngang
-            ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .linearGradient(Gradient(stops: [.init(color: c1, location: 0), .init(color: c2, location: 0.55), .init(color: c3, location: 1)]),
-                                           startPoint: .zero, endPoint: CGPoint(x: w, y: 0)))
-            // chấm mờ
-            var dots = Path()
-            var y: CGFloat = 2
-            while y < h {
-                var x: CGFloat = 2
-                while x < w { dots.addEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)); x += 12 }
-                y += 12
-            }
-            ctx.fill(dots, with: .color(.white.opacity(0.14)))
-            // sóng 1
-            var a = Path()
-            a.move(to: pt(0, 12))
-            a.addCurve(to: pt(205, 11), control1: pt(70, 2), control2: pt(130, 20))
-            a.addCurve(to: pt(400, 10), control1: pt(280, 2), control2: pt(335, 3))
-            a.addLine(to: pt(400, 28)); a.addLine(to: pt(0, 28)); a.closeSubpath()
-            ctx.fill(a, with: .color(.white.opacity(0.10)))
-            // sóng 2
-            var b = Path()
-            b.move(to: pt(0, 19))
-            b.addCurve(to: pt(230, 18), control1: pt(80, 10), control2: pt(150, 25))
-            b.addCurve(to: pt(400, 17), control1: pt(310, 11), control2: pt(350, 11))
-            b.addLine(to: pt(400, 28)); b.addLine(to: pt(0, 28)); b.closeSubpath()
-            ctx.fill(b, with: .color(.white.opacity(0.08)))
-            // đường nhấn vàng -> xanh -> trong suốt ở mép trên
-            ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: 2.5)),
-                     with: .linearGradient(Gradient(stops: [
-                        .init(color: Color(red: 251 / 255, green: 191 / 255, blue: 36 / 255), location: 0),
-                        .init(color: Color(red: 56 / 255, green: 189 / 255, blue: 248 / 255), location: 0.5),
-                        .init(color: Color(red: 56 / 255, green: 189 / 255, blue: 248 / 255).opacity(0), location: 1)]),
-                                           startPoint: .zero, endPoint: CGPoint(x: w, y: 0)))
+        ZStack {
+            Color(red: 0.95, green: 0.97, blue: 1.0)
+            TabWave().fill(LinearGradient(colors: [Color.tabBlueLight.opacity(0.45), Color.tabBlueLight.opacity(0.12)],
+                                          startPoint: .top, endPoint: .bottom))
         }
     }
 }

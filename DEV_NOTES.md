@@ -103,3 +103,6 @@ Hạn chế: bảng TreeGrid cuộn ảo chỉ có các dòng đang hiển thị
 - Tab mở menu DESM bằng JS `__desmOpenMenu(id, pattern)`; ánh xạ tab → mục menu nằm ở `enum DesmTab` (`menuId`, `pattern`). Chỉ `196` (Kiện hàng) là đã xác nhận; 3 tab còn lại đang khớp theo tên: Nhập kho = "Material Receiving", Xuất kho = "Outgoing Control", Báo cáo = "RSI Summary" — CHƯA kiểm chứng trên máy thật. Không khớp thì app mở ngăn kéo menu và báo toast.
 - "Thêm" (`MoreSheet`) chứa các nút cũ: Menu đầy đủ, Quay lại, Tiến, Tải lại, Về DESM, Chụp trang, Chế độ hiển thị, Ẩn/hiện thanh địa chỉ, Cài đặt.
 - Chưa build bằng Xcode trong môi trường tạo ra; JS đã `node --check`, SVG đã kiểm tra hợp lệ.
+
+## Sửa: không nhập được Package No khi có footer mới
+Bàn phím làm SwiftUI đẩy footer lên và ép WebView thấp → TreeGrid báo "Too small space for the grid" làm ô mất focus. Đã thêm `.ignoresSafeArea(.keyboard, edges: .bottom)` ở `BrowserView`. Trang đăng nhập/hết phiên (ngoài DESM) nay cũng dùng thanh dưới + thanh địa chỉ màu sáng (`FooterBackground`, `bottomBar`, `header`).
