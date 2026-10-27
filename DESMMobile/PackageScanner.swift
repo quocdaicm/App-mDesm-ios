@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import Vision
+import PhotosUI
 
 // MARK: - Nhận diện mã kiện (Package No) từ chữ in hoặc chữ viết tay
 
@@ -74,6 +75,12 @@ enum PkgParser {
         return t
     }
 
+    /// Đoạn giữa của mã kiện dạng bất kỳ (MPW, GT1, TGO, DE, IS...): 2-4 ký tự, có chữ cái, không phải OM4.
+    private static func midAny(_ t: String) -> String? {
+        guard (2...4).contains(t.count), !isOM4(t), t.contains(where: { $0.isLetter }) else { return nil }
+        return t
+    }
+
     static func norm(_ s: String) -> String {
         String(s.uppercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
     }
@@ -95,6 +102,19 @@ enum PkgParser {
                     let full = "OM4-\(m)-\(ty)-\(pad(a, 4))-\(pad(b, 3))"
                     add(PkgCandidate(display: full, term: full, key: norm(full), printed: a.count == 4 && b.count == 3, rank: 0))
                 }
+                // Dạng tổng quát: OM4 - đoạn chữ/số (2-4 ký tự, ≥2 đoạn) - số [- số] (VD OM4-MPW-GT1-TGO-0001)
+                if isOM4(t[i]) {
+                    var j = i + 1, mids: [String] = []
+                    while j < t.count, mids.count < 4, let m = midAny(t[j]) { mids.append(m); j += 1 }
+                    if mids.count >= 2, j < t.count, let a = digits(t[j]), (1...4).contains(a.count) {
+                        var full = "OM4-" + mids.joined(separator: "-") + "-" + pad(a, 4)
+                        var ok = a.count == 4
+                        if j + 1 < t.count, let b = digits(t[j + 1]), (1...3).contains(b.count) {
+                            full += "-" + pad(b, 3); ok = ok && b.count == 3
+                        }
+                        add(PkgCandidate(display: full, term: full, key: norm(full), printed: ok, rank: ok ? 0 : 1))
+                    }
+                }
                 // Viết tay bỏ OM4: mid - type - n1 - n2 (VD DE-LS-01-07)
                 if i + 4 <= t.count, let m = mid(t[i]), let ty = letters(t[i + 1]), ty.count == 2,
                    let a = digits(t[i + 2]), (1...4).contains(a.count), let b = digits(t[i + 3]), (1...3).contains(b.count) {
@@ -113,6 +133,23 @@ enum PkgParser {
     }
 }
 
+// MARK: - Mã QR trên nhãn DESM
+
+/// Nhãn hạng mục chi tiết: `DETAIL!!!<mã>!!!<tên Packing List>!!!<Material Code>`
+struct QRDetail: Equatable {
+    let material: String
+    let plName: String
+    let raw: String
+}
+
+enum QRParser {
+    static func parse(_ s: String) -> QRDetail? {
+        let parts = s.components(separatedBy: "!!!").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count >= 4, parts[0].uppercased() == "DETAIL", let m = parts.last, !m.isEmpty else { return nil }
+        return QRDetail(material: m, plName: parts[2], raw: s)
+    }
+}
+
 // MARK: - Trạng thái quét
 
 final class ScanState: ObservableObject {
@@ -122,7 +159,11 @@ final class ScanState: ObservableObject {
     @Published var denied = false
     @Published var unavailable = false
 
+    @Published var otherQR: String? = nil
+
     var onAccept: ((PkgCandidate) -> Void)?
+    var onQR: ((QRDetail) -> Void)?
+    private var qrStreak: [String: Int] = [:]
     private var streak: [String: Int] = [:]
     private var lastSeen = Date.distantPast
     private var finished = false
@@ -143,6 +184,25 @@ final class ScanState: ObservableObject {
         if let c = found.first(where: { $0.printed && (streak[$0.key] ?? 0) >= 2 }) { accept(c) }
     }
 
+    /// Kết quả đọc mã QR của một khung hình. DETAIL!!! đọc trùng 2 lần thì nhận; QR loại khác chỉ hiện nguyên chuỗi để chạm sao chép.
+    func ingestQR(_ payloads: [String]) {
+        guard !finished else { return }
+        var next: [String: Int] = [:]
+        for p in payloads {
+            next[p] = (qrStreak[p] ?? 0) + 1
+            if let d = QRParser.parse(p) {
+                if (next[p] ?? 0) >= 2 {
+                    finished = true
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    onQR?(d)
+                    return
+                }
+            } else if otherQR != p { otherQR = p }
+        }
+        qrStreak = next
+        if payloads.isEmpty, otherQR != nil, Date().timeIntervalSince(lastSeen) > 1.5 { otherQR = nil }
+    }
+
     func accept(_ c: PkgCandidate) {
         guard !finished else { return }
         finished = true
@@ -155,6 +215,7 @@ final class ScanState: ObservableObject {
 
 final class CameraVC: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onLines: (([String]) -> Void)?
+    var onQR: (([String]) -> Void)?
     var onDenied: (() -> Void)?
     var onUnavailable: (() -> Void)?
 
@@ -262,8 +323,14 @@ final class CameraVC: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         req.usesLanguageCorrection = false
         req.recognitionLanguages = ["en-US"]
         req.minimumTextHeight = 0.02
+        let bar = VNDetectBarcodesRequest()
+        bar.symbologies = [.qr]
         let handler = VNImageRequestHandler(cvPixelBuffer: px, orientation: .right, options: [:])
-        do { try handler.perform([req]) } catch { busy = false }
+        do {
+            try handler.perform([bar, req])
+            let codes = ((bar.results as? [VNBarcodeObservation]) ?? []).compactMap { $0.payloadStringValue }
+            DispatchQueue.main.async { [weak self] in self?.onQR?(codes) }
+        } catch { busy = false }
     }
 }
 
@@ -273,6 +340,7 @@ struct CameraRepresentable: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> CameraVC {
         let vc = CameraVC()
         vc.onLines = { [weak state] in state?.ingest($0) }
+        vc.onQR = { [weak state] in state?.ingestQR($0) }
         vc.onDenied = { [weak state] in state?.denied = true }
         vc.onUnavailable = { [weak state] in state?.unavailable = true }
         return vc
@@ -289,10 +357,14 @@ struct CameraRepresentable: UIViewControllerRepresentable {
 
 struct PackageScannerView: View {
     let onPick: (PkgCandidate) -> Void
+    let onQR: (QRDetail) -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var st = ScanState()
 
-    init(onPick: @escaping (PkgCandidate) -> Void) { self.onPick = onPick }
+    init(onPick: @escaping (PkgCandidate) -> Void, onQR: @escaping (QRDetail) -> Void = { _ in }) {
+        self.onPick = onPick
+        self.onQR = onQR
+    }
 
     var body: some View {
         ZStack {
@@ -310,6 +382,10 @@ struct PackageScannerView: View {
             st.onAccept = { c in
                 dismiss()
                 onPick(c)
+            }
+            st.onQR = { d in
+                dismiss()
+                onQR(d)
             }
         }
     }
@@ -338,8 +414,19 @@ struct PackageScannerView: View {
 
     private var bottomPanel: some View {
         VStack(spacing: 10) {
-            if st.candidates.isEmpty {
-                Text("Đưa camera vào dòng Package No (chữ in hoặc viết tay).\nChạm màn hình để lấy nét.")
+            if let q = st.otherQR {
+                Button { UIPasteboard.general.string = q } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("QR chưa hỗ trợ · chạm để sao chép").font(.system(size: 12, weight: .semibold))
+                        Text(q).font(.system(size: 13, design: .monospaced)).lineLimit(4)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Color.orange.opacity(0.9), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            if st.candidates.isEmpty && st.otherQR == nil {
+                Text("Đưa camera vào mã QR trên nhãn, hoặc dòng Package No (chữ in hoặc viết tay).\nChạm màn hình để lấy nét.")
                     .font(.system(size: 14, weight: .medium)).multilineTextAlignment(.center)
                     .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 10)
                     .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
@@ -375,5 +462,58 @@ struct PackageScannerView: View {
             Button("Đóng") { dismiss() }.foregroundStyle(.white)
         }
         .padding(24).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+
+extension CGImagePropertyOrientation {
+    init(_ o: UIImage.Orientation) {
+        switch o {
+        case .up: self = .up
+        case .upMirrored: self = .upMirrored
+        case .down: self = .down
+        case .downMirrored: self = .downMirrored
+        case .left: self = .left
+        case .leftMirrored: self = .leftMirrored
+        case .right: self = .right
+        case .rightMirrored: self = .rightMirrored
+        @unknown default: self = .up
+        }
+    }
+}
+
+
+// MARK: - Quét từ ảnh có sẵn (chọn trong thư viện)
+
+enum ImageScanResult {
+    case detail(QRDetail)
+    case package(PkgCandidate)
+    case otherQR(String)
+    case none
+}
+
+enum ImageScanner {
+    /// Ưu tiên QR (DETAIL!!!…); không có QR thì đọc chữ Package No.
+    static func scan(_ img: UIImage, completion: @escaping (ImageScanResult) -> Void) {
+        guard let cg = img.cgImage else { completion(.none); return }
+        let ori = CGImagePropertyOrientation(img.imageOrientation)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let bar = VNDetectBarcodesRequest()
+            bar.symbologies = [.qr]
+            let txt = VNRecognizeTextRequest()
+            txt.recognitionLevel = .accurate
+            txt.usesLanguageCorrection = false
+            txt.recognitionLanguages = ["en-US"]
+            let h = VNImageRequestHandler(cgImage: cg, orientation: ori, options: [:])
+            try? h.perform([bar, txt])
+            let codes = ((bar.results as? [VNBarcodeObservation]) ?? []).compactMap { $0.payloadStringValue }
+            var lines: [String] = []
+            for o in (txt.results ?? []) { for c in o.topCandidates(3) where c.confidence > 0.25 { lines.append(c.string) } }
+            var out = ImageScanResult.none
+            if let d = codes.compactMap({ QRParser.parse($0) }).first { out = .detail(d) }
+            else if let o = codes.first { out = .otherQR(o) }
+            else if let c = PkgParser.candidates(in: lines).first { out = .package(c) }
+            DispatchQueue.main.async { completion(out) }
+        }
     }
 }

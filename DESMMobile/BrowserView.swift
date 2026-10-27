@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 import WebKit
 
 enum LayoutMode: String, CaseIterable, Identifiable {
@@ -514,6 +515,49 @@ final class BrowserModel: ObservableObject {
               setTimeout(poll, 400);
             })();
           }
+          // Đợi ô Dự án trong khung ẩn được điền (mặc định của trang); quá 10 giây thì chép từ trang Package / tab đang mở.
+          // Đồng thời đóng hộp thoại báo lỗi "required values" nếu lần Search trước đã làm nó hiện ra.
+          function diCloseAlerts(top) {
+            try {
+              var ms = top.document.querySelectorAll('.modal.show, .modal.in, .modal[style*="display: block"]');
+              for (var i = 0; i < ms.length; i++) {
+                var b = ms[i].querySelector('[data-dismiss="modal"], .close, button');
+                if (b) b.click();
+              }
+              top.document.documentElement.classList.remove('desm-modal-open');
+            } catch (e) {}
+          }
+          function diFindProject(idoc, top) {
+            var docs = [idoc];
+            try { var fs = top.document.querySelectorAll('iframe'); for (var i = 0; i < fs.length; i++) { if (fs[i].id !== 'desmDetailFrame') { try { if (fs[i].contentDocument) docs.push(fs[i].contentDocument); } catch (e) {} } } } catch (e) {}
+            for (var j = 0; j < docs.length; j++) {
+              try {
+                var c = docs[j].getElementById('txtProjectCode');
+                if (c && c.value) { var n = docs[j].getElementById('txtProjectName'); return { code: c.value, name: n ? n.value : '' }; }
+              } catch (e) {}
+            }
+            return null;
+          }
+          function diProject(w, idoc, top, cb) {
+            var d = w.document, t0 = Date.now(), copied = false;
+            (function poll() {
+              var c = d.getElementById('txtProjectCode');
+              if (c && c.value) { diCloseAlerts(top); cb(true); return; }
+              var el = Date.now() - t0;
+              if (el > 10000 && !copied) {
+                copied = true;
+                var p = diFindProject(idoc, top);
+                if (p && c) {
+                  c.value = p.code; var n = d.getElementById('txtProjectName'); if (n) n.value = p.name;
+                  ['input', 'change'].forEach(function(e) { c.dispatchEvent(new w.Event(e, { bubbles: true })); });
+                  try { c.classList.remove('validation-error'); if (n) n.classList.remove('validation-error'); } catch (e) {}
+                  diCloseAlerts(top); cb(true); return;
+                }
+              }
+              if (el > 15000) { cb(false); return; }
+              setTimeout(poll, 300);
+            })();
+          }
           function diLoad(idoc, pkg, cb) {
             var top = diTop(idoc), cache = top.__desmDI = top.__desmDI || {};
             if (cache[pkg]) { cb(cache[pkg]); return; }
@@ -523,7 +567,11 @@ final class BrowserModel: ObservableObject {
                 if (!G) { done(null); return; }
                 var d = w.document, inp = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo');
                 function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new w.Event(n, { bubbles: true })); }); }
+                // Ô Dự án (bắt buộc) do trang tự điền bất đồng bộ; bấm Search khi còn trống sẽ báo "required values have not been entered".
+                diProject(w, idoc, top, function(projOk) {
+                if (!projOk) { done(null); return; }
                 setv(inp, pkg); if (pl && pl.value) setv(pl, '');
+                var sv0 = d.getElementById('txtSearchValue1'); if (sv0 && sv0.value) setv(sv0, '');
                 d.getElementById('btnSearch').click();
                 var t0 = Date.now(), last = '', stable = 0;
                 (function poll() {
@@ -540,6 +588,7 @@ final class BrowserModel: ObservableObject {
                   }
                   setTimeout(poll, 400);
                 })();
+                });
               });
             }
             top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
@@ -1449,9 +1498,29 @@ final class BrowserModel: ObservableObject {
           }
           function pkgNorm(s) { return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
           function scanMsg(o) { try { w.webkit.messageHandlers.desmScanResult.postMessage(o); } catch (e) {} }
-          w.__desmFindPkg = function(cfg) {
+          // Đang ở màn hình khác thì tự mở tab "Kiện hàng" (menu 196) rồi đợi trang sẵn sàng
+          function ensurePkgDoc(cb) {
             var d = pkgDoc(document, 0);
-            if (!d) { scanMsg({ status: 'nopage' }); return; }
+            if (d) { cb(d); return; }
+            var a = null;
+            try { a = diTop(document).document.getElementById('196'); } catch (e) {}
+            if (!a) { cb(null); return; }
+            try { a.click(); } catch (e) { cb(null); return; }
+            var t0 = Date.now();
+            (function poll() {
+              var x = pkgDoc(document, 0);
+              if (x) { setTimeout(function() { cb(x); }, 300); return; }
+              if (Date.now() - t0 > 20000) { cb(null); return; }
+              setTimeout(poll, 400);
+            })();
+          }
+          w.__desmFindPkg = function(cfg) {
+            ensurePkgDoc(function(d) {
+              if (!d) { scanMsg({ status: 'nopage' }); return; }
+              findPkgIn(cfg, d);
+            });
+          };
+          function findPkgIn(cfg, d) {
             var win = d.defaultView, G = pkgGridOf(win);
             var inp = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo'), key = pkgNorm(cfg.key);
             function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new win.Event(n, { bubbles: true })); }); }
@@ -1480,7 +1549,66 @@ final class BrowserModel: ObservableObject {
               } catch (e) {}
               scanMsg({ status: 'ok', term: gridText(G, r, 'PACKAGE_NO') });
             })();
+          }
+          // ===== Quét QR nhãn hạng mục (DETAIL!!!…): tra Material Code ở khung ẩn "Hạng mục chi tiết", lấy Package No rồi mở kiện đó =====
+          w.__desmFindDetail = function(cfg) {
+            ensurePkgDoc(function(d0) {
+              if (!d0) { scanMsg({ status: 'nopage' }); return; }
+              findDetailIn(cfg, d0);
+            });
           };
+          function findDetailIn(cfg, d0) {
+            var top = diTop(document), mat = pkgNorm(cfg.material);
+            var plk = pkgNorm(String(cfg.pl || '').replace(/^#\s*\d+\s*/, ''));
+            function fail(st, n) { scanMsg({ status: st, term: cfg.material, n: n || 0 }); }
+            top.__desmDIq = (top.__desmDIq || Promise.resolve()).then(function() {
+              return new Promise(function(res) {
+                var finished = false;
+                function end(f) { if (finished) return; finished = true; try { f(); } catch (e) {} res(); }
+                diFrame(top, function(fw) {
+                  var G = fw && diGrid(fw);
+                  if (!G) { end(function() { fail('dnotfound'); }); return; }
+                  diProject(fw, d0, top, function(ok) {
+                    var d = fw.document, key = d.getElementById('selSearchKey1'), sv = d.getElementById('txtSearchValue1');
+                    var pk = d.getElementById('txtPackageNo'), pl = d.getElementById('txtPackingListNo');
+                    if (!ok || !key || !sv) { end(function() { fail('dnotfound'); }); return; }
+                    function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new fw.Event(n, { bubbles: true })); }); }
+                    var oldKey = key.value;
+                    setv(key, 'material'); setv(sv, cfg.material);
+                    if (pk && pk.value) setv(pk, ''); if (pl && pl.value) setv(pl, '');
+                    d.getElementById('btnSearch').click();
+                    var t0 = Date.now(), last = '', stable = 0;
+                    (function poll() {
+                      var rows = diRows(G);
+                      var hits = rows.filter(function(r) { return pkgNorm(gridText(G, r, 'MATERIAL_CODE')) === mat; });
+                      var sig = rows.length + '|' + hits.length; stable = sig === last ? stable + 1 : 0; last = sig;
+                      var el = Date.now() - t0;
+                      var done = (hits.length && stable >= 3 && el > 1500) || (!rows.length && stable >= 6 && el > 4000) ||
+                        (rows.length && !hits.length && stable >= 5 && el > 6000) || el > 20000;
+                      if (!done) { setTimeout(poll, 400); return; }
+                      // Trả bộ lọc về như cũ để lần nạp danh sách hạng mục theo kiện không bị lọc nhầm
+                      try { setv(sv, ''); setv(key, oldKey); } catch (e) {}
+                      if (hits.length > 1 && plk) {
+                        var byPl = hits.filter(function(r) {
+                          for (var c in G.Cols) { try { if (pkgNorm(gridText(G, r, c)).indexOf(plk) >= 0) return true; } catch (e) {} }
+                          return false;
+                        });
+                        if (byPl.length) hits = byPl;
+                      }
+                      var pkgs = [];
+                      hits.forEach(function(r) { var p = gridText(G, r, 'PACKAGE_NO'); if (p && pkgs.indexOf(p) < 0) pkgs.push(p); });
+                      if (!pkgs.length) { end(function() { fail('dnotfound'); }); return; }
+                      if (pkgs.length > 1) { end(function() { fail('dmulti', pkgs.length); }); return; }
+                      end(function() {
+                        scanMsg({ status: 'dfound', term: pkgs[0] });
+                        w.__desmFindPkg({ term: pkgs[0], key: pkgs[0], open: cfg.open });
+                      });
+                    })();
+                  });
+                });
+              });
+            });
+          }
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
@@ -1761,11 +1889,26 @@ extension BrowserModel {
     }
 }
 
+extension BrowserModel {
+    /// Quét QR nhãn hạng mục (DETAIL!!!…): tra Material Code ở trang Hạng mục chi tiết rồi mở kiện chứa hạng mục đó.
+    func runQRScan(_ d: QRDetail) {
+        let open = UserDefaults.standard.object(forKey: "desmScanOpenDetail") as? Bool ?? true
+        let cfg: [String: Any] = ["material": d.material, "pl": d.plName, "open": open]
+        guard let data = try? JSONSerialization.data(withJSONObject: cfg),
+              let js = String(data: data, encoding: .utf8) else { return }
+        showToast("Đang tìm hạng mục \(d.material)…")
+        webView?.evaluateJavaScript("window.__desmFindDetail ? window.__desmFindDetail(\(js)) : 0;", completionHandler: nil)
+    }
+}
+
 struct BrowserView: View {
     @StateObject private var model = BrowserModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var fabOffset: CGSize = .zero
     @State private var showScanner = false
+    @State private var showScanChoice = false
+    @State private var showPhotoPicker = false
+    @State private var pickedPhoto: PhotosPickerItem? = nil
     @GestureState private var fabDrag: CGSize = .zero
 
     var body: some View {
@@ -1817,7 +1960,33 @@ struct BrowserView: View {
             Button("Đóng", role: .cancel) { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
         .fullScreenCover(isPresented: $showScanner) {
-            PackageScannerView { c in model.runScan(c) }
+            PackageScannerView(onPick: { c in model.runScan(c) }, onQR: { d in model.runQRScan(d) })
+        }
+        .confirmationDialog("Quét mã", isPresented: $showScanChoice, titleVisibility: .visible) {
+            Button("Quét bằng camera") { showScanner = true }
+            Button("Chọn ảnh có sẵn") { showPhotoPicker = true }
+            Button("Hủy", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $pickedPhoto, matching: .images)
+        .onChange(of: pickedPhoto) { item in
+            guard let item = item else { return }
+            Task {
+                var img: UIImage? = nil
+                if let data = try? await item.loadTransferable(type: Data.self) { img = UIImage(data: data) }
+                pickedPhoto = nil
+                guard let img = img else { model.showToast("Không mở được ảnh đã chọn"); return }
+                model.showToast("Đang đọc ảnh…")
+                ImageScanner.scan(img) { r in
+                    switch r {
+                    case .detail(let d): model.runQRScan(d)
+                    case .package(let c): model.runScan(c)
+                    case .otherQR(let q):
+                        UIPasteboard.general.string = q
+                        model.showToast("QR chưa hỗ trợ, đã sao chép: \(q.prefix(60))")
+                    case .none: model.showToast("Không thấy QR hoặc Package No trong ảnh")
+                    }
+                }
+            }
         }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
@@ -1828,7 +1997,7 @@ struct BrowserView: View {
     /// Nút nổi mở camera quét Package No (chữ in hoặc viết tay)
     @ViewBuilder private var scanButton: some View {
         if model.inDesm {
-            Button { showScanner = true } label: {
+            Button { showScanChoice = true } label: {
                 Image(systemName: "camera.viewfinder")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.white)

@@ -212,10 +212,13 @@ struct WebView: UIViewRepresentable {
                 let n = (d["n"] as? Int) ?? 0
                 DispatchQueue.main.async {
                     switch st {
-                    case "nopage": self.model.showToast("Hãy mở màn hình Package (có ô Số kiện hàng) rồi quét lại")
+                    case "nopage": self.model.showToast("Không mở được màn hình Package, hãy vào Kiện hàng rồi quét lại")
                     case "notfound": self.model.showToast("Không tìm thấy kiện \(term)")
                     case "multi": self.model.showToast("\(n) kiện khớp, chạm để chọn kiện")
                     case "ok": self.model.showToast("Đã chọn kiện \(term)")
+                    case "dfound": self.model.showToast("Hạng mục thuộc kiện \(term)")
+                    case "dnotfound": self.model.showToast("Không tìm thấy hạng mục \(term)")
+                    case "dmulti": self.model.showToast("Mã \(term) có \(n) kiện khớp, hãy tra tay ở Hạng mục chi tiết")
                     default: break
                     }
                 }
