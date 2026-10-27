@@ -2451,7 +2451,7 @@ extension BrowserModel {
           if (x.status === 401) { expired('401'); return; }
           if (x.status === 200 && (x.responseType === '' || x.responseType === 'text')) {
             var t = x.responseText;
-            if (t && t.length < 300000 && /^\s*</.test(t.slice(0, 60)) && /<html/i.test(t) && /<input[^>]+type=["']?password/i.test(t)) expired('loginhtml');
+            if (t && t.length < 300000 && /^\s*</.test(t.slice(0, 60)) && /<html/i.test(t) && (t.match(/<input[^>]+type=["']?password/gi) || []).length === 1 && /login/i.test(t.slice(0, 5000))) expired('loginhtml');
           }
         } catch (e) {}
       }
@@ -2613,10 +2613,9 @@ extension BrowserModel {
                 if http.statusCode >= 500 || http.statusCode == 0 { completion(.unknown); return }
                 let path = http.url?.path.lowercased() ?? ""
                 if path.contains("login") { completion(.expired); return }
-                let body = String(decoding: (data ?? Data()).prefix(300_000), as: UTF8.self).lowercased()
-                if body.contains("type=\"password\"") || body.contains("type='password'") || body.contains("type=password") {
-                    completion(.expired); return
-                }
+                // Không dò "ô mật khẩu" trong HTML nữa: main.do có sẵn form đổi mật khẩu nên luôn bị nhận nhầm là hết phiên.
+                // Trường hợp máy chủ trả trang đăng nhập mà không redirect đã có checkLoginForm (ô mật khẩu hiển thị) lo.
+                _ = data
                 completion(.valid)
             }.resume()
         }

@@ -69,3 +69,8 @@ Nguồn: dump trang + file `plDetail.js` do người dùng gửi (2026-10-27).
 - Mã chưa được build bằng Xcode trong môi trường tạo ra nó và chưa thử với tài khoản DESM thật; JS đã qua kiểm tra cú pháp bằng Node.
 - Cần thử thật: đường nhanh danh sách hạng mục (tham số `PAGE_CNT`, `QTY_TYPE`), tra QR bằng `KEY1='material'`, chạm ghim/Location Update sau khi tải nhanh.
 - Việc tiếp theo hợp lý: ghi API ở màn Package/RSI/MRR/MRF/MPR để thêm đường nhanh tương tự; cân nhắc làm lưới Package nhanh hơn.
+
+## Sửa lỗi: vừa đăng nhập xong lại báo "Phiên đã hết hạn" và về trang đăng nhập
+Nguyên nhân: `checkLoginForm` (WebView.swift) và thăm dò `probeSession` coi MỌI ô `input[type=password]` là trang đăng nhập, mà `main.do`
+của DESM có sẵn form/ô đổi mật khẩu (tài khoản ngoài @doosan.com) -> vào được main.do vẫn bị đẩy về login.do (lặp tối đa 3 lần/5 phút).
+Đã sửa: chỉ tính là trang đăng nhập khi có ĐÚNG MỘT ô mật khẩu đang hiển thị; bỏ dò ô mật khẩu trong HTML ở `probeSession`.

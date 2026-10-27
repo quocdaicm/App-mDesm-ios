@@ -271,7 +271,19 @@ struct WebView: UIViewRepresentable {
             guard BrowserModel.autoReconnect, !model.reconnecting, let url = webView.url, let host = url.host?.lowercased(),
                   host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
                   !url.path.lowercased().contains("login") else { return }
-            webView.evaluateJavaScript("!!document.querySelector('input[type=password]')") { r, _ in
+            // Chỉ coi là trang đăng nhập khi có ĐÚNG MỘT ô mật khẩu đang hiển thị. main.do của DESM có sẵn ô mật khẩu ẩn / form đổi
+            // mật khẩu (tài khoản ngoài @doosan.com) nên trước đây bị nhận nhầm là "hết phiên" ngay sau khi đăng nhập xong.
+            let js = """
+            (function(){
+              var els = document.querySelectorAll('input[type=password]'), vis = 0;
+              for (var i = 0; i < els.length; i++) {
+                var e = els[i], r = e.getBoundingClientRect(), s = window.getComputedStyle(e);
+                if (r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && e.offsetParent !== null) vis++;
+              }
+              return vis === 1;
+            })()
+            """
+            webView.evaluateJavaScript(js) { r, _ in
                 if (r as? Bool) == true { DispatchQueue.main.async { self.model.reconnectSession(reason: "loginform") } }
             }
         }
