@@ -442,6 +442,11 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-ditem-chk { position:absolute; left:12px; top:12px; pointer-events:none; }
     html.desm-mobile-mode .desm-ditems-bar { display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:8px 12px; background:#fff; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); cursor:pointer; }
     html.desm-mobile-mode .desm-ditem-locbtn { padding:6px 0 6px 12px; cursor:pointer; }
+    html.desm-mobile-mode .desm-sub { z-index:2147483010; }
+    html.desm-mobile-mode .desm-rsi-card { background:#fff; border-radius:8px; border-left:5px solid #2878e5; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,.12); cursor:pointer; }
+    html.desm-mobile-mode .desm-rsi-row { display:flex; justify-content:space-between; gap:8px; font-size:16px; line-height:1.5; }
+    html.desm-mobile-mode .desm-sub-filter { display:flex; gap:8px; margin-bottom:8px; }
+    html.desm-mobile-mode .desm-sub-in { flex:1; min-width:0; height:42px; border:1px solid #cbd5e1; border-radius:10px; padding:0 12px; font-size:16px; background:#fff; color:#111827; }
     html.desm-mobile-mode .desm-detail-note { font-size:13px; color:#b45309; padding:0 4px 8px; }
     /* Nút gọn dạng viên thuốc, canh giữa và chừa chỗ hai nút nổi (camera trái, ẩn/hiện thanh phải) */
     html.desm-mobile-mode .desm-detail-lu {

@@ -633,7 +633,9 @@ final class BrowserModel: ObservableObject {
                   // Có dự kiến n > 0 mà không thấy dòng nào = lần nạp hỏng (chưa phải kiện rỗng) → báo lỗi để thử lại
                   if (!hit.length && n > 0) { done(null); return; }
                   done(hit.map(function(r) {
-                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = gridText(G, r, c); });
+                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION', 'PROJECT_NO', 'UNIT', 'NET', 'GROSS',
+                      'IN_QTY', 'OUT_QTY', 'REMAIN_QTY', 'RSI_QTY', 'BALANCE_QTY', 'MRF_QTY', 'MRF_BALANCE_QTY', 'RSI_CANCEL_QTY',
+                      'REPORT_SHORT', 'REPORT_OVER', 'REPORT_DMG', 'REPORT_MISSING', 'REPORT_SHORT_QTY', 'REPORT_OVER_QTY', 'REPORT_DMG_QTY', 'REPORT_MISSING_QTY'].forEach(function(c) { o[c] = gridText(G, r, c); });
                     o._id = r.id;
                     return o;
                   }));
@@ -705,6 +707,18 @@ final class BrowserModel: ObservableObject {
                 error: fail
               });
             } catch (e) { fail(); }
+          }
+          function diProj(idoc) { var top = diTop(idoc); try { return top.__desmProj || (diFindProject(idoc, top) || {}).code || ''; } catch (e) { return ''; } }
+          // Gọi API dạng {results:{list:[...]}} bằng jQuery của trang (kế thừa phiên đăng nhập); ok(list, tổng) / bad()
+          function diAjax(idoc, url, param, ok, bad) {
+            var top = diTop(idoc), W = idoc.defaultView, $j = null;
+            try { $j = W.jQuery || W.$ || top.jQuery || top.$; } catch (e) {}
+            if (!$j || !$j.ajax) { bad(); return; }
+            try {
+              $j.ajax({ url: url, data: param, timeout: 20000,
+                success: function(d) { var res = d && d.results; if (!res || res === 'Err' || !res.list) { bad(); return; } ok(res.list, res.length); },
+                error: function() { bad(); } });
+            } catch (e) { bad(); }
           }
           var DI_HIDE = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
           // Chọn đúng các hạng mục trong lưới ẩn (xs = mảng) rồi bấm nút Location Update gốc của trang "Hạng mục chi tiết"
@@ -832,6 +846,7 @@ final class BrowserModel: ObservableObject {
             var ao = g('OUT_STATUS'), nLines = parseInt(ao.split('/')[0], 10);
             var ov = el('div', 'desm-detail'); ov.id = 'desmDetail';
             function close() {
+              [].forEach.call(doc.querySelectorAll('.desm-sub'), function(n) { if (n.parentNode) n.parentNode.removeChild(n); });
               if (ov.parentNode) ov.parentNode.removeChild(ov);
               doc.documentElement.classList.remove('desm-detail-open');
               if (onClose) onClose();
@@ -927,6 +942,125 @@ final class BrowserModel: ObservableObject {
               if (selTxt) selTxt.textContent = 'Chọn tất cả · ' + itemCards.length + ' hạng mục' + (chosen.length ? ' · đã chọn ' + chosen.length : '');
               if (lu) lu.textContent = chosen.length ? 'Location Update (' + chosen.length + ' hạng mục)' : 'Location Update';
             }
+            // ===== Màn hình lồng nhau: Detail Item -> RSI & MRF List -> RSI Detail =====
+            function subScreen(title, backText) {
+              var sov = el('div', 'desm-detail desm-sub');
+              var st = el('div', 'desm-detail-top');
+              var sb = el('button', 'desm-detail-back', '‹  ' + backText); sb.type = 'button';
+              function sclose() { if (sov.parentNode) sov.parentNode.removeChild(sov); }
+              sb.addEventListener('click', sclose);
+              st.appendChild(sb); st.appendChild(el('div', 'desm-detail-title', title)); sov.appendChild(st);
+              var sbody = el('div', 'desm-detail-body'); sov.appendChild(sbody);
+              doc.body.appendChild(sov);
+              return { ov: sov, body: sbody, close: sclose };
+            }
+            function fnum(v) {
+              var t = String(v == null ? '' : v).replace(/,/g, ''), n = parseFloat(t);
+              if (t === '' || isNaN(n)) return '-';
+              return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+            }
+            function bandOf(items) {
+              var b = el('div', 'desm-dband desm-dband4');
+              items.forEach(function(it) {
+                var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-k', it[0]));
+                c.appendChild(el('div', 'desm-dband-v', it[1])); b.appendChild(c);
+              });
+              return b;
+            }
+            function rsiParam(over) {
+              var p = { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', ATTRIBUTE10: '', MATERIAL_CODE: '',
+                START_REQUEST_DATE: '', END_REQUEST_DATE: '', BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '',
+                PACKAGE_NO: '', ITEM_DESC: '', MASTER_SHOP_UNIT: '', MASTER_SHOP_BLDG: '', SHOP_UNIT: '', SHOP_BLDG: '' };
+              for (var k in over) p[k] = over[k];
+              if (!p.PROJECT_NO) p.PROJECT_NO = diProj(idoc);
+              return p;
+            }
+            function sameStr(a, b2) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b2 == null ? '' : b2).replace(/\s+/g, ' ').trim(); }
+            // Màn "Detail Item": thông tin + số lượng của một hạng mục, kèm danh sách RSI của hạng mục đó
+            function openItemDetail(x) {
+              var S = subScreen('Detail Item', 'Package'), b = S.body;
+              var m = el('div', 'desm-dcard');
+              m.appendChild(el('div', 'desm-d-h', x.PACKAGE_NO));
+              m.appendChild(el('div', 'desm-d-l', 'ITEM : ' + dash(x.DESCRIPTION)));
+              m.appendChild(el('div', 'desm-d-l', 'DWG : ' + (x.DRAWING_NO || 'N/A')));
+              m.appendChild(el('div', 'desm-d-l', 'TAG : ' + (x.TAG_NO || 'N/A')));
+              m.appendChild(el('div', 'desm-d-l', 'Net Weight(Kg) : ' + fnum(x.NET)));
+              m.appendChild(el('div', 'desm-d-l', dash(x.MATERIAL_CODE) + ' / ' + dash(x.UNIT)));
+              m.appendChild(el('div', 'desm-d-l', 'Location : ' + dash(x.LOCATION)));
+              b.appendChild(m);
+              b.appendChild(bandOf([["In Q'ty", fnum(x.IN_QTY)], ["Out Q'ty", fnum(x.OUT_QTY)], ['Remain', fnum(x.REMAIN_QTY)], ["RSI Q'ty", fnum(x.RSI_QTY)]]));
+              b.appendChild(bandOf([['RSI Bal.', fnum(x.BALANCE_QTY)], ["MRF Q'ty", fnum(x.MRF_QTY)], ['MRF Bal.', fnum(x.MRF_BALANCE_QTY)], ['Cancel', fnum(x.RSI_CANCEL_QTY)]]));
+              var fl = el('div', 'desm-dband desm-dband4');
+              [['SHORT', 'REPORT_SHORT'], ['OVER', 'REPORT_OVER'], ['DMG', 'REPORT_DMG'], ['MISSING', 'REPORT_MISSING']].forEach(function(f) {
+                var q1 = parseFloat(String(x[f[1]] || '').replace(/,/g, '')), q2 = parseFloat(String(x[f[1] + '_QTY'] || '').replace(/,/g, ''));
+                var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-v', f[0]));
+                var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk'; cb.disabled = true;
+                cb.checked = (!isNaN(q1) && q1 > 0) || (!isNaN(q2) && q2 > 0); c.appendChild(cb); fl.appendChild(c);
+              });
+              b.appendChild(fl);
+              if (x.REMARKS || x.COMMENTS) b.appendChild(el('div', 'desm-detail-note', 'Remarks: ' + (x.REMARKS || x.COMMENTS)));
+              var lub = el('button', 'desm-detail-list', 'Location Update'); lub.type = 'button';
+              lub.addEventListener('click', function() { updateItemsLoc([x]); });
+              b.appendChild(lub);
+              var rb = el('button', 'desm-detail-list', 'RSI & MRF List  ↑'); rb.type = 'button';
+              var rn = el('div', 'desm-detail-note', 'Đang tải danh sách RSI…'), rl = el('div', 'desm-ditems'), open = true;
+              rb.addEventListener('click', function() { open = !open; rl.style.display = open ? '' : 'none'; rb.textContent = 'RSI & MRF List  ' + (open ? '↑' : '↓'); });
+              b.appendChild(rb); b.appendChild(rn); b.appendChild(rl);
+              diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PROJECT_NO: x.PROJECT_NO, MATERIAL_CODE: x.MATERIAL_CODE }), function(list) {
+                if (!S.ov.parentNode) return;
+                var hit = [].filter.call(list, function(r) { return sameStr(r.MATERIAL_CODE, x.MATERIAL_CODE); });
+                rn.textContent = hit.length ? '' : 'Hạng mục này chưa có RSI.';
+                hit.forEach(function(r) {
+                  var c = el('div', 'desm-rsi-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO))); t1.appendChild(el('span', '', dash(r.STATUS)));
+                  c.appendChild(t1);
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.SUBCONTRACTOR) + ' · ' + dash(r.RSI_NAME)));
+                  var t3 = el('div', 'desm-rsi-row'); t3.appendChild(el('span', '', dash(r.RSI_APPROVED_DATE || r.REQUEST_DATE)));
+                  t3.appendChild(el('span', '', fnum(r.REQ_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(t3);
+                  c.addEventListener('click', function() { openRsiDetail(r); });
+                  rl.appendChild(c);
+                });
+              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được danh sách RSI.'; });
+            }
+            // Màn "RSI Detail": các hạng mục thuộc một RSI, lọc theo PKG / SCH
+            function openRsiDetail(h) {
+              var S = subScreen('RSI Detail', 'Detail Item'), b = S.body;
+              var m = el('div', 'desm-dcard');
+              m.appendChild(el('div', 'desm-d-h', dash(h.RSI_NO)));
+              m.appendChild(el('div', 'desm-d-l', dash(h.SUBCONTRACTOR) + ' · ' + dash(h.STATUS)));
+              m.appendChild(el('div', 'desm-d-l', dash(h.RSI_NAME)));
+              m.appendChild(el('div', 'desm-d-l', dash(h.RSI_APPROVED_DATE || h.REQUEST_DATE)));
+              b.appendChild(m);
+              var fb = el('div', 'desm-sub-filter');
+              var fp = doc.createElement('input'); fp.placeholder = 'PKG.'; fp.className = 'desm-sub-in';
+              var fs = doc.createElement('input'); fs.placeholder = 'SCH.'; fs.className = 'desm-sub-in';
+              fb.appendChild(fp); fb.appendChild(fs); b.appendChild(fb);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems'), all = [];
+              b.appendChild(rn); b.appendChild(rl);
+              function draw() {
+                while (rl.firstChild) rl.removeChild(rl.firstChild);
+                var p = fp.value.trim().toLowerCase(), s = fs.value.trim().toLowerCase();
+                var rows = all.filter(function(r) {
+                  return (!p || String(r.PACKAGE_NO || '').toLowerCase().indexOf(p) >= 0) &&
+                    (!s || (String(r.DESCRIPTION || '') + ' ' + String(r.MATERIAL_CODE || '')).toLowerCase().indexOf(s) >= 0);
+                });
+                rn.textContent = all.length ? rows.length + ' / ' + all.length + ' hạng mục' : 'RSI này không có hạng mục.';
+                rows.forEach(function(r) {
+                  var c = el('div', 'desm-rsi-card');
+                  c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION)));
+                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                  ft.appendChild(el('span', '', fnum(r.REQ_QTY) + ' / ' + fnum(r.HANDOVER_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
+                  rl.appendChild(c);
+                });
+              }
+              fp.addEventListener('input', draw); fs.addEventListener('input', draw);
+              diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PROJECT_NO: h.PROJECT_NO, RSI_NO: h.RSI_NO }), function(list) {
+                if (!S.ov.parentNode) return;
+                all = [].filter.call(list, function(r) { return sameStr(r.RSI_NO, h.RSI_NO); });
+                draw();
+              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được danh sách hạng mục của RSI.'; });
+            }
             function renderItems(rows) {
               while (dis.firstChild) dis.removeChild(dis.firstChild);
               chosen = []; itemCards = []; selAll = null; selTxt = null;
@@ -944,7 +1078,9 @@ final class BrowserModel: ObservableObject {
                 var c = el('div', 'desm-ditem');
                 var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-ditem-chk';
                 c.appendChild(ck);
-                c.appendChild(el('div', 'desm-ditem-no', x.PACKAGE_NO));
+                var noEl = el('div', 'desm-ditem-no', x.PACKAGE_NO);
+                noEl.addEventListener('click', function(ev) { ev.stopPropagation(); openItemDetail(x); });
+                c.appendChild(noEl);
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.DESCRIPTION)));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.DRAWING_NO)));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.TAG_NO)));
@@ -1615,7 +1751,7 @@ final class BrowserModel: ObservableObject {
           function viText(n) {
             var p = n.parentNode; if (!p || p.nodeType !== 1) return;
             var tg = p.tagName; if (tg === 'SCRIPT' || tg === 'STYLE' || tg === 'TEXTAREA') return;
-            if (p.closest && p.closest('#desmCards, #desmDetail')) return;
+            if (p.closest && p.closest('#desmCards, #desmDetail, .desm-sub')) return;
             var v = n.nodeValue; if (!v || !/[A-Za-z]/.test(v)) return;
             var r = viLookup(v);
             if (r !== null) { if (r !== v) n.nodeValue = r; return; }
@@ -1793,8 +1929,11 @@ final class BrowserModel: ObservableObject {
           // Quay lại trong DESM: đóng lớp phủ (cập nhật vị trí / chi tiết kiện / menu) trước; trả 1 nếu đã xử lý
           w.__desmBack = function() {
             var D; try { D = diTop(document).document; } catch (e) { D = document; }
-            var b = D.querySelector('#desmDetailFrameBar .desm-detail-back') || D.querySelector('#desmDetail .desm-detail-back');
+            var b = D.querySelector('#desmDetailFrameBar .desm-detail-back');
             if (b) { b.click(); return 1; }
+            var subs = D.querySelectorAll('.desm-sub .desm-detail-back');
+            if (subs.length) { subs[subs.length - 1].click(); return 1; }
+            var dd = D.querySelector('#desmDetail .desm-detail-back'); if (dd) { dd.click(); return 1; }
             if (D.documentElement.classList.contains('desm-nav-open')) { D.documentElement.classList.remove('desm-nav-open'); return 1; }
             return 0;
           };
