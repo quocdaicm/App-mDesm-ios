@@ -747,6 +747,21 @@ final class BrowserModel: ObservableObject {
             }
             attempt(false);
           }
+          // Trong khung: nền trong suốt và ẩn toàn bộ trang Hạng mục chi tiết, chỉ chừa hộp thoại bản đồ (và hộp thoại báo lỗi)
+          // để phía sau là màn hình chi tiết kiện của app thay vì trang tìm kiếm của DESM.
+          function diClean(fr, on) {
+            try {
+              var d = fr.contentDocument; if (!d) return;
+              var st = d.getElementById('desmFrameClean');
+              if (!on) { if (st && st.parentNode) st.parentNode.removeChild(st); return; }
+              if (st) return;
+              st = d.createElement('style'); st.id = 'desmFrameClean';
+              st.textContent = 'html, body { background:transparent!important; }' +
+                'body * { visibility:hidden!important; }' +
+                '.modal, .modal *, .modal-backdrop { visibility:visible!important; }';
+              (d.head || d.documentElement).appendChild(st);
+            } catch (e) {}
+          }
           // Đưa khung ẩn lên toàn màn hình (để thao tác hộp thoại cập nhật vị trí của DESM), có thanh "Xong" để quay lại
           function diShow(idoc, onClose) {
             var top = diTop(idoc), D = top.document, fr = D.getElementById('desmDetailFrame');
@@ -771,16 +786,21 @@ final class BrowserModel: ObservableObject {
             var b = D.createElement('button'); b.type = 'button'; b.className = 'desm-detail-back'; b.textContent = '‹  Xong';
             var t = D.createElement('div'); t.className = 'desm-detail-title'; t.textContent = 'Cập nhật vị trí hạng mục';
             bar.appendChild(b); bar.appendChild(t); D.body.appendChild(bar);
-            fr.style.cssText = 'position:fixed;left:0;top:calc(59px + env(safe-area-inset-top));width:100vw;height:calc(100vh - 59px - env(safe-area-inset-top));' +
-              'border:0;opacity:1;pointer-events:auto;z-index:2147483100;background:#fff;';
+            bar.style.display = 'none'; // vẫn giữ trong DOM để nút Back/vuốt quay lại (__desmBack) bấm được
+            fr.setAttribute('allowtransparency', 'true');
+            fr.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;' +
+              'border:0;opacity:1;pointer-events:auto;z-index:2147483100;background:transparent;';
+            diClean(fr, true);
             b.addEventListener('click', function() {
               // Đóng hộp thoại bản đồ còn mở trong khung trước khi ẩn khung đi
+              try { fr.contentWindow.__desmAutoBack = 0; } catch (e) {}
               try {
                 var fw = fr.contentWindow, dlg = fw.document.getElementById('dlgDesmLocation');
                 if (dlg && fw.jQuery) fw.jQuery(dlg).modal('hide');
               } catch (e) {}
               if (bar.parentNode) bar.parentNode.removeChild(bar);
               try { var z2 = D.getElementById('desmFrameZFix'); if (z2 && z2.parentNode) z2.parentNode.removeChild(z2); } catch (e) {}
+              diClean(fr, false);
               fr.style.cssText = DI_HIDE; fr.setAttribute('aria-hidden', 'true');
               onClose();
             });
@@ -978,6 +998,44 @@ final class BrowserModel: ObservableObject {
                 renderItems(rows);
               }, nLines, true);
             }
+            // Lưu vị trí xong (saveDesmLocationCheck.do trả success OK sau khi bấm OK ở hộp thoại xác nhận) thì tự bấm "‹ Xong"
+            // để quay về danh sách hạng mục của kiện (danh sách tự nạp lại). Chỉ tự quay lại 1 lần cho mỗi lần mở.
+            function autoBackOnSave() {
+              try {
+                var fr = diTop(idoc).document.getElementById('desmDetailFrame'), fw = fr && fr.contentWindow; if (!fw) return;
+                fw.__desmAutoBack = 1;
+                diClean(fr, true);
+                function goBack() {
+                  try { var bk = diTop(idoc).document.querySelector('#desmDetailFrameBar .desm-detail-back'); if (bk) bk.click(); } catch (e) {}
+                }
+                // Đóng hộp thoại bản đồ bằng dấu × thì cũng quay về chi tiết kiện (vì thanh "Xong" đã ẩn)
+                if (fw.jQuery && !fw.__desmHideHook) {
+                  fw.__desmHideHook = 1;
+                  var J = fw.jQuery, seen = false;
+                  J(fw.document).on('shown.bs.modal shown', '#dlgDesmLocation', function() { seen = true; });
+                  J(fw.document).on('hidden.bs.modal hidden', '#dlgDesmLocation', function() {
+                    if (!seen) return; seen = false; setTimeout(goBack, 250);
+                  });
+                }
+                if (fw.__desmSaveHook) return;
+                fw.__desmSaveHook = 1;
+                var X = fw.XMLHttpRequest.prototype, oo = X.open, os = X.send;
+                X.open = function(m, u) { try { this.__desmU = String(u == null ? '' : u); } catch (e) {} return oo.apply(this, arguments); };
+                X.send = function() {
+                  var x = this;
+                  if (/saveDesmLocationCheck\.do/.test(x.__desmU || '')) {
+                    x.addEventListener('loadend', function() {
+                      var good = false;
+                      try { good = x.status === 200 && /"success"\s*:\s*"OK"/i.test(x.responseText || ''); } catch (e) {}
+                      if (!good || !fw.__desmAutoBack) return;
+                      fw.__desmAutoBack = 0;
+                      setTimeout(goBack, 700);
+                    });
+                  }
+                  return os.apply(this, arguments);
+                };
+              } catch (e) {}
+            }
             // Cập nhật vị trí cho một hoặc nhiều hạng mục (như nút Location Update ở trang Hạng mục chi tiết)
             function updateItemsLoc(xs) {
               note.textContent = 'Đang mở cập nhật vị trí…';
@@ -988,7 +1046,7 @@ final class BrowserModel: ObservableObject {
                 if (ov.parentNode) loadItems(true);
               });
               diSelect(idoc, pkgNo, xs, function(ok) {
-                if (ok) { note.textContent = ''; return; }
+                if (ok) { note.textContent = ''; autoBackOnSave(); return; }
                 note.textContent = 'Không chọn được hạng mục (lưới chưa sẵn sàng). Thử lại sau vài giây.';
                 try { var bk = diTop(idoc).document.querySelector('#desmDetailFrameBar .desm-detail-back'); if (bk) bk.click(); } catch (e) {}
               });
