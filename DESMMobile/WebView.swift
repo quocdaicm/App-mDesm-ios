@@ -211,7 +211,12 @@ struct WebView: UIViewRepresentable {
             guard g.state == .ended, BrowserModel.edgeSwipe, let wv = model.webView else { return }
             let dx = g.translation(in: wv).x, vx = g.velocity(in: wv).x
             if g.edges == .left, dx > 60 || vx > 500 {
-                if wv.canGoBack { wv.goBack() } else { model.showToast("Không còn trang trước") }
+                // Đang mở màn hình chi tiết kiện / cập nhật vị trí / ngăn kéo menu (lớp phủ trong trang): vuốt = đóng lớp phủ trước
+                wv.evaluateJavaScript("window.__desmBack ? window.__desmBack() : 0;") { [weak self] r, _ in
+                    guard let self = self else { return }
+                    if (r as? Int ?? 0) == 1 { return }
+                    if wv.canGoBack { wv.goBack() } else if !self.model.inDesm { self.model.showToast("Không còn trang trước") }
+                }
             } else if g.edges == .right, dx < -60 || vx < -500 {
                 if wv.canGoForward { wv.goForward() } else { model.showToast("Không còn trang sau") }
             }

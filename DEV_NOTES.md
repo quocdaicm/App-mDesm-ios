@@ -106,3 +106,9 @@ Hạn chế: bảng TreeGrid cuộn ảo chỉ có các dòng đang hiển thị
 
 ## Sửa: không nhập được Package No khi có footer mới
 Bàn phím làm SwiftUI đẩy footer lên và ép WebView thấp → TreeGrid báo "Too small space for the grid" làm ô mất focus. Đã thêm `.ignoresSafeArea(.keyboard, edges: .bottom)` ở `BrowserView`. Trang đăng nhập/hết phiên (ngoài DESM) nay cũng dùng thanh dưới + thanh địa chỉ màu sáng (`FooterBackground`, `bottomBar`, `header`).
+
+## Sửa: vuốt mép trái ở màn chi tiết kiện báo "Không còn trang trước"
+Màn chi tiết kiện / khung Cập nhật vị trí là lớp phủ JS, không phải trang mới nên WebView không có lịch sử. Thêm `__desmBack()` (đóng lớp phủ rồi mới tính tới lịch sử); `edgeSwipe` (WebView.swift) và `BrowserModel.goBack` gọi nó trước. Trong DESM không còn toast "Không còn trang trước".
+
+## Ngăn kéo menu trái (sáng)
+CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, mục menu bo 16px, mục đang chọn nền trắng chữ xanh, lớp mờ phía sau xanh nhạt.

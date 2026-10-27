@@ -227,7 +227,7 @@ enum MobileStyles {
     @media(max-width:767.98px) {
       html.desm-mobile-mode #accordionSidebar {
         position:fixed!important; top:0; left:0; bottom:0; z-index:2000;
-        width:min(84vw, 320px)!important; min-height:0!important; max-width:none;
+        width:min(68vw, 250px)!important; min-height:0!important; max-width:none;
         overflow-y:auto!important; overflow-x:hidden!important; -webkit-overflow-scrolling:touch;
         transform:translateX(-105%); transition:transform .22s ease; box-shadow:4px 0 18px rgba(0,0,0,.3);
         padding-bottom:env(safe-area-inset-bottom);
@@ -241,8 +241,8 @@ enum MobileStyles {
       html.desm-mobile-mode #accordionSidebar .nav-item .nav-link {
         width:auto!important; display:flex!important; align-items:center; text-align:left!important; padding:.8rem 1rem!important;
       }
-      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link i { font-size:1rem; margin-right:.7rem; }
-      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link span { display:inline!important; font-size:.9rem!important; }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link i { font-size:1rem; margin-right:.55rem; }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link span { display:inline!important; font-size:.85rem!important; }
       html.desm-mobile-mode #accordionSidebar .nav-item .collapse,
       html.desm-mobile-mode #accordionSidebar .nav-item .collapsing {
         position:static!important; left:auto!important; top:auto!important; margin:0 .75rem!important; animation:none!important;
@@ -583,6 +583,39 @@ enum MobileStyles {
       background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23e2e8f0'/%3E%3Cpath d='M8.5 8.5l7 7M15.5 8.5l-7 7' stroke='%23475569' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E") center/18px 18px no-repeat!important; text-indent:-9999px; overflow:hidden; cursor:pointer;
     }
     html.desm-mobile-mode #tabs .ui-tabs-panel2 { position:relative; z-index:1; }
+
+    /* ===== Ngăn kéo menu: giao diện sáng đồng bộ với header/footer ===== */
+    @media(max-width:767.98px) {
+      html.desm-mobile-mode #accordionSidebar, html.desm-mobile-mode #accordionSidebar.sidebar {
+        background:linear-gradient(180deg,#d3e7fc 0%,#e6f1ff 50%,#f5f9ff 100%)!important;
+        border-radius:0 28px 28px 0!important; box-shadow:8px 0 28px rgba(40,90,170,.22)!important;
+        padding:calc(env(safe-area-inset-top) + 14px) 0 calc(env(safe-area-inset-bottom) + 90px)!important;
+      }
+      html.desm-mobile-mode.desm-nav-open body::after { background:rgba(20,50,100,.30)!important; -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); }
+      html.desm-mobile-mode #accordionSidebar .sidebar-divider { border-top:1px solid rgba(47,125,224,.16)!important; margin:.5rem 1.25rem!important; }
+      html.desm-mobile-mode #accordionSidebar .sidebar-heading { color:#7d9cc8!important; }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link {
+        color:#35507a!important; margin:3px 8px!important; padding:.75rem .8rem!important; border-radius:16px!important;
+        transition:background .15s ease;
+      }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link span { color:inherit!important; font-weight:600; letter-spacing:.2px; }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link i { color:#7d9cc8!important; }
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link:active { background:rgba(255,255,255,.7)!important; }
+      html.desm-mobile-mode #accordionSidebar .nav-item.active > .nav-link,
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link:not(.collapsed)[data-toggle] {
+        background:#fff!important; color:#1761e8!important; box-shadow:0 4px 12px rgba(47,125,224,.16)!important;
+      }
+      html.desm-mobile-mode #accordionSidebar .nav-item.active > .nav-link i,
+      html.desm-mobile-mode #accordionSidebar .nav-item .nav-link:not(.collapsed)[data-toggle] i { color:#1761e8!important; }
+      html.desm-mobile-mode #accordionSidebar .collapse-inner {
+        background:rgba(255,255,255,.85)!important; border-radius:16px!important; padding:.4rem!important;
+        box-shadow:0 2px 10px rgba(47,125,224,.12)!important;
+      }
+      html.desm-mobile-mode #accordionSidebar .collapse-item { color:#35507a!important; border-radius:12px!important; margin:2px 0!important; }
+      html.desm-mobile-mode #accordionSidebar .collapse-item:active,
+      html.desm-mobile-mode #accordionSidebar .collapse-item.active { background:#e8f1ff!important; color:#1761e8!important; font-weight:700; }
+      html.desm-mobile-mode #accordionSidebar .collapse-header { color:#7d9cc8!important; }
+    }
 
     """#
 }

@@ -157,7 +157,12 @@ final class BrowserModel: ObservableObject {
         webView?.load(URLRequest(url: url, timeoutInterval: 45))
     }
     func reload() { webView?.reload() }
-    func goBack() { if webView?.canGoBack == true { webView?.goBack() } }
+    func goBack() {
+        webView?.evaluateJavaScript("window.__desmBack ? window.__desmBack() : 0;") { [weak self] r, _ in
+            if (r as? Int ?? 0) == 1 { return }
+            if self?.webView?.canGoBack == true { self?.webView?.goBack() }
+        }
+    }
     func goForward() { if webView?.canGoForward == true { webView?.goForward() } }
     func home() {
         address = BrowserModel.homeURL
@@ -1677,6 +1682,14 @@ final class BrowserModel: ObservableObject {
             if (!a) return 0;
             try { a.click(); D.documentElement.classList.remove('desm-nav-open'); return 1; } catch (e) { return 0; }
           };
+          // Quay lại trong DESM: đóng lớp phủ (cập nhật vị trí / chi tiết kiện / menu) trước; trả 1 nếu đã xử lý
+          w.__desmBack = function() {
+            var D; try { D = diTop(document).document; } catch (e) { D = document; }
+            var b = D.querySelector('#desmDetailFrameBar .desm-detail-back') || D.querySelector('#desmDetail .desm-detail-back');
+            if (b) { b.click(); return 1; }
+            if (D.documentElement.classList.contains('desm-nav-open')) { D.documentElement.classList.remove('desm-nav-open'); return 1; }
+            return 0;
+          };
           w.__desmToggleDrawer = function() {
             var D; try { D = diTop(document).document; } catch (e) { D = document; }
             D.documentElement.classList.toggle('desm-nav-open');
@@ -2396,7 +2409,7 @@ struct BrowserView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            navButton("chevron.left", title: "Quay lại", enabled: model.canGoBack) { model.goBack() }
+            navButton("chevron.left", title: "Quay lại", enabled: model.canGoBack || model.inDesm) { model.goBack() }
             navButton("chevron.right", title: "Tiến", enabled: model.canGoForward) { model.goForward() }
             navButton("house.fill", title: "DESM", enabled: true) { model.home() }
             navButton("arrow.clockwise", title: "Tải lại", enabled: true) { model.reload() }
@@ -2544,7 +2557,7 @@ struct MoreSheet: View {
             Item(symbol: "line.3.horizontal", title: "Menu đầy đủ") {
                 model.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
             },
-            Item(symbol: "chevron.left", title: "Quay lại", enabled: model.canGoBack) { model.goBack() },
+            Item(symbol: "chevron.left", title: "Quay lại", enabled: model.canGoBack || model.inDesm) { model.goBack() },
             Item(symbol: "chevron.right", title: "Tiến", enabled: model.canGoForward) { model.goForward() },
             Item(symbol: "arrow.clockwise", title: "Tải lại") { model.reload() },
             Item(symbol: "house.fill", title: "Về DESM") { model.home() },
