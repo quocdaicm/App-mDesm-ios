@@ -756,6 +756,15 @@ final class BrowserModel: ObservableObject {
             }
             if (D.getElementById('desmDetailFrameBar')) return;
             fr.removeAttribute('aria-hidden');
+            // Hộp thoại xác nhận "Are you sure to comfirm?" của DESM được dựng ở tài liệu ngoài cùng (top), z-index thấp hơn khung này
+            // nên bị khung phủ kín che mất: nâng các lớp hộp thoại/nền mờ của top lên trên khung trong lúc khung đang hiện.
+            var zs = D.getElementById('desmFrameZFix');
+            if (!zs) {
+              zs = D.createElement('style'); zs.id = 'desmFrameZFix';
+              zs.textContent = '.modal, .ui-dialog, .swal2-container, .bootbox { z-index:2147483600!important; }' +
+                '.modal-backdrop, .ui-widget-overlay { z-index:2147483500!important; }';
+              (D.head || D.documentElement).appendChild(zs);
+            }
             var bar = D.createElement('div'); bar.id = 'desmDetailFrameBar';
             bar.className = 'desm-detail-top desm-frame-bar';
             bar.style.cssText = 'position:fixed;left:0;top:0;right:0;z-index:2147483200;';
@@ -771,6 +780,7 @@ final class BrowserModel: ObservableObject {
                 if (dlg && fw.jQuery) fw.jQuery(dlg).modal('hide');
               } catch (e) {}
               if (bar.parentNode) bar.parentNode.removeChild(bar);
+              try { var z2 = D.getElementById('desmFrameZFix'); if (z2 && z2.parentNode) z2.parentNode.removeChild(z2); } catch (e) {}
               fr.style.cssText = DI_HIDE; fr.setAttribute('aria-hidden', 'true');
               onClose();
             });
