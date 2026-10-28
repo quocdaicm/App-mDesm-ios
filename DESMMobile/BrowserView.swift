@@ -1171,6 +1171,70 @@ final class BrowserModel: ObservableObject {
                 });
               }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được Edit Log.'; });
             }
+            // Màn "Lịch sử thay đổi vị trí" của cả kiện: gom Edit Log của mọi hạng mục trong kiện, chỉ giữ các lần LOCATION đổi,
+            // gộp các hạng mục được chuyển cùng lúc (cùng ngày, người, vị trí cũ -> mới) thành một dòng.
+            function openLocLog() {
+              var S = subScreen('Lịch sử thay đổi vị trí', 'Package'), b = S.body;
+              var m = el('div', 'desm-dcard'); m.appendChild(el('div', 'desm-d-h', pkgNo)); b.appendChild(m);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              b.appendChild(rn); b.appendChild(rl);
+              function v(r, k) { return String(r[k] == null ? '' : r[k]).replace(/\s+/g, ' ').trim(); }
+              diAjax(idoc, '/getIdsmOsDetailList.do', { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: diProj(idoc), PACKAGE_LIST_NO: '', PACKAGE_NO: pkgNo, DESCRIPTION: '', DRAWING_NO: '',
+                TAG_NO: '', QTY_TYPE: 'rsi', QTY: '', KEY1: '', VALUE1: '', LOCATION: '', SEQUENCE: '', VENDOR: '', ATTRIBUTE10: '',
+                TYPE: '', CATEGORY: '', SUB_CATEGORY: '', COMMENTS: '' }, function(list) {
+                if (!S.ov.parentNode) return;
+                var items = [].filter.call(list, function(r) { return r && r.TRK_ITEM_NAME; });
+                if (!items.length) { rn.textContent = 'Kiện này chưa có hạng mục chi tiết để tra lịch sử.'; return; }
+                var events = [], idx = 0, running = 0, done = 0, failed = 0;
+                function finish() {
+                  if (!S.ov.parentNode) return;
+                  var groups = {}, order = [];
+                  events.forEach(function(e) {
+                    var k = [e.date, e.by, e.from, e.to].join('|');
+                    if (!groups[k]) { groups[k] = { e: e, labels: [] }; order.push(k); }
+                    if (groups[k].labels.indexOf(e.label) < 0) groups[k].labels.push(e.label);
+                  });
+                  var gs = order.map(function(k) { return groups[k]; });
+                  gs.sort(function(a, c) { return a.e.date < c.e.date ? 1 : (a.e.date > c.e.date ? -1 : 0); });
+                  rn.textContent = gs.length ? gs.length + ' lần đổi vị trí (mới nhất trước)' : 'Kiện này chưa có lịch sử thay đổi vị trí.';
+                  if (failed) rn.textContent += ' · ' + failed + ' hạng mục không tải được log';
+                  gs.forEach(function(g) {
+                    var c = el('div', 'desm-rsi-card');
+                    var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(g.e.date))); t1.appendChild(el('span', '', dash(g.e.by))); c.appendChild(t1);
+                    c.appendChild(el('div', 'desm-ditem-l', '📍 ' + (g.e.from || '(ban đầu)') + ' → ' + dash(g.e.to)));
+                    var shownL = g.labels.slice(0, 3).join(' · ') + (g.labels.length > 3 ? ' …' : '');
+                    c.appendChild(el('div', 'desm-ditem-l', g.labels.length + ' hạng mục: ' + shownL));
+                    rl.appendChild(c);
+                  });
+                }
+                function after() {
+                  running--; done++;
+                  if (done >= items.length) { finish(); return; }
+                  rn.textContent = 'Đang tải… ' + done + '/' + items.length;
+                  next();
+                }
+                function next() {
+                  while (running < 4 && idx < items.length) {
+                    (function(it) {
+                      running++;
+                      diAjax(idoc, '/getDesmPlDetailEditLogList.do', { PROJECT_NO: it.PROJECT_NO || diProj(idoc), TRK_ITEM_NAME: it.TRK_ITEM_NAME, MATERIAL_CODE: it.MATERIAL_CODE }, function(l2) {
+                        var rows = [].slice.call(l2);
+                        rows.sort(function(a, c) { var x1 = v(a, 'CREATION_DATE_TXT'), x2 = v(c, 'CREATION_DATE_TXT'); return x1 > x2 ? 1 : (x1 < x2 ? -1 : 0); });
+                        rows.forEach(function(r, i) {
+                          var loc = v(r, 'LOCATION'), prev = i ? v(rows[i - 1], 'LOCATION') : '';
+                          if (i ? loc !== prev : !!loc) {
+                            events.push({ date: v(r, 'LOC_UPDATE_DATE') || v(r, 'CREATION_DATE_TXT'), by: v(r, 'LOC_UPDATED_BY') || v(r, 'CREATED_BY'),
+                              from: prev, to: loc, label: v(it, 'DESCRIPTION') || v(it, 'MATERIAL_CODE') });
+                          }
+                        });
+                        after();
+                      }, function() { failed++; after(); });
+                    })(items[idx++]);
+                  }
+                }
+                next();
+              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được danh sách hạng mục của kiện.'; });
+            }
             function mrfParam(over) {
               var p = { PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
                 ZIM_ATTRIBUTE10: '', RSI_BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '', MRF_NO: '', MRF_NAME: '',
@@ -1264,7 +1328,7 @@ final class BrowserModel: ObservableObject {
               rows.forEach(function(x) {
                 var c = el('div', 'desm-ditem');
                 var ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-ditem-chk';
-                c.appendChild(ck);
+                c.appendChild(ck); c.appendChild(el('span', 'desm-card-hit'));
                 var noEl = el('div', 'desm-ditem-no', x.PACKAGE_NO);
                 noEl.addEventListener('click', function(ev) { ev.stopPropagation(); openItemDetail(x); });
                 c.appendChild(noEl);
@@ -1283,7 +1347,9 @@ final class BrowserModel: ObservableObject {
                 lc2.classList.add('desm-ditem-locbtn');
                 // Chạm ghim = cập nhật riêng hạng mục này; chạm thẻ = tích chọn (để cập nhật hàng loạt bằng nút ở đáy)
                 lc2.addEventListener('click', function(ev) { ev.stopPropagation(); updateItemsLoc([x]); });
-                c.addEventListener('click', function() {
+                // Chạm ô vuông bên trái = tích chọn (để cập nhật vị trí hàng loạt); chạm chỗ khác trên thẻ = mở chi tiết hạng mục
+                c.addEventListener('click', function(ev) {
+                  if (!(ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit'))) { openItemDetail(x); return; }
                   var i = chosen.indexOf(x); if (i >= 0) chosen.splice(i, 1); else chosen.push(x);
                   refreshSel();
                 });
@@ -1397,6 +1463,9 @@ final class BrowserModel: ObservableObject {
               });
             }
             loadItems();
+            var llb = el('button', 'desm-detail-list', 'Lịch sử thay đổi vị trí'); llb.type = 'button';
+            llb.addEventListener('click', function() { openLocLog(); });
+            body.appendChild(llb);
             body.appendChild(dl); body.appendChild(note); body.appendChild(dis);
             ov.appendChild(body);
             // Nút Location Update: chỉ chọn đúng kiện này rồi bấm nút cập nhật vị trí gốc của DESM
@@ -1468,8 +1537,8 @@ final class BrowserModel: ObservableObject {
             if (vb2) vb2.textContent = on ? 'Dạng: Thẻ' : 'Dạng: Bảng';
             // Tùy chọn khi chạm thẻ: "Chọn" (chọn dòng như cũ) hoặc "Chi tiết" (mở màn hình thông tin kiện hàng)
             if (win.__desmTapDetail === undefined) {
-              var sv = ''; try { sv = win.localStorage.getItem('desmTapDetail') || ''; } catch (e) {}
-              win.__desmTapDetail = sv === '1';
+              var sv = ''; try { sv = win.localStorage.getItem('desmTapDetail2') || ''; } catch (e) {}
+              win.__desmTapDetail = sv !== '0';   // mặc định: chạm thẻ = mở chi tiết; chạm ô vuông bên trái = chọn (để Location Update)
             }
             if (tb && !doc.getElementById('desmTapToggle')) {
               var tt = doc.createElement('button');
@@ -1477,7 +1546,7 @@ final class BrowserModel: ObservableObject {
               tt.addEventListener('click', function(e) {
                 e.preventDefault(); e.stopPropagation();
                 win.__desmTapDetail = !win.__desmTapDetail;
-                try { win.localStorage.setItem('desmTapDetail', win.__desmTapDetail ? '1' : '0'); } catch (e2) {}
+                try { win.localStorage.setItem('desmTapDetail2', win.__desmTapDetail ? '1' : '0'); } catch (e2) {}
                 box.__sig = null; cardView(doc);
               });
               tb.appendChild(tt);
@@ -1741,6 +1810,86 @@ final class BrowserModel: ObservableObject {
             }
             load();
           }
+          // Màn chi tiết của một dòng RSI / MRF / MRR / MPR: chạm thẻ để vào. Hiện toàn bộ cột của dòng; RSI và MRF nạp thêm các dòng bên trong.
+          function genDetail(win, doc, G, it) {
+            function el(tag, cls, text) { var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+            function dash(v) { return v == null || v === '' ? '-' : v; }
+            function fn(v) {
+              var s = String(v == null ? '' : v).replace(/,/g, ''), n = parseFloat(s);
+              if (s === '' || isNaN(n)) return '-';
+              return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+            }
+            function same(a, b) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b == null ? '' : b).replace(/\s+/g, ' ').trim(); }
+            var isMrf = !!(G.Cols.MRF_NO), isRsi = !isMrf && !!(G.Cols.RSI_NO), isMrr = !!(G.Cols.MRR_NO);
+            var title = isMrf ? 'MRF Detail' : (isRsi ? 'RSI Detail' : (isMrr ? 'MRR Detail' : 'Chi tiết'));
+            var ov = el('div', 'desm-detail desm-sub'), tp = el('div', 'desm-detail-top');
+            var bk = el('button', 'desm-detail-back', '‹  Quay lại'); bk.type = 'button';
+            bk.addEventListener('click', function() { if (ov.parentNode) ov.parentNode.removeChild(ov); });
+            tp.appendChild(bk); tp.appendChild(el('div', 'desm-detail-title', title)); ov.appendChild(tp);
+            var body = el('div', 'desm-detail-body'); ov.appendChild(body);
+            var head = el('div', 'desm-dcard');
+            head.appendChild(el('div', 'desm-d-h', it.title || '—'));
+            if (it.stat) head.appendChild(el('div', 'desm-d-l', it.stat));
+            it.all.forEach(function(d) {
+              if (!d.v) return;
+              var kv = el('div', 'desm-gkv'); kv.appendChild(el('span', 'desm-gk', d.h)); kv.appendChild(el('span', 'desm-gv', d.v)); head.appendChild(kv);
+            });
+            body.appendChild(head);
+            if (isMrr && G.Cols.INSPECTION_DATE_FROM && it.r.MRR_HEADER_ID != null && it.r.MRR_HEADER_ID !== '') {
+              var eb = el('button', 'desm-detail-list', 'Sửa dòng MRR (Received Date / Visual Check)'); eb.type = 'button';
+              eb.addEventListener('click', function() {
+                var pj = ''; try { pj = (doc.getElementById('txtProjectCode') || {}).value || ''; } catch (e) {}
+                mrrEditor(win, doc, it.r.MRR_HEADER_ID, pj || it.r.PROJECT_NO || '', function() {
+                  try { doc.getElementById('btnSearch').click(); } catch (e) {}
+                });
+              });
+              body.appendChild(eb);
+            }
+            if (isRsi || isMrf) {
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              body.appendChild(rn); body.appendChild(rl);
+              var proj = it.r.PROJECT_NO || diProj(doc);
+              if (isRsi) {
+                var rsiNo = it.r.RSI_NO != null && it.r.RSI_NO !== '' ? it.r.RSI_NO : it.title;
+                diAjax(doc, '/getDesmRsiViewList.do', { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: proj, RSI_NO: rsiNo, RSI_NAME: '', SUBCONTRACTOR: '', ATTRIBUTE10: '', MATERIAL_CODE: '',
+                  START_REQUEST_DATE: '', END_REQUEST_DATE: '', BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '',
+                  PACKAGE_NO: '', ITEM_DESC: '', MASTER_SHOP_UNIT: '', MASTER_SHOP_BLDG: '', SHOP_UNIT: '', SHOP_BLDG: '' }, function(list) {
+                  if (!ov.parentNode) return;
+                  var rows = [].filter.call(list, function(r) { return same(r.RSI_NO, rsiNo); });
+                  rn.textContent = rows.length ? rows.length + ' hạng mục' : 'RSI này không có hạng mục.';
+                  rows.forEach(function(r) {
+                    var c = el('div', 'desm-rsi-card');
+                    c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                    c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION)));
+                    var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                    ft.appendChild(el('span', '', fn(r.REQ_QTY) + ' / ' + fn(r.HANDOVER_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
+                    rl.appendChild(c);
+                  });
+                }, function() { if (ov.parentNode) rn.textContent = 'Không tải được danh sách hạng mục của RSI.'; });
+              } else {
+                var mrfNo = it.r.MRF_NO != null && it.r.MRF_NO !== '' ? it.r.MRF_NO : it.title;
+                diAjax(doc, '/getMrfSummaryList.do', { PROJECT_NO: proj, RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
+                  ZIM_ATTRIBUTE10: '', RSI_BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '', MRF_NO: mrfNo, MRF_NAME: '',
+                  PACKAGE_NO: '', ITEM_DESC: '', RETURN_TYPE: '', MRF_BALANCE_QTY: '' }, function(list) {
+                  if (!ov.parentNode) return;
+                  var rows = [].filter.call(list, function(r) { return same(r.MRF_NO, mrfNo); });
+                  rn.textContent = rows.length ? rows.length + ' dòng' : 'MRF này không có dòng nào.';
+                  rows.forEach(function(r) {
+                    var c = el('div', 'desm-rsi-card desm-mrf-card');
+                    var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO)));
+                    t1.appendChild(el('span', 'desm-mrf-type', dash(r.RETURN_TYPE))); c.appendChild(t1);
+                    c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                    c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
+                    var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                    ft.appendChild(el('span', 'desm-mrf-type', fn(r.MRF_REQ_RETURN_QTY) + ' / ' + fn(r.MRF_RETURN_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
+                    c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + '   Req : ' + dash(r.RETURN_REQ_DATE)));
+                    rl.appendChild(c);
+                  });
+                }, function() { if (ov.parentNode) rn.textContent = 'Không tải được chi tiết MRF.'; });
+              }
+            }
+            doc.body.appendChild(ov);
+          }
           function genericCards(doc) {
             var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
             try { var fe = win.frameElement; if (fe && (fe.id === 'desmDetailFrame' || !isShown(fe))) return; } catch (e) {}
@@ -1885,7 +2034,9 @@ final class BrowserModel: ObservableObject {
                 if (ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit')) {
                   try { G.SelectRow(it.r, it.sel ? 0 : 1); } catch (e) {}
                 } else {
-                  win.__desmGenOpen[it.id] = !win.__desmGenOpen[it.id];
+                  // Chạm thẻ = vào xem chi tiết bên trong (chạm ô vuông bên trái = chọn dòng)
+                  genDetail(win, doc, G, it);
+                  return;
                 }
                 box.__sig = null; genericCards(doc);
               });
