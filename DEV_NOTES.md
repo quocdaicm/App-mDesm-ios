@@ -140,3 +140,17 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - "Chưa đóng" = tổng BALANCE_QTY (RSI) / MRF_BALANCE_QTY (MRF) > 0. "Vừa đóng" = có HANDOVER_DATE / RETURN_DATE trong N ngày và không còn số lượng còn lại. Đây là QUY ƯỚC suy từ dữ liệu, chưa xác nhận với nghiệp vụ; chưa biết hết giá trị STATUS.
 - Chưa kiểm chứng: máy chủ lọc đúng theo START/END_*_DATE khi để trống số phiếu (đã lọc thêm phía máy khách); RSI chưa đóng chỉ xét phiếu có ngày yêu cầu trong 180 ngày gần nhất.
 - Chi tiết phiếu: bấm một phiếu trong `DesmDocSheet` -> `DesmDocDetailView` (`fetchDocDetail`): tải lại theo số phiếu (không giới hạn ngày), ghép dòng yêu cầu/tồn với ngày bàn giao (RSI: theo Package No + Material Code; MRF: theo MRF_LINE_ID). Dùng đúng các truy vấn đã có trong log nên tham số đã kiểm chứng.
+
+## Tab "Xuất kho" (native): `DesmOutgoingSheet` / `DesmOutgoingVM` (cuối `BrowserView.swift`)
+- Thay cho việc mở màn Outgoing Control (menu 376) của web khi bấm tab Xuất kho (web vẫn mở được qua "Menu đầy đủ").
+- Tìm: `POST /getDesmOutGoingCreationList.do` (popup Creation, tham số theo log 2026-10-28). Lưu: `POST /saveDesmRsiOutSave.do`, body `updateList=<JSON>` gồm `RSI_HEADER_ID, RSI_LINE_ID, HANDOVER_DATE (yyyy/MM/dd), HANDOVER_QTY, MATERIAL_CODE, PROJECT_NO, RECEIVER_NAME` (đọc từ `desmOutGoingCreationPopUp.js`). Thành công khi `error` rỗng/null; `error == "QTY"` kèm `RSI_LINE_ID`, `HANDOVER_AVAILABLE_QTY` là vượt số lượng.
+- WIP Completion (`/material/savePlWipQuantity.do`, cần SHOP_UNIT + SHOP_BLDG) là chức năng khác, chưa làm.
+- CHƯA kiểm chứng: tên trường dữ liệu trả về của danh sách (suy từ cột lưới), và máy chủ có yêu cầu thêm gì cho lệnh lưu. Thử với 1 dòng trước.
+
+## "WIP Completion" (Thêm): `DesmWipSheet` / `DesmWipVM` (cuối `BrowserView.swift`)
+- Tìm `POST /material/getPlWipCreationList.do` (đã có trong log), lưu `POST /material/savePlWipQuantity.do` với `updateList` JSON `{PROJECT_NO, RSI_HEADER_ID, RSI_LINE_ID, WIP_DATE, WIP_QTY, SHOP_UNIT, SHOP_BLDG, MATERIAL_CODE}` (từ `plWipCreationPopup.js`). Mỗi dòng bắt buộc có ngày, số lượng, C.Unit và BLDG; có nút gán loạt như web. Chưa kiểm chứng lệnh lưu với máy chủ thật.
+
+## Tab "Trả hàng" (MRF) thay tab "Nhập kho": `DesmMrfReturnSheet` / `DesmMrfReturnVM` (cuối `BrowserView.swift`)
+- Làm theo popup "Return Creation" (`desmReturnCreationPopUp.js`, menu 479). Tìm: `POST /getDesmReturnCreationList.do` (PROJECT_NO, PACKAGE_NO, MRF_NO, MATERIAL_CODE, ...). Dòng dùng: MRF_NO, MRF_NAME, SUBCONTRACTOR, RETURN_REQ_DATE, MATERIAL_CODE, PACKAGE_NO, DESCRIPTION, REQ_RETURN_QTY, RETURN_AVAILABLE_QTY, MRF_HEADER_ID, MRF_LINE_ID, RSI_LINE_ID.
+- Lưu: `POST /saveDesmMrfReturnSave.do`, `updateList` = JSON `{MRF_HEADER_ID, MRF_LINE_ID, MATERIAL_CODE, PROJECT_NO, RETURN_DATE (yyyy/MM/dd), RETURN_QTY, RSI_LINE_ID}`. `error == "QTY"` kèm `MRF_LINE_ID`, `RETURN_AVAILABLE_QTY` là vượt số lượng.
+- CHƯA kiểm chứng với DESM thật: tên trường danh sách (suy từ cột lưới; log mới chỉ trả rỗng) và lệnh lưu. Thử 1 dòng trước. Ô "MRF Name" lọc phía máy khách.
