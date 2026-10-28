@@ -251,6 +251,7 @@ struct WebView: UIViewRepresentable {
                     case "notfound": self.model.showToast("Không tìm thấy kiện \(term)")
                     case "multi": self.model.showToast("\(n) kiện khớp, chạm để chọn kiện")
                     case "ok": self.model.showToast("Đã chọn kiện \(term)")
+                    case "plsearch": self.model.showToast("Các kiện của \(term)")
                     case "dfound": self.model.showToast("Hạng mục thuộc kiện \(term)")
                     case "dnotfound": self.model.showToast("Không tìm thấy hạng mục \(term)")
                     case "dmulti": self.model.showToast("Mã \(term) có \(n) kiện khớp, hãy tra tay ở Hạng mục chi tiết")
@@ -299,6 +300,14 @@ struct WebView: UIViewRepresentable {
             if askedKeys.contains(key) { return }
             askedKeys.insert(key)
             DispatchQueue.main.async {
+                if self.useOverlayDialog() {
+                    self.model.presentDialog(DesmDialogState(
+                        icon: "key.fill", title: "Lưu tài khoản?",
+                        message: "Lưu tài khoản \"\(u)\" trên máy này (Keychain) để tự điền ở lần đăng nhập sau?",
+                        actions: [DesmDialogAction(title: "Lưu", kind: .primary) { CredStore.save(user: u, pass: p) },
+                                  DesmDialogAction(title: "Không", kind: .cancel)]))
+                    return
+                }
                 guard let vc = self.topController() else { return }
                 let a = UIAlertController(title: "Lưu tài khoản?",
                                           message: "Lưu tài khoản \"\(u)\" trên máy này (Keychain) để tự điền ở lần đăng nhập sau?",
@@ -396,13 +405,30 @@ struct WebView: UIViewRepresentable {
             while let p = vc?.presentedViewController { vc = p }
             return vc
         }
+        /// Hộp thoại tự vẽ chỉ thấy được khi không có sheet/camera nào đang phủ lên; nếu có thì dùng alert hệ thống để trang không bị treo.
+        func useOverlayDialog() -> Bool {
+            let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+            guard let root = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController else { return false }
+            return topController() === root
+        }
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            if useOverlayDialog() {
+                model.presentDialog(DesmDialogState(icon: "info.circle.fill", title: "Thông báo", message: message,
+                                                    actions: [DesmDialogAction(title: "OK", kind: .primary) { completionHandler() }]))
+                return
+            }
             guard let vc = topController() else { completionHandler(); return }
             let a = UIAlertController(title: nil, message: message, preferredStyle: .alert)
             a.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
             vc.present(a, animated: true)
         }
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            if useOverlayDialog() {
+                model.presentDialog(DesmDialogState(icon: "questionmark.circle.fill", title: "Xác nhận", message: message,
+                                                    actions: [DesmDialogAction(title: "OK", kind: .primary) { completionHandler(true) },
+                                                              DesmDialogAction(title: "Hủy", kind: .cancel) { completionHandler(false) }]))
+                return
+            }
             guard let vc = topController() else { completionHandler(false); return }
             let a = UIAlertController(title: nil, message: message, preferredStyle: .alert)
             a.addAction(UIAlertAction(title: "Hủy", style: .cancel) { _ in completionHandler(false) })

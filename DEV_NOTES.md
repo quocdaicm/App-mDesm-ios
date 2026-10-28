@@ -154,3 +154,38 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Làm theo popup "Return Creation" (`desmReturnCreationPopUp.js`, menu 479). Tìm: `POST /getDesmReturnCreationList.do` (PROJECT_NO, PACKAGE_NO, MRF_NO, MATERIAL_CODE, ...). Dòng dùng: MRF_NO, MRF_NAME, SUBCONTRACTOR, RETURN_REQ_DATE, MATERIAL_CODE, PACKAGE_NO, DESCRIPTION, REQ_RETURN_QTY, RETURN_AVAILABLE_QTY, MRF_HEADER_ID, MRF_LINE_ID, RSI_LINE_ID.
 - Lưu: `POST /saveDesmMrfReturnSave.do`, `updateList` = JSON `{MRF_HEADER_ID, MRF_LINE_ID, MATERIAL_CODE, PROJECT_NO, RETURN_DATE (yyyy/MM/dd), RETURN_QTY, RSI_LINE_ID}`. `error == "QTY"` kèm `MRF_LINE_ID`, `RETURN_AVAILABLE_QTY` là vượt số lượng.
 - CHƯA kiểm chứng với DESM thật: tên trường danh sách (suy từ cột lưới; log mới chỉ trả rỗng) và lệnh lưu. Thử 1 dòng trước. Ô "MRF Name" lọc phía máy khách.
+
+## Lịch sử Packing List: bấm dòng để vào kiện + tải xlsx (2026-10-28)
+- Bấm một dòng -> `PackingHistorySheet.onOpen(invoice)` -> đóng sheet, `BrowserModel.openPackingList` gọi JS `__desmFindPackingList`: mở màn Kiện hàng (`ensurePkgDoc`), điền `txtPackingListNo` = Invoice (xoá `txtPackageNo`), bấm Search.
+- Nút mũi tên tải (có `ATT_ID`) -> `BrowserModel.downloadPackingFile`: dò địa chỉ chứa "download" trong `home.do` + script của nó, thử thêm vài địa chỉ phổ biến với `?ATT_ID=` / `?attId=`, chỉ nhận phản hồi là file (zip `PK` hoặc không phải HTML/JSON). Lưu vào thư mục tạm theo tên `ORGINAL_FILE`, mở bảng chia sẻ (Lưu vào Tệp...).
+- CHƯA kiểm chứng: địa chỉ/tham số tải thật của DESM. Nếu báo "Không tìm được địa chỉ tải file", bật ghi API, bấm tên file ở khung Packing List Upload History trên home.do rồi gửi log để cố định đúng địa chỉ.
+
+## Mục "Hoạt động" (Thêm) — `DesmActivitySheet` / `BrowserModel.fetchActivity` (cuối `BrowserView.swift`)
+- Gom trong 1/3/7 ngày: Packing List tải lên (`fetchPackingHistory`), RSI mới tạo (`getDesmRsiViewList.do`, theo REQUEST_DATE), RSI bàn giao (`getDesmRsiOutGoingList.do`), MRF mới (`getMrfSummaryList.do`, lọc RETURN_REQ_DATE phía máy khách), MRF đã trả (`getDesmMrfReturnList.do`). Đều là truy vấn đã có trong log.
+- Nhãn "MỚI" = mã hoạt động chưa có trong `UserDefaults['desmActivitySeen']` (tối đa 600 mã); lần mở đầu tiên không gắn nhãn. Chỉ cập nhật khi mở màn hình, KHÔNG có thông báo đẩy khi app đóng (cần backend hoặc background fetch).
+- "Mới tạo" suy từ ngày yêu cầu nên chỉ chính xác theo ngày. Chưa có lịch sử cập nhật vị trí (cần ghi API khi mở "Edit Log" của hạng mục: `desmPlDtlEditLogPopUp.do`).
+
+## Hoạt động: thêm "Đổi vị trí" và "Xác nhận kiện" (2026-10-28, theo log người dùng gửi)
+- `POST /getIdsmOsSummaryList.do` (body như log, bỏ PACKAGE_LIST_NO) trả mỗi kiện: `LOC_UPDATE_DATE` (yyyy/MM/dd), `LOC_UPDATED_BY`, `STORAGE_LOCATION`, `CONFIRM_DATE`, `CONFIRMED_BY`. Chỉ có lần cập nhật cuối; lọc ngày phía máy khách. CHƯA kiểm chứng: gọi không lọc số Packing List có bị giới hạn số dòng/chậm không.
+- Lưu vị trí thật (đã thấy trong log): `POST /saveDesmLocationCheck.do` rồi `/saveDesmLocation.do`, body `list=[{PROJECT_NO,TRK_ITEM_NAME,PACKAGE_NO,CODE_TYPE:"SUMMARY"}]&MAP_MST_ID=<id>&MAP_DTL_ID=<id>`; phản hồi `{"success":"OK"}`. Bản đồ: `getDesmMapCreationList.do`, `getDesmMapInfoList.do`.
+- Log gửi lên KHÔNG có request Edit Log (chưa mở popup đó).
+
+## Edit Log của hạng mục (2026-10-28, từ `plDetail.js` + `desmPlDtlEditLogPopUp.js` người dùng gửi)
+- Web: bấm ô MATERIAL_CODE ở lưới "Hạng mục chi tiết" -> `openModal` -> popup `/desmPlDtlEditLogPopUp.do` -> `$.ajax('/getDesmPlDetailEditLogList.do', {PROJECT_NO, TRK_ITEM_NAME, MATERIAL_CODE})` (phương thức theo ajaxSetup), `data.results` = mảng dòng. Cột: DESCRIPTION, DRAWING_NO, TAG_NO, UNIT, NOS, IN_QTY, MATERIAL_CODE, MATERIAL, LOCATION, LOC_UPDATE_DATE, LOC_UPDATED_BY, REMARKS, REPORT_SHORT/OVER/DMG/MISSING(+_QTY), CREATION_DATE_TXT (ngày sửa), CREATED_BY (người sửa).
+- App: nút "Lịch sử thay đổi (Edit Log)" ở màn Detail Item (`openEditLog` cạnh `openMrfDetail`, trong `makeScript()`): sắp mới nhất trước, so từng bản với bản cũ hơn để hiện trường thay đổi (Location, In Q'ty, Remarks...). Cần `TRK_ITEM_NAME` của hạng mục.
+- CHƯA kiểm chứng với DESM thật (JS đã `node --check`). Chưa có Edit Log toàn dự án (API cần từng hạng mục), nên mục "Hoạt động" vẫn chỉ có lần đổi vị trí cuối của mỗi kiện.
+- Các endpoint khác thấy trong plDetail.js: `deleteDesmLocation.do` (xoá vị trí, body `deleteList`), `saveIdsmQrCodeList.do`, `desmAttListPopUp.do`.
+
+## Mục "Tra Edit Log" (Thêm) — `DesmEditLogSheet` / `DesmEditLogDetailView` (cuối `BrowserView.swift`)
+- Nhập Material Code (KEY1='material') hoặc Package No -> `/getIdsmOsDetailList.do` -> chọn hạng mục -> `/getDesmPlDetailEditLogList.do`; bản ghi mới nhất trước, so với bản cũ hơn để hiện trường thay đổi. Cùng API với nút Edit Log ở màn Detail Item. Chưa kiểm chứng với DESM thật.
+
+## Đồng bộ giao diện các màn native (2026-10-28)
+- Mọi màn native mở từ "Thêm" (Packing List, RSI/MRF, Xuất kho, WIP, Trả hàng MRF, Hoạt động, Tra Edit Log, Cài đặt) dùng chung `.desmSheet()` (cuối khối `.sheet` trong `BrowserView.body`): sheet toàn chiều cao + thanh kéo + `.tint(Color.tabBlue)`. Xuất kho/WIP/Trả hàng trước đây là `fullScreenCover`, nay là sheet.
+- Danh sách thống nhất `.insetGrouped`, nền `systemGroupedBackground` (các màn có thanh lọc phía trên danh sách). Máy quét camera vẫn `fullScreenCover`.
+- Màn mới nên dùng `.desmSheet()` và `Color.tabBlue` thay vì màu hệ thống.
+
+## Hộp thoại tự vẽ ở đáy màn hình (2026-10-28)
+- `DesmDialogCard` / `DesmDialogState` / `DesmDialogAction` + `.desmDialog(...)`, `.desmAlert(isPresented:...)` (trước `.desmSheet()` trong `BrowserView.swift`). Thẻ bo 30pt sát đáy (tầm ngón cái tay phải), nút cao 52pt, màu `Color.tabBlue`; chạm nền mờ = chạy nút cancel (hoặc nút duy nhất).
+- Thay: hộp "Quét mã" (trước là confirmationDialog), "Không mở được địa chỉ", Kết quả (Cài đặt), lỗi tải xlsx, 3 xác nhận (Xuất kho / WIP / Trả hàng).
+- Alert/confirm JS của trang và hỏi "Lưu tài khoản?" (`WebView.swift`) đi qua `BrowserModel.presentDialog` (hàng đợi `dialogQueue`, hiện ở `BrowserView`). Nếu đang có sheet/camera phủ lên (`useOverlayDialog()` = false) thì dùng `UIAlertController` như cũ để `completionHandler` luôn được gọi. Prompt có ô nhập vẫn dùng alert hệ thống.
+- Chưa build Xcode.

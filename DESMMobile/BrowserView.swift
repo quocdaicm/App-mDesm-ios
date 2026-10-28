@@ -63,6 +63,10 @@ final class BrowserModel: ObservableObject {
     @Published var shotItem: ShareItem?      // ảnh chụp toàn trang chờ chia sẻ/lưu
     @Published var errorMessage: String?
     @Published var toast: String?
+    /// Hàng đợi hộp thoại tự vẽ (alert/confirm của trang, hỏi lưu tài khoản...): hiện cái đầu tiên ở đáy màn hình.
+    @Published var dialogQueue: [DesmDialogState] = []
+    func presentDialog(_ s: DesmDialogState) { dialogQueue.append(s) }
+    func finishDialog() { if !dialogQueue.isEmpty { dialogQueue.removeFirst() } }
     /// Ẩn thanh trên + thanh dưới (tự ẩn khi vào được trang DESM, bấm nút nổi để hiện lại)
     @Published var barsHidden = false
     private var wasInDesm = false
@@ -1082,6 +1086,9 @@ final class BrowserModel: ObservableObject {
               var lub = el('button', 'desm-detail-list', 'Location Update'); lub.type = 'button';
               lub.addEventListener('click', function() { updateItemsLoc([x]); });
               b.appendChild(lub);
+              var elb = el('button', 'desm-detail-list', 'Lịch sử thay đổi (Edit Log)'); elb.type = 'button';
+              elb.addEventListener('click', function() { openEditLog(x); });
+              b.appendChild(elb);
               var rb = el('button', 'desm-detail-list', 'RSI & MRF List  ↑'); rb.type = 'button';
               var rn = el('div', 'desm-detail-note', 'Đang tải RSI & MRF…'), rl = el('div', 'desm-ditems'), open = true;
               var rl1 = el('div', ''), rl2 = el('div', ''); rl.appendChild(rl1); rl.appendChild(rl2);
@@ -1127,6 +1134,42 @@ final class BrowserModel: ObservableObject {
                 });
                 done();
               }, function() { failed++; done(); });
+            }
+            // Màn "Edit Log": lịch sử chỉnh sửa của một hạng mục. Dữ liệu: /getDesmPlDetailEditLogList.do {PROJECT_NO, TRK_ITEM_NAME, MATERIAL_CODE}
+            // (giống popup "Material record" của plDetail.js / desmPlDtlEditLogPopUp.js; results là mảng dòng). Mỗi dòng là một bản ghi sau lần sửa;
+            // so từng bản với bản cũ hơn liền kề để hiện phần thay đổi.
+            function openEditLog(x) {
+              var S = subScreen('Edit Log', 'Detail Item'), b = S.body;
+              var m = el('div', 'desm-dcard');
+              m.appendChild(el('div', 'desm-d-h', dash(x.MATERIAL_CODE)));
+              m.appendChild(el('div', 'desm-d-l', dash(x.DESCRIPTION)));
+              m.appendChild(el('div', 'desm-d-l', dash(x.PACKAGE_NO)));
+              b.appendChild(m);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              b.appendChild(rn); b.appendChild(rl);
+              if (!x.TRK_ITEM_NAME) { rn.textContent = 'Chưa tải đủ dữ liệu hạng mục (thiếu TRK_ITEM_NAME) nên chưa xem được Edit Log.'; return; }
+              var FIELDS = [['LOCATION', 'Location'], ['IN_QTY', "In Q'ty"], ['REMARKS', 'Remarks'], ['DESCRIPTION', 'Item'], ['DRAWING_NO', 'DWG'], ['TAG_NO', 'TAG'], ['UNIT', 'Unit'],
+                ['MATERIAL', 'Material'], ['REPORT_SHORT_QTY', 'Short'], ['REPORT_OVER_QTY', 'Over'], ['REPORT_DMG_QTY', 'DMG'], ['REPORT_MISSING_QTY', 'Missing']];
+              function v(r, k) { return String(r[k] == null ? '' : r[k]).replace(/\s+/g, ' ').trim(); }
+              diAjax(idoc, '/getDesmPlDetailEditLogList.do', { PROJECT_NO: x.PROJECT_NO || diProj(idoc), TRK_ITEM_NAME: x.TRK_ITEM_NAME, MATERIAL_CODE: x.MATERIAL_CODE }, function(list) {
+                if (!S.ov.parentNode) return;
+                var rows = [].slice.call(list);
+                rows.sort(function(a, c) { return v(c, 'CREATION_DATE_TXT') > v(a, 'CREATION_DATE_TXT') ? 1 : (v(c, 'CREATION_DATE_TXT') < v(a, 'CREATION_DATE_TXT') ? -1 : 0); });
+                rn.textContent = rows.length ? rows.length + ' bản ghi (mới nhất trước)' : 'Hạng mục này chưa có lịch sử chỉnh sửa.';
+                rows.forEach(function(r, i) {
+                  var c = el('div', 'desm-rsi-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.CREATION_DATE_TXT))); t1.appendChild(el('span', '', dash(r.CREATED_BY))); c.appendChild(t1);
+                  var old = rows[i + 1], diffs = [];
+                  if (old) FIELDS.forEach(function(f) { if (v(r, f[0]) !== v(old, f[0])) diffs.push(f[1] + ': ' + (v(old, f[0]) || '-') + ' → ' + (v(r, f[0]) || '-')); });
+                  if (old) c.appendChild(el('div', 'desm-ditem-l', diffs.length ? 'Thay đổi — ' + diffs.join(' · ') : 'Không đổi so với bản trước'));
+                  c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + (r.LOC_UPDATE_DATE ? '   (' + r.LOC_UPDATE_DATE + (r.LOC_UPDATED_BY ? ' · ' + r.LOC_UPDATED_BY : '') + ')' : '')));
+                  c.appendChild(el('div', 'desm-ditem-l', "In Q'ty : " + fnum(r.IN_QTY) + ' ' + (r.UNIT || '') + (r.REMARKS ? '   Remarks : ' + r.REMARKS : '')));
+                  var rep = [['Short', 'REPORT_SHORT_QTY'], ['Over', 'REPORT_OVER_QTY'], ['DMG', 'REPORT_DMG_QTY'], ['Missing', 'REPORT_MISSING_QTY']]
+                    .filter(function(f) { return parseFloat(v(r, f[1])) > 0; }).map(function(f) { return f[0] + ' ' + fnum(r[f[1]]); });
+                  if (rep.length) c.appendChild(el('div', 'desm-ditem-l', rep.join(' · ')));
+                  rl.appendChild(c);
+                });
+              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được Edit Log.'; });
             }
             function mrfParam(over) {
               var p = { PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
@@ -2272,6 +2315,19 @@ final class BrowserModel: ObservableObject {
               scanMsg({ status: 'ok', term: gridText(G, r, 'PACKAGE_NO') });
             })();
           }
+          // Từ "Lịch sử Packing List": mở màn Kiện hàng và lọc theo Packing List No (xoá ô Package No) rồi Search
+          w.__desmFindPackingList = function(cfg) {
+            ensurePkgDoc(function(d) {
+              if (!d) { scanMsg({ status: 'nopage' }); return; }
+              var win = d.defaultView, pl = d.getElementById('txtPackingListNo'), inp = d.getElementById('txtPackageNo'), btn = d.getElementById('btnSearch');
+              if (!pl || !btn) { scanMsg({ status: 'nopage' }); return; }
+              function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new win.Event(n, { bubbles: true })); }); }
+              setv(pl, cfg.pl);
+              if (inp && inp.value) setv(inp, '');
+              btn.click();
+              scanMsg({ status: 'plsearch', term: cfg.pl });
+            });
+          };
           // ===== Quét QR nhãn hạng mục (DETAIL!!!…): tra Material Code ở khung ẩn "Hạng mục chi tiết", lấy Package No rồi mở kiện đó =====
           w.__desmFindDetail = function(cfg) {
             ensurePkgDoc(function(d0) {
@@ -2728,6 +2784,8 @@ struct BrowserView: View {
     @State private var selectedTab: DesmTab = .package
     @State private var showMore = false
     @State private var showPackingHistory = false
+    @State private var showActivity = false
+    @State private var showEditLog = false
     @State private var docKind: DesmDocKind? = nil
     @State private var showOutgoing = false
     @State private var showWip = false
@@ -2785,20 +2843,20 @@ struct BrowserView: View {
             if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date() }
             else { model.appBecameActive() }
         }
-        .alert("Không mở được địa chỉ", isPresented: Binding(
+        .desmDialog(model.dialogQueue.first, finish: { model.finishDialog() })
+        .desmAlert(isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
-        )) {
-            Button("Đóng", role: .cancel) { model.errorMessage = nil }
-        } message: { Text(model.errorMessage ?? "") }
+        ), icon: "exclamationmark.triangle.fill", title: "Không mở được địa chỉ", message: model.errorMessage,
+                   actions: [DesmDialogAction(title: "Đóng", kind: .cancel) { model.errorMessage = nil }])
         .fullScreenCover(isPresented: $showScanner) {
             PackageScannerView(onPick: { c in model.runScan(c) }, onQR: { d in model.runQRScan(d) })
         }
-        .confirmationDialog("Quét mã", isPresented: $showScanChoice, titleVisibility: .visible) {
-            Button("Quét bằng camera") { showScanner = true }
-            Button("Chọn ảnh có sẵn") { showPhotoPicker = true }
-            Button("Hủy", role: .cancel) {}
-        }
+        .desmAlert(isPresented: $showScanChoice, icon: "viewfinder", title: "Quét mã", actions: [
+            DesmDialogAction(title: "Quét bằng camera", kind: .primary) { showScanner = true },
+            DesmDialogAction(title: "Chọn ảnh có sẵn", kind: .normal) { showPhotoPicker = true },
+            DesmDialogAction(title: "Hủy", kind: .cancel),
+        ])
         .photosPicker(isPresented: $showPhotoPicker, selection: $pickedPhoto, matching: .images)
         .onChange(of: pickedPhoto) { item in
             guard let item = item else { return }
@@ -2821,29 +2879,46 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true })
-                .presentationDetents([.height(500)])
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true })
+                .presentationDetents([.height(560)])
+                .presentationDragIndicator(.visible)
+                .tint(Color.tabBlue)
         }
-        .fullScreenCover(isPresented: $showMrfReturn) {
+        .sheet(isPresented: $showMrfReturn) {
             DesmMrfReturnSheet(model: model, onClose: { showMrfReturn = false })
+                .desmSheet()
         }
-        .fullScreenCover(isPresented: $showWip) {
+        .sheet(isPresented: $showWip) {
             DesmWipSheet(model: model, onClose: { showWip = false })
+                .desmSheet()
         }
-        .fullScreenCover(isPresented: $showOutgoing) {
+        .sheet(isPresented: $showOutgoing) {
             DesmOutgoingSheet(model: model, onClose: { showOutgoing = false })
+                .desmSheet()
         }
         .sheet(item: $docKind) { kind in
             DesmDocSheet(model: model, kind: kind, onClose: { docKind = nil })
-                .presentationDetents([.medium, .large])
+                .desmSheet()
+        }
+        .sheet(isPresented: $showEditLog) {
+            DesmEditLogSheet(model: model, onClose: { showEditLog = false })
+                .desmSheet()
+        }
+        .sheet(isPresented: $showActivity) {
+            DesmActivitySheet(model: model, onClose: { showActivity = false })
+                .desmSheet()
         }
         .sheet(isPresented: $showPackingHistory) {
-            PackingHistorySheet(model: model, onClose: { showPackingHistory = false })
-                .presentationDetents([.medium, .large])
+            PackingHistorySheet(model: model, onClose: { showPackingHistory = false }, onOpen: { pl in
+                showPackingHistory = false
+                selectedTab = .package
+                model.openPackingList(pl)
+            })
+                .desmSheet()
         }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
-                .presentationDetents([.medium, .large])
+                .desmSheet()
         }
         .sheet(item: $model.shotItem) { item in
             ShareSheet(url: item.url)
@@ -3081,6 +3156,114 @@ struct DesmTabBar: View {
     }
 }
 
+// MARK: - Hộp thoại tự vẽ (thay alert/confirmationDialog hệ thống)
+//
+// Thẻ bo tròn lớn nằm sát ĐÁY màn hình (tầm ngón cái tay phải), nút cao 52pt chiếm hết chiều ngang, màu theo app.
+// `DesmDialogAction.kind`: primary = nút xanh đặc, normal = xanh nhạt, destructive = đỏ nhạt, cancel = xám.
+// Chạm nền mờ: chạy nút cancel nếu có; chỉ có một nút thì chạy nút đó; còn lại thì không làm gì.
+
+struct DesmDialogAction: Identifiable {
+    enum Kind { case primary, normal, destructive, cancel }
+    let id = UUID()
+    let title: String
+    var kind: Kind = .normal
+    var handler: () -> Void = {}
+}
+
+struct DesmDialogState: Identifiable {
+    let id: String
+    var icon: String? = nil
+    var title: String
+    var message: String? = nil
+    var actions: [DesmDialogAction]
+    init(id: String = UUID().uuidString, icon: String? = nil, title: String, message: String? = nil, actions: [DesmDialogAction]) {
+        self.id = id; self.icon = icon; self.title = title; self.message = message; self.actions = actions
+    }
+}
+
+struct DesmDialogCard: View {
+    let state: DesmDialogState
+    let finish: () -> Void
+
+    private func fg(_ k: DesmDialogAction.Kind) -> Color {
+        switch k { case .primary: return .white; case .normal: return Color.tabBlue; case .destructive: return .red; case .cancel: return .primary }
+    }
+    private func bg(_ k: DesmDialogAction.Kind) -> Color {
+        switch k {
+        case .primary: return Color.tabBlue
+        case .normal: return Color.tabBlue.opacity(0.12)
+        case .destructive: return Color.red.opacity(0.12)
+        case .cancel: return Color(.secondarySystemFill)
+        }
+    }
+    private func run(_ a: DesmDialogAction) { finish(); a.handler() }
+    private func backdropTap() {
+        if let c = state.actions.first(where: { $0.kind == .cancel }) { run(c) }
+        else if state.actions.count == 1, let a = state.actions.first { run(a) }
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.38).ignoresSafeArea().onTapGesture { backdropTap() }
+            VStack(spacing: 12) {
+                if let icon = state.icon {
+                    Image(systemName: icon).font(.system(size: 26, weight: .semibold)).foregroundStyle(Color.tabBlue)
+                        .frame(width: 52, height: 52).background(Color.tabBlue.opacity(0.12), in: Circle())
+                }
+                Text(state.title).font(.system(size: 19, weight: .bold)).multilineTextAlignment(.center)
+                if let m = state.message, !m.isEmpty {
+                    Text(m).font(.system(size: 15)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .lineLimit(12).fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(spacing: 8) {
+                    ForEach(state.actions) { a in
+                        Button { run(a) } label: {
+                            Text(a.title).font(.system(size: 17, weight: .semibold))
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .foregroundStyle(fg(a.kind))
+                                .background(bg(a.kind), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 16)
+            .frame(maxWidth: .infinity)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 22, y: 6)
+            .padding(.horizontal, 12).padding(.bottom, 8)
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+extension View {
+    /// Hiện hộp thoại đang có trong `state` (nil = ẩn); `finish` gọi khi đóng.
+    func desmDialog(_ state: DesmDialogState?, finish: @escaping () -> Void) -> some View {
+        overlay { if let s = state { DesmDialogCard(state: s, finish: finish) } }
+            .animation(.easeOut(duration: 0.22), value: state?.id)
+    }
+    /// Thay `.alert(...)`: hiện khi `isPresented` = true, đóng thì đặt lại false rồi chạy hành động đã chọn.
+    func desmAlert(isPresented: Binding<Bool>, icon: String? = nil, title: String, message: String? = nil, actions: [DesmDialogAction]) -> some View {
+        desmDialog(isPresented.wrappedValue ? DesmDialogState(id: title, icon: icon, title: title, message: message, actions: actions) : nil,
+                   finish: { isPresented.wrappedValue = false })
+    }
+}
+
+/// Kiểu chung cho mọi màn hình native mở từ "Thêm": sheet toàn chiều cao, thanh kéo, màu nhấn xanh của app.
+private struct DesmSheetStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .tint(Color.tabBlue)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+    }
+}
+private extension View {
+    func desmSheet() -> some View { modifier(DesmSheetStyle()) }
+}
+
 /// Mục "Thêm": các nút điều hướng/công cụ cũ của thanh dưới + mở menu đầy đủ, Cài đặt.
 struct MoreSheet: View {
     @ObservedObject var model: BrowserModel
@@ -3088,6 +3271,8 @@ struct MoreSheet: View {
     var onHistory: () -> Void = {}
     var onDoc: (DesmDocKind) -> Void = { _ in }
     var onWip: () -> Void = {}
+    var onActivity: () -> Void = {}
+    var onEditLog: () -> Void = {}
 
     private struct Item: Identifiable {
         let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
@@ -3110,6 +3295,8 @@ struct MoreSheet: View {
             Item(symbol: "doc.text.magnifyingglass", title: "RSI chưa đóng / vừa đóng", enabled: model.inDesm) { onDoc(.rsi) },
             Item(symbol: "arrow.uturn.backward.circle", title: "MRF trả hàng", enabled: model.inDesm) { onDoc(.mrf) },
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
+            Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },
+            Item(symbol: "clock.arrow.2.circlepath", title: "Tra Edit Log", enabled: model.inDesm) { onEditLog() },
             Item(symbol: "slider.horizontal.3", title: "Cài đặt") { model.showSettings = true },
         ]
     }
@@ -3576,13 +3763,12 @@ struct SettingsView: View {
             .sheet(item: $shareItem) { item in
                 ShareSheet(url: item.url)
             }
-            .alert("Kết quả", isPresented: Binding(
-                get: { message != nil },
-                set: { if !$0 { message = nil } }
-            )) {
-                Button("OK", role: .cancel) { message = nil }
-            } message: { Text(message ?? "") }
         }
+        .desmAlert(isPresented: Binding(
+            get: { message != nil },
+            set: { if !$0 { message = nil } }
+        ), icon: "info.circle.fill", title: "Kết quả", message: message,
+                   actions: [DesmDialogAction(title: "OK", kind: .primary) { message = nil }])
     }
 
     // MARK: Cài đặt chính
@@ -4135,6 +4321,7 @@ struct PackingUploadRecord: Identifiable, Hashable {
     let created: String
     let user: String
     let project: String
+    let attId: String
     var isSuccess: Bool { result.uppercased() == "SUCCESSFUL" }
 }
 
@@ -4184,7 +4371,7 @@ extension BrowserModel {
                         id: key, invoice: str(r, "INVOICE_NO"), shipment: str(r, "SHIPMENT_NO"),
                         file: str(r, "ORGINAL_FILE"), result: str(r, "RESULT"),
                         created: str(r, "CREATION_DATE"), user: str(r, "LAST_UPDATED_BY"),
-                        project: str(r, "PROJECT_NAME")))
+                        project: str(r, "PROJECT_NAME"), attId: att))
                 }
                 out.sort { $0.created > $1.created }   // "yyyy/MM/dd HH:mm" so sánh chuỗi được
                 done(out, "")
@@ -4193,14 +4380,109 @@ extension BrowserModel {
     }
 }
 
+extension BrowserModel {
+    /// Mở màn Kiện hàng và lọc theo Packing List No (bấm một dòng trong Lịch sử Packing List).
+    func openPackingList(_ pl: String) {
+        guard let d = try? JSONSerialization.data(withJSONObject: ["pl": pl]),
+              let js = String(data: d, encoding: .utf8) else { return }
+        showToast("Đang mở kiện của \(pl)…")
+        webView?.evaluateJavaScript("window.__desmFindPackingList ? window.__desmFindPackingList(\(js)) : 0;", completionHandler: nil)
+    }
+
+    /// Tải file xlsx đã upload (theo ATT_ID) bằng phiên đăng nhập của trang, lưu vào thư mục tạm. `done(url, lỗi)`.
+    /// CHƯA kiểm chứng: địa chỉ tải của DESM. Script tự dò địa chỉ chứa "download" trong home.do và các script của nó,
+    /// rồi thử thêm vài địa chỉ phổ biến; chỉ nhận phản hồi là file (không phải HTML/JSON). Lỗi thì liệt kê các địa chỉ đã thử.
+    func downloadPackingFile(attId: String, fileName: String, done: @escaping (URL?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang DESM để tải."); return }
+        let js = #"""
+        if (!/(^|\.)doosanenerbility\.com$/i.test(location.hostname)) return JSON.stringify({ err: 'Hãy mở DESM và đăng nhập trước.' });
+        const tried = [];
+        const urls = [];
+        function add(u) { u = String(u || '').split('?')[0]; if (u && urls.indexOf(u) < 0) urls.push(u); }
+        try {
+          const html = await (await fetch('/home.do', { credentials: 'include', cache: 'no-store' })).text();
+          const found = (t) => { for (const m of t.matchAll(/["']([^"'\s]*download[^"'\s]*?\.do)(?:\?[^"'\s]*)?["']/gi)) add(m[1].charAt(0) === '/' ? m[1] : '/' + m[1]); };
+          found(html);
+          const srcs = [];
+          for (const m of html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)) {
+            const u = m[1];
+            if (/^(https?:)?\/\//i.test(u) && u.indexOf(location.host) < 0) continue;
+            if (/jquery|bootstrap|fontawesome|datatables|chart|moment|popper|treegrid|GridE/i.test(u)) continue;
+            srcs.push(u);
+          }
+          for (const u of srcs.slice(0, 12)) {
+            try { found(await (await fetch(u, { credentials: 'include' })).text()); } catch (e) {}
+          }
+        } catch (e) {}
+        ['/fileDownload.do', '/common/fileDownload.do', '/downloadFile.do', '/common/downloadFile.do', '/attachFileDownload.do', '/fileDown.do'].forEach(add);
+        const names = ['ATT_ID', 'attId'];
+        for (const u of urls.slice(0, 14)) {
+          for (const n of names) {
+            const full = u + '?' + n + '=' + encodeURIComponent(att);
+            try {
+              const r = await fetch(full, { credentials: 'include', cache: 'no-store' });
+              const ct = (r.headers.get('content-type') || '').toLowerCase();
+              if (!r.ok) { tried.push(u + ' ' + r.status); continue; }
+              const buf = new Uint8Array(await r.arrayBuffer());
+              const zip = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4B;
+              if (!zip && (/text\/html|json|text\/plain/.test(ct) || buf.length < 100)) { tried.push(u + ' không phải file'); continue; }
+              let bin = '';
+              for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+              return JSON.stringify({ b64: btoa(bin) });
+            } catch (e) { tried.push(u + ' lỗi'); }
+          }
+        }
+        return JSON.stringify({ err: 'Không tìm được địa chỉ tải file. Đã thử: ' + (tried.slice(0, 6).join('; ') || 'không có') });
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["att": attId], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e):
+                done(nil, "Không tải được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let text = v as? String, let data = text.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    done(nil, "Không đọc được phản hồi."); return
+                }
+                if let err = obj["err"] as? String { done(nil, err); return }
+                guard let b64 = obj["b64"] as? String, let bytes = Data(base64Encoded: b64), !bytes.isEmpty else {
+                    done(nil, "File tải về rỗng."); return
+                }
+                var name = fileName.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
+                if name.isEmpty { name = "packing-list-\(attId)" }
+                if (name as NSString).pathExtension.isEmpty { name += ".xlsx" }
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("desm-packing-\(UUID().uuidString)", isDirectory: true)
+                do {
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    let url = dir.appendingPathComponent(name)
+                    try bytes.write(to: url)
+                    done(url, "")
+                } catch { done(nil, "Không lưu được file: \(error.localizedDescription)") }
+            }
+        }
+    }
+}
+
 struct PackingHistorySheet: View {
     @ObservedObject var model: BrowserModel
     var onClose: () -> Void
+    var onOpen: (String) -> Void = { _ in }
 
     @State private var days = 3
     @State private var records: [PackingUploadRecord] = []
     @State private var loading = false
     @State private var error: String? = nil
+    @State private var downloadingID: String? = nil
+    @State private var shareItem: ShareItem? = nil
+    @State private var downloadError: String? = nil
+
+    private func download(_ r: PackingUploadRecord) {
+        guard downloadingID == nil, !r.attId.isEmpty else { return }
+        downloadingID = r.id
+        model.downloadPackingFile(attId: r.attId, fileName: r.file) { url, err in
+            downloadingID = nil
+            if let url = url { shareItem = ShareItem(url: url) } else { downloadError = err }
+        }
+    }
 
     private func load() {
         loading = true; error = nil
@@ -4254,9 +4536,25 @@ struct PackingHistorySheet: View {
                                 Spacer(minLength: 6)
                                 badge(r)
                             }
-                            if !r.file.isEmpty {
-                                Label(r.file, systemImage: "doc.text").font(.system(size: 13))
-                                    .foregroundStyle(.primary).lineLimit(2)
+                            if !r.file.isEmpty || !r.attId.isEmpty {
+                                HStack(alignment: .center, spacing: 8) {
+                                    Label(r.file.isEmpty ? "Tệp Packing List" : r.file, systemImage: "doc.text").font(.system(size: 13))
+                                        .foregroundStyle(.primary).lineLimit(2)
+                                    Spacer(minLength: 6)
+                                    if !r.attId.isEmpty {
+                                        Button { download(r) } label: {
+                                            if downloadingID == r.id {
+                                                ProgressView().frame(width: 32, height: 32)
+                                            } else {
+                                                Image(systemName: "arrow.down.circle")
+                                                    .font(.system(size: 22)).frame(width: 32, height: 32)
+                                            }
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .disabled(downloadingID != nil)
+                                        .accessibilityLabel("Tải file xlsx")
+                                    }
+                                }
                             }
                             HStack(spacing: 10) {
                                 if !r.shipment.isEmpty { Text("Shipment \(r.shipment)") }
@@ -4266,10 +4564,13 @@ struct PackingHistorySheet: View {
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if !r.invoice.isEmpty { onOpen(r.invoice) } }
                     }
-                    .listStyle(.plain)
+                    .listStyle(.insetGrouped)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Lịch sử Packing List")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -4280,6 +4581,10 @@ struct PackingHistorySheet: View {
             }
         }
         .onAppear { if records.isEmpty && !loading { load() } }
+        .sheet(item: $shareItem) { item in ShareSheet(url: item.url) }
+        .desmAlert(isPresented: Binding(get: { downloadError != nil }, set: { if !$0 { downloadError = nil } }),
+                   icon: "exclamationmark.triangle.fill", title: "Không tải được file", message: downloadError,
+                   actions: [DesmDialogAction(title: "OK", kind: .primary)])
     }
 }
 
@@ -4530,9 +4835,10 @@ struct DesmDocSheet: View {
                         .padding(.vertical, 3)
                         }
                     }
-                    .listStyle(.plain)
+                    .listStyle(.insetGrouped)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle(kind == .rsi ? "RSI" : "MRF trả hàng")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -5082,13 +5388,11 @@ struct DesmOutgoingSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
             }
-            .alert("Xác nhận xuất kho", isPresented: $confirm) {
-                Button("Xuất kho", role: .destructive) { vm.save(model) }
-                Button("Huỷ", role: .cancel) {}
-            } message: {
-                Text("Ghi xuất kho \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.")
-            }
         }
+        .desmAlert(isPresented: $confirm, icon: "exclamationmark.triangle.fill", title: "Xác nhận xuất kho",
+                   message: "Ghi xuất kho \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.",
+                   actions: [DesmDialogAction(title: "Xuất kho", kind: .destructive) { vm.save(model) },
+                             DesmDialogAction(title: "Huỷ", kind: .cancel)])
         .onAppear { if !vm.searched { vm.search(model) } }
     }
 }
@@ -5427,13 +5731,11 @@ struct DesmWipSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
             }
-            .alert("Xác nhận Completion", isPresented: $confirm) {
-                Button("Completion", role: .destructive) { vm.save(model) }
-                Button("Huỷ", role: .cancel) {}
-            } message: {
-                Text("Ghi WIP \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.")
-            }
         }
+        .desmAlert(isPresented: $confirm, icon: "exclamationmark.triangle.fill", title: "Xác nhận Completion",
+                   message: "Ghi WIP \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.",
+                   actions: [DesmDialogAction(title: "Completion", kind: .destructive) { vm.save(model) },
+                             DesmDialogAction(title: "Huỷ", kind: .cancel)])
     }
 }
 
@@ -5729,13 +6031,534 @@ struct DesmMrfReturnSheet: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
             }
-            .alert("Xác nhận trả hàng", isPresented: $confirm) {
-                Button("Trả hàng", role: .destructive) { vm.save(model) }
-                Button("Huỷ", role: .cancel) {}
-            } message: {
-                Text("Ghi trả hàng \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.")
+        }
+        .desmAlert(isPresented: $confirm, icon: "exclamationmark.triangle.fill", title: "Xác nhận trả hàng",
+                   message: "Ghi trả hàng \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.",
+                   actions: [DesmDialogAction(title: "Trả hàng", kind: .destructive) { vm.save(model) },
+                             DesmDialogAction(title: "Huỷ", kind: .cancel)])
+        .onAppear { if !vm.searched { vm.search(model) } }
+    }
+}
+
+
+// MARK: - Hoạt động gần đây (mục "Thêm")
+//
+// Gom các hoạt động đọc được từ DESM trong 1/3/7 ngày: Packing List mới tải lên, phiếu RSI mới tạo, RSI đã bàn giao,
+// phiếu MRF trả hàng mới tạo, MRF đã trả. Dùng đúng các truy vấn đã có ở `fetchDocs` / `fetchPackingHistory`.
+// Nhãn "MỚI" = chưa thấy ở lần mở trước (danh sách đã thấy lưu ở UserDefaults `desmActivitySeen`; lần mở đầu tiên không gắn nhãn).
+// Đổi vị trí / xác nhận kiện lấy từ `/getIdsmOsSummaryList.do` (LOC_UPDATE_DATE, LOC_UPDATED_BY, CONFIRM_DATE, CONFIRMED_BY): chỉ có lần cập nhật CUỐI của mỗi kiện,
+// không phải toàn bộ Edit Log (chưa bắt được API Edit Log).
+// "Phiếu mới tạo" suy từ ngày yêu cầu (REQUEST_DATE / RETURN_REQ_DATE) nên chỉ chính xác theo ngày, không theo giờ.
+
+enum DesmActivityKind: String {
+    case packingUpload, rsiNew, rsiHandover, mrfNew, mrfReturn, locationUpdate, pkgConfirm
+    var label: String {
+        switch self {
+        case .packingUpload: return "Tải Packing List"
+        case .rsiNew: return "RSI mới"
+        case .rsiHandover: return "RSI bàn giao"
+        case .mrfNew: return "MRF mới"
+        case .mrfReturn: return "MRF đã trả"
+        case .locationUpdate: return "Đổi vị trí"
+        case .pkgConfirm: return "Xác nhận kiện"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .packingUpload: return "doc.badge.arrow.up"
+        case .rsiNew: return "doc.badge.plus"
+        case .rsiHandover: return "shippingbox.and.arrow.backward"
+        case .mrfNew: return "arrow.uturn.backward.circle"
+        case .mrfReturn: return "checkmark.circle"
+        case .locationUpdate: return "mappin.and.ellipse"
+        case .pkgConfirm: return "checkmark.seal"
+        }
+    }
+    var color: Color {
+        switch self {
+        case .packingUpload: return .blue
+        case .rsiNew, .rsiHandover: return .orange
+        case .mrfNew, .mrfReturn: return .purple
+        case .locationUpdate: return .teal
+        case .pkgConfirm: return .green
+        }
+    }
+    /// 1 = Packing List, 2 = RSI, 3 = MRF, 4 = Kiện (vị trí/xác nhận) (khớp bộ lọc trong màn hình)
+    var group: Int {
+        switch self {
+        case .packingUpload: return 1
+        case .rsiNew, .rsiHandover: return 2
+        case .mrfNew, .mrfReturn: return 3
+        case .locationUpdate, .pkgConfirm: return 4
+        }
+    }
+}
+
+struct DesmActivity: Identifiable {
+    let id: String
+    let kind: DesmActivityKind
+    let title: String
+    let detail: String
+    let date: String
+    var isNew = false
+}
+
+extension BrowserModel {
+    func fetchActivity(days: Int, done: @escaping ([DesmActivity], [String]) -> Void) {
+        desmQuery("/getInitDefailProject.do", body: "") { rows, err in
+            guard let rows = rows else { done([], [err]); return }
+            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { done([], ["Chưa có dự án mặc định trong DESM."]); return }
+            let P = Self.enc(no)
+            let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy/MM/dd"
+            let now = Date()
+            let today = f.string(from: now)
+            let cutoff = f.string(from: Calendar.current.date(byAdding: .day, value: -days, to: now) ?? now)
+            func num(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v) }
+            func join(_ parts: [String]) -> String { parts.filter { !$0.isEmpty }.joined(separator: " · ") }
+
+            var out: [DesmActivity] = []
+            var errs: [String] = []
+            typealias Step = (_ next: @escaping () -> Void) -> Void
+            let steps: [Step] = [
+                // Packing List đã tải lên
+                { next in
+                    self.fetchPackingHistory(days: days) { list, e in
+                        if let list = list {
+                            for r in list {
+                                out.append(DesmActivity(id: "pl-\(r.id)", kind: .packingUpload,
+                                                        title: r.invoice.isEmpty ? "(không có Invoice)" : r.invoice,
+                                                        detail: join([r.file, r.result, r.user]), date: r.created))
+                            }
+                        } else { errs.append("Packing List: \(e)") }
+                        next()
+                    }
+                },
+                // RSI mới tạo (theo ngày yêu cầu)
+                { next in
+                    let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&ATTRIBUTE10=&MATERIAL_CODE=&START_REQUEST_DATE=\(Self.enc(cutoff))&END_REQUEST_DATE=\(Self.enc(today))&BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&PACKAGE_NO=&ITEM_DESC=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+                    self.desmQuery("/getDesmRsiViewList.do", body: body) { rows, e in
+                        if let rows = rows {
+                            for g in Self.groups(rows, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "STATUS", extra: "SUBCONTRACTOR",
+                                                 qty: "REQ_QTY", done: "HANDOVER_QTY", bal: "BALANCE_QTY", close: nil) where g.date >= cutoff {
+                                out.append(DesmActivity(id: "rsi-new-\(g.id)", kind: .rsiNew, title: g.id,
+                                                        detail: join([g.name, g.extra, "\(g.lines) dòng", "SL \(num(g.qty))", g.status]), date: g.date))
+                            }
+                        } else { errs.append("RSI: \(e)") }
+                        next()
+                    }
+                },
+                // RSI đã bàn giao
+                { next in
+                    let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&START_HANDOVER_DATE=\(Self.enc(cutoff))&END_HANDOVER_DATE=\(Self.enc(today))&PACKAGE_NO=&SUBCONTRACTOR=&RSI_NO=&MATERIAL_CODE=&ATTRIBUTE10=&RSI_NAME=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS=&PACKING_LIST_NO=&PENDING=&RECEIVER_REMARK=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+                    self.desmQuery("/getDesmRsiOutGoingList.do", body: body) { rows, e in
+                        if let rows = rows {
+                            for g in Self.groups(rows, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "", extra: "SUBCONTRACTOR",
+                                                 qty: "REQ_QTY", done: "HANDOVER_QTY", bal: nil, close: "HANDOVER_DATE") where g.closeDate >= cutoff {
+                                out.append(DesmActivity(id: "rsi-out-\(g.id)-\(g.closeDate)", kind: .rsiHandover, title: g.id,
+                                                        detail: join([g.name, g.extra, "Bàn giao SL \(num(g.done))"]), date: g.closeDate))
+                            }
+                        } else { errs.append("RSI bàn giao: \(e)") }
+                        next()
+                    }
+                },
+                // MRF mới tạo (máy chủ không lọc ngày ở truy vấn này nên lọc phía máy khách)
+                { next in
+                    let body = "PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&MATERIAL_CODE=&RSI_START_REQUEST_DATE=&RSI_END_REQUEST_DATE=&ZIM_ATTRIBUTE10=&RSI_BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&MRF_NO=&MRF_NAME=&PACKAGE_NO=&ITEM_DESC=&RETURN_TYPE=&MRF_BALANCE_QTY="
+                    self.desmQuery("/getMrfSummaryList.do", body: body) { rows, e in
+                        if let rows = rows {
+                            for g in Self.groups(rows, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "STATUS", extra: "RETURN_TYPE",
+                                                 qty: "MRF_REQ_RETURN_QTY", done: "MRF_RETURN_QTY", bal: "MRF_BALANCE_QTY", close: nil) where g.date >= cutoff {
+                                out.append(DesmActivity(id: "mrf-new-\(g.id)", kind: .mrfNew, title: g.id,
+                                                        detail: join([g.name, g.extra, "\(g.lines) dòng", "SL \(num(g.qty))", g.status]), date: g.date))
+                            }
+                        } else { errs.append("MRF: \(e)") }
+                        next()
+                    }
+                },
+                // MRF đã trả
+                { next in
+                    let body = "PROJECT_NO=\(P)&START_HANDOVER_DATE=\(Self.enc(cutoff))&END_HANDOVER_DATE=\(Self.enc(today))&PACKAGE_NO=&SUBCONTRACTOR=&MRF_NO=&MATERIAL_CODE=&ATTRIBUTE10=&MRF_NAME=&TYPE=&CATEGORY="
+                    self.desmQuery("/getDesmMrfReturnList.do", body: body) { rows, e in
+                        if let rows = rows {
+                            for g in Self.groups(rows, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "", extra: "RETURN_TYPE",
+                                                 qty: "REQ_RETURN_QTY", done: "RETURN_QTY", bal: nil, close: "RETURN_DATE") where g.closeDate >= cutoff {
+                                out.append(DesmActivity(id: "mrf-ret-\(g.id)-\(g.closeDate)", kind: .mrfReturn, title: g.id,
+                                                        detail: join([g.name, g.extra, "Đã trả SL \(num(g.done))"]), date: g.closeDate))
+                            }
+                        } else { errs.append("MRF đã trả: \(e)") }
+                        next()
+                    }
+                },
+                // Đổi vị trí / xác nhận kiện: lấy từ danh sách Package (LOC_UPDATE_DATE, LOC_UPDATED_BY, CONFIRM_DATE, CONFIRMED_BY).
+                // Chỉ có LẦN CẬP NHẬT CUỐI của mỗi kiện (không phải toàn bộ lịch sử Edit Log). Máy chủ không lọc theo ngày này nên lọc phía máy khách.
+                { next in
+                    let body = "PROJECT_NO=\(P)&PACKAGE_LIST_NO=&PACKAGE_NO=&DESCRIPTION=&IS_CONFIRM_MATERIAL=&RECEIPTED=&ATTRIBUTE10=&REMARK=&VENDOR=&LOCATION=&START_RECEIPT_DATE=&END_RECEIPT_DATE=&MRR_VISUAL_CHECK=All&MRR_RECEIVED=&START_MRR_RECEIVED_DATE=&END_MRR_RECEIVED_DATE=&CUSTOMS_YN=&MIR_CATEGORY=&PACKAGE_STATUS="
+                    self.desmQuery("/getIdsmOsSummaryList.do", body: body) { rows, e in
+                        if let rows = rows {
+                            for r in rows {
+                                let pkg = Self.fstr(r, "PACKAGE_NO"); if pkg.isEmpty { continue }
+                                let ld = Self.fstr(r, "LOC_UPDATE_DATE")
+                                if ld >= cutoff {
+                                    let loc = Self.fstr(r, "STORAGE_LOCATION")
+                                    out.append(DesmActivity(id: "loc-\(pkg)-\(ld)-\(loc)", kind: .locationUpdate, title: pkg,
+                                                            detail: join([loc.isEmpty ? "" : "→ \(loc)", Self.fstr(r, "LOC_UPDATED_BY"), Self.fstr(r, "DESCRIPTION")]), date: ld))
+                                }
+                                let cd = Self.fstr(r, "CONFIRM_DATE")
+                                if cd >= cutoff {
+                                    out.append(DesmActivity(id: "cfm-\(pkg)-\(cd)", kind: .pkgConfirm, title: pkg,
+                                                            detail: join([Self.fstr(r, "CONFIRMED_BY"), Self.fstr(r, "DESCRIPTION")]), date: cd))
+                                }
+                            }
+                        } else { errs.append("Kiện: \(e)") }
+                        next()
+                    }
+                },
+            ]
+            func run(_ i: Int) {
+                if i >= steps.count {
+                    out.sort { $0.date > $1.date }   // "yyyy/MM/dd[ HH:mm]" so sánh chuỗi được
+                    done(out, errs); return
+                }
+                steps[i] { run(i + 1) }
+            }
+            run(0)
+        }
+    }
+}
+
+struct DesmActivitySheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    private static let seenKey = "desmActivitySeen"
+    @State private var days = 3
+    @State private var filter = 0
+    @State private var items: [DesmActivity] = []
+    @State private var errors: [String] = []
+    @State private var loading = false
+    @State private var seenAtOpen: Set<String>? = nil   // nil = lần đầu: chưa có mốc nên không gắn "MỚI"
+    @State private var started = false
+
+    private var shown: [DesmActivity] { filter == 0 ? items : items.filter { $0.kind.group == filter } }
+    private var newCount: Int { items.filter { $0.isNew }.count }
+
+    private func load() {
+        loading = true
+        if !started {
+            started = true
+            if let a = UserDefaults.standard.stringArray(forKey: Self.seenKey) { seenAtOpen = Set(a) }
+        }
+        model.fetchActivity(days: days) { list, errs in
+            loading = false
+            errors = errs
+            let seen = seenAtOpen
+            items = list.map { var a = $0; a.isNew = seen.map { !$0.contains(a.id) } ?? false; return a }
+            // Ghi nhớ đã thấy (giữ tối đa 600 mã gần nhất)
+            var all = Array(seen ?? [])
+            for a in list where !all.contains(a.id) { all.append(a.id) }
+            if all.count > 600 { all = Array(all.suffix(600)) }
+            UserDefaults.standard.set(all, forKey: Self.seenKey)
+        }
+    }
+
+    private func row(_ a: DesmActivity) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: a.kind.symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(a.kind.color)
+                .frame(width: 34, height: 34)
+                .background(a.kind.color.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(a.title).font(.system(size: 15, weight: .bold)).lineLimit(1)
+                    if a.isNew {
+                        Text("MỚI").font(.system(size: 10, weight: .heavy))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .foregroundStyle(.white).background(Color.red, in: Capsule())
+                    }
+                    Spacer(minLength: 4)
+                    Text(a.kind.label).font(.system(size: 11, weight: .bold)).foregroundStyle(a.kind.color)
+                }
+                if !a.detail.isEmpty {
+                    Text(a.detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Text(a.date).font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
-        .onAppear { if !vm.searched { vm.search(model) } }
+        .padding(.vertical, 3)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Khoảng ngày", selection: $days) {
+                    Text("1 ngày").tag(1); Text("3 ngày").tag(3); Text("7 ngày").tag(7)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 6)
+                .onChange(of: days) { _ in load() }
+                Picker("Loại", selection: $filter) {
+                    Text("Tất cả").tag(0); Text("Packing").tag(1); Text("RSI").tag(2); Text("MRF").tag(3); Text("Kiện").tag(4)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.bottom, 8)
+
+                if newCount > 0 {
+                    Text("\(newCount) hoạt động mới từ lần xem trước")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.red)
+                        .padding(.bottom, 6)
+                }
+                if !errors.isEmpty {
+                    Text("Một số nguồn không tải được: " + errors.joined(separator: " | "))
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                        .padding(.horizontal, 16).padding(.bottom, 6)
+                }
+
+                if loading && items.isEmpty {
+                    Spacer(); ProgressView("Đang tải…"); Spacer()
+                } else if shown.isEmpty {
+                    Spacer()
+                    Text("Không có hoạt động nào trong \(days) ngày gần đây.").font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).padding(24)
+                    Spacer()
+                } else {
+                    List(shown) { a in row(a) }.listStyle(.insetGrouped)
+                }
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Hoạt động")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
+                }
+            }
+        }
+        .onAppear { if items.isEmpty && !loading { load() } }
+    }
+}
+
+
+// MARK: - Tra Edit Log hạng mục (mục "Thêm")
+//
+// Nhập Material Code hoặc Package No -> tìm hạng mục bằng /getIdsmOsDetailList.do (Material Code: KEY1='material', VALUE1=<mã>; Package: PACKAGE_NO)
+// -> chọn hạng mục -> /getDesmPlDetailEditLogList.do {PROJECT_NO, TRK_ITEM_NAME, MATERIAL_CODE} (như popup "Material record" của web).
+// CHƯA kiểm chứng với DESM thật: tên trường trả về lấy theo desmPlDtlEditLogPopUp.js.
+
+struct DesmLogItem: Identifiable, Hashable {
+    let id: String
+    let project: String
+    let trk: String
+    let pkg: String
+    let material: String
+    let desc: String
+    let location: String
+}
+
+struct DesmLogEntry: Identifiable {
+    let id: Int
+    let date: String
+    let by: String
+    let location: String
+    let locInfo: String
+    let qty: String
+    let remarks: String
+    let reports: String
+    let diffs: [String]
+    let hasOlder: Bool
+}
+
+extension BrowserModel {
+    func searchLogItems(byMaterial: Bool, term: String, done: @escaping ([DesmLogItem], String) -> Void) {
+        desmQuery("/getInitDefailProject.do", body: "") { rows, err in
+            guard let rows = rows else { done([], err); return }
+            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { done([], "Chưa có dự án mặc định trong DESM."); return }
+            let t = Self.enc(term.trimmingCharacters(in: .whitespacesAndNewlines))
+            let pkg = byMaterial ? "" : t
+            let key = byMaterial ? "material" : ""
+            let val = byMaterial ? t : ""
+            let body = "PAGE_NUM=1&PAGE_CNT=300&PROJECT_NO=\(Self.enc(no))&PACKAGE_LIST_NO=&PACKAGE_NO=\(pkg)&DESCRIPTION=&DRAWING_NO=&TAG_NO=&QTY_TYPE=rsi&QTY=&KEY1=\(key)&VALUE1=\(val)&LOCATION=&SEQUENCE=&VENDOR=&ATTRIBUTE10=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS="
+            self.desmQuery("/getIdsmOsDetailList.do", body: body) { list, e in
+                guard let list = list else { done([], e); return }
+                var out: [DesmLogItem] = []
+                for (i, r) in list.enumerated() {
+                    let trk = Self.fstr(r, "TRK_ITEM_NAME"), mat = Self.fstr(r, "MATERIAL_CODE")
+                    if mat.isEmpty { continue }
+                    out.append(DesmLogItem(id: "\(i)-\(mat)", project: Self.fstr(r, "PROJECT_NO").isEmpty ? no : Self.fstr(r, "PROJECT_NO"),
+                                           trk: trk, pkg: Self.fstr(r, "PACKAGE_NO"), material: mat,
+                                           desc: Self.fstr(r, "DESCRIPTION"), location: Self.fstr(r, "LOCATION")))
+                }
+                done(out, "")
+            }
+        }
+    }
+
+    func fetchEditLog(_ item: DesmLogItem, done: @escaping ([DesmLogEntry], String) -> Void) {
+        let body = "PROJECT_NO=\(Self.enc(item.project))&TRK_ITEM_NAME=\(Self.enc(item.trk))&MATERIAL_CODE=\(Self.enc(item.material))"
+        desmQuery("/getDesmPlDetailEditLogList.do", body: body) { list, e in
+            guard var list = list else { done([], e); return }
+            list.sort { Self.fstr($0, "CREATION_DATE_TXT") > Self.fstr($1, "CREATION_DATE_TXT") }
+            let fields: [(String, String)] = [("LOCATION", "Location"), ("IN_QTY", "In Q'ty"), ("REMARKS", "Remarks"), ("DESCRIPTION", "Item"),
+                                              ("DRAWING_NO", "DWG"), ("TAG_NO", "TAG"), ("UNIT", "Unit"), ("MATERIAL", "Material"),
+                                              ("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")]
+            func norm(_ r: [String: Any], _ k: String) -> String {
+                Self.fstr(r, k).components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            func num(_ r: [String: Any], _ k: String) -> String {
+                let v = Self.fnum(r, k); return v == v.rounded() ? String(Int(v)) : String(format: "%.3g", v)
+            }
+            var out: [DesmLogEntry] = []
+            for (i, r) in list.enumerated() {
+                var diffs: [String] = []
+                let older: [String: Any]? = i + 1 < list.count ? list[i + 1] : nil
+                if let o = older {
+                    for (k, label) in fields where norm(r, k) != norm(o, k) {
+                        diffs.append("\(label): \(norm(o, k).isEmpty ? "-" : norm(o, k)) → \(norm(r, k).isEmpty ? "-" : norm(r, k))")
+                    }
+                }
+                var rep: [String] = []
+                for (k, label) in [("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")] where Self.fnum(r, k) > 0 {
+                    rep.append("\(label) \(num(r, k))")
+                }
+                let ld = norm(r, "LOC_UPDATE_DATE"), lb = norm(r, "LOC_UPDATED_BY")
+                let info = [ld, lb].filter { !$0.isEmpty }.joined(separator: " · ")
+                let qty = "In Q'ty \(num(r, "IN_QTY")) \(norm(r, "UNIT"))".trimmingCharacters(in: .whitespaces)
+                out.append(DesmLogEntry(id: i, date: norm(r, "CREATION_DATE_TXT"), by: norm(r, "CREATED_BY"), location: norm(r, "LOCATION"),
+                                        locInfo: info, qty: qty, remarks: norm(r, "REMARKS"), reports: rep.joined(separator: " · "),
+                                        diffs: diffs, hasOlder: older != nil))
+            }
+            done(out, "")
+        }
+    }
+}
+
+struct DesmEditLogDetailView: View {
+    @ObservedObject var model: BrowserModel
+    let item: DesmLogItem
+    @State private var entries: [DesmLogEntry] = []
+    @State private var loading = true
+    @State private var error: String? = nil
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.material).font(.system(size: 15, weight: .bold))
+                    if !item.desc.isEmpty { Text(item.desc).font(.system(size: 13)) }
+                    if !item.pkg.isEmpty { Text(item.pkg).font(.system(size: 12)).foregroundStyle(.secondary) }
+                }
+            }
+            if loading {
+                HStack { Spacer(); ProgressView(); Spacer() }
+            } else if let error = error {
+                Text(error).font(.callout).foregroundStyle(.orange)
+            } else if entries.isEmpty {
+                Text("Hạng mục này chưa có lịch sử chỉnh sửa.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                Section("\(entries.count) bản ghi (mới nhất trước)") {
+                    ForEach(entries) { e in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(e.date.isEmpty ? "—" : e.date).font(.system(size: 14, weight: .bold))
+                                Spacer()
+                                Text(e.by).font(.system(size: 12)).foregroundStyle(.secondary)
+                            }
+                            if e.hasOlder {
+                                Text(e.diffs.isEmpty ? "Không đổi so với bản trước" : "Thay đổi — " + e.diffs.joined(separator: " · "))
+                                    .font(.system(size: 12, weight: e.diffs.isEmpty ? .regular : .semibold))
+                                    .foregroundStyle(e.diffs.isEmpty ? Color.secondary : Color.orange)
+                            }
+                            Text("📍 " + (e.location.isEmpty ? "—" : e.location) + (e.locInfo.isEmpty ? "" : "   (\(e.locInfo))"))
+                                .font(.system(size: 12))
+                            Text(e.qty + (e.remarks.isEmpty ? "" : "   Remarks: \(e.remarks)")).font(.system(size: 12)).foregroundStyle(.secondary)
+                            if !e.reports.isEmpty { Text(e.reports).font(.system(size: 12)).foregroundStyle(.secondary) }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Edit Log")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard loading else { return }
+            if item.trk.isEmpty { loading = false; error = "Thiếu TRK_ITEM_NAME của hạng mục nên chưa xem được Edit Log."; return }
+            model.fetchEditLog(item) { list, err in
+                loading = false
+                if err.isEmpty { entries = list } else { error = err }
+            }
+        }
+    }
+}
+
+struct DesmEditLogSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    @State private var byMaterial = true
+    @State private var term = ""
+    @State private var items: [DesmLogItem] = []
+    @State private var loading = false
+    @State private var error: String? = nil
+    @State private var searched = false
+
+    private func search() {
+        let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !loading else { return }
+        loading = true; error = nil; searched = true
+        model.searchLogItems(byMaterial: byMaterial, term: t) { list, err in
+            loading = false
+            if err.isEmpty { items = list } else { items = []; error = err }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Tìm theo", selection: $byMaterial) {
+                    Text("Material Code").tag(true)
+                    Text("Package No").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.top, 10)
+                HStack(spacing: 8) {
+                    TextField(byMaterial ? "Vd: OMN-009-001-00002" : "Vd: OM4-DE-IS-0009-002", text: $term)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder).submitLabel(.search).onSubmit { search() }
+                    Button("Tìm") { search() }.buttonStyle(.borderedProminent).disabled(loading || term.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .padding(16)
+
+                if loading {
+                    Spacer(); ProgressView("Đang tìm…"); Spacer()
+                } else if let error = error {
+                    Spacer(); Text(error).font(.callout).foregroundStyle(.orange).multilineTextAlignment(.center).padding(24); Spacer()
+                } else if items.isEmpty {
+                    Spacer()
+                    Text(searched ? "Không tìm thấy hạng mục nào." : "Nhập Material Code hoặc Package No rồi bấm Tìm.")
+                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                    Spacer()
+                } else {
+                    List(items) { it in
+                        NavigationLink {
+                            DesmEditLogDetailView(model: model, item: it)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(it.material).font(.system(size: 14, weight: .bold))
+                                if !it.desc.isEmpty { Text(it.desc).font(.system(size: 12)).lineLimit(2) }
+                                Text([it.pkg, it.location].filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Tra Edit Log")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } } }
+        }
     }
 }
