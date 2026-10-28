@@ -6219,7 +6219,8 @@ extension BrowserModel {
                     out.sort { $0.date > $1.date }   // "yyyy/MM/dd[ HH:mm]" so sánh chuỗi được
                     done(out, errs); return
                 }
-                steps[i] { run(i + 1) }
+                let step = steps[i]
+                step { run(i + 1) }
             }
             run(0)
         }
