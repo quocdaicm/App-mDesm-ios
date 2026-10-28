@@ -444,9 +444,18 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-ditem-locbtn { padding:6px 0 6px 12px; cursor:pointer; }
     html.desm-mobile-mode .desm-sub { z-index:2147483010; }
     html.desm-mobile-mode .desm-rsi-card { background:#fff; border-radius:8px; border-left:5px solid #2878e5; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,.12); cursor:pointer; }
+    html.desm-mobile-mode .desm-mrf-card { border-left-color:#12b3a0; }
+    html.desm-mobile-mode .desm-mrf-type { color:#dc2626; font-weight:700; }
+    html.desm-mobile-mode .desm-mrf-head { border-left:5px solid #12b3a0; }
     html.desm-mobile-mode .desm-rsi-row { display:flex; justify-content:space-between; gap:8px; font-size:16px; line-height:1.5; }
     html.desm-mobile-mode .desm-sub-filter { display:flex; gap:8px; margin-bottom:8px; }
     html.desm-mobile-mode .desm-sub-in { flex:1; min-width:0; height:42px; border:1px solid #cbd5e1; border-radius:10px; padding:0 12px; font-size:16px; background:#fff; color:#111827; }
+    html.desm-mobile-mode .desm-mrr-in { display:block; width:100%; box-sizing:border-box; margin:0 0 8px; }
+    html.desm-mobile-mode .desm-fqty { margin-top:-4px; }
+    html.desm-mobile-mode .desm-fqty input.desm-sub-in { width:100%; height:38px; text-align:center; padding:0 4px; font-size:15px; }
+    html.desm-mobile-mode .desm-fqty input.desm-sub-in:disabled { background:#f1f5f9; color:#94a3b8; }
+    html.desm-mobile-mode textarea.desm-rmk { display:block; width:100%; box-sizing:border-box; height:auto; padding:8px 12px; margin:0 0 8px; }
+    html.desm-mobile-mode .desm-detail-list:disabled { opacity:.45; }
     html.desm-mobile-mode .desm-detail-note { font-size:13px; color:#b45309; padding:0 4px 8px; }
     /* Nút gọn dạng viên thuốc, canh giữa */
     html.desm-mobile-mode .desm-detail-lu {

@@ -112,3 +112,30 @@ Màn chi tiết kiện / khung Cập nhật vị trí là lớp phủ JS, không
 
 ## Ngăn kéo menu trái (sáng)
 CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, mục menu bo 16px, mục đang chọn nền trắng chữ xanh, lớp mờ phía sau xanh nhạt.
+
+## Nút SAVE ở màn Detail Item (2026-10-28)
+- `showItemDetail` (BrowserView.swift): SHORT/OVER/DMG/MISSING (+ô số lượng) và Remarks sửa được, nút SAVE gọi `diSave` -> `GET/POST /saveIdsmOsDetailList.do` (phương thức theo ajaxSetup của trang) với `list` = JSON mảng 1 dòng, giống `btnSaveClick` trong `plDetail.js`.
+- Dòng gửi: PROJECT_NO, TRK_ITEM_NAME, PACKAGE_NO, MATERIAL_CODE, ITEM_SIZE, DESCRIPTION, DRAWING_NO, LOCATION, TAG_NO, UNIT, IN_QTY, MATERIAL, REMARKS, REPORT_SHORT/OVER/DMG/MISSING ("1"/"0" theo số lượng > 0) và REPORT_*_QTY. Lỗi khi `result.error != null`.
+- Chỉ sửa được khi `IS_CONFIRM_MATERIAL = 'Y'` (như lưới web) và đã có `TRK_ITEM_NAME` (openItemDetail luôn nạp lại dòng đầy đủ bằng API). Chặn lưu khi In Q'ty < RSI Q'ty − MRF Q'ty (như web).
+- App mDESM (Android, React Native) dùng API khác: `POST https://api.doosan.mzgcp.net/mobile/custom/saveMobileDetailItemInfo` + Bearer idToken Oracle IDCS; body USER_AD, PROJECT_NO, TRK_ITEM_NAME, PACKAGE_NO, MATERIAL_CODE, REMARKS, REPORT_* ('Y'/'N'). KHÔNG dùng ở đây vì cần OAuth.
+- CHƯA thử với DESM thật: nên lưu thử một hạng mục không quan trọng trước.
+
+## Sửa dòng MRR: Received Date / Visual Check hàng loạt (2026-10-28)
+- Nguồn: `desmMrrCreationPopUp.js`, `plMrr.js` (người dùng gửi). Web POST (ajaxSetup mặc định POST).
+- Thẻ MRR (genericCards, lưới có cột MRR_NO + INSPECTION_DATE_FROM, dòng có MRR_HEADER_ID) mở rộng ra có nút "Sửa dòng MRR" -> `mrrEditor` (BrowserView.swift, ngay trước `genericCards`).
+- Đọc: `/getDesmMrrInfoList.do {MRR_HEADER_ID}` -> `results.headerList[0]`, `results.lineList`.
+- Chỉ sửa khi STATUS = Incomplete hoặc Rejected (như web: Pre-Confirmed/Confirmed là chỉ xem).
+- Chọn nhiều dòng -> đặt Received Date (yyyy/MM/dd) hoặc Visual Check (Good/Defect) -> SAVE = `/saveDesmMrrSave.do` với TRANS_TYPE='Incomplete', `updateList` = JSON các dòng đã sửa (MRR_LINE_ID, TRK_ITEM_NAME, PACKING_LIST_NO, PACKAGE_NO, DESCRIPTION, SHIPMENT_NO, PACKAGE_TYPE, VISUAL_CHECK, VISUAL_CHECK_DATE, STORAGE_LOCATION, RECEIVED_DATE, REMARKS, ATTACH_GRP_CD, FILE_PATH, QTY) cùng trường header (MRR_HEADER_ID, MRR_NO, MRR_NAME, STATUS, RECEIVED/INSPECTION_DATE_FROM/TO, REMARK, ATTACH_GRP_CD, PREPARED_BY, CHECKED_BY, CONFIRMED_BY, APPROVED_BY='', PROJECT_NO). Lỗi khi `result.error != null`.
+- Kiểm tra như web: From <= To; Received Date mọi dòng nằm trong [From, To]; header phải có From/To (web trả lỗi nếu trống).
+- KHÔNG làm các bước chuyển trạng thái (Request/Check/Confirm/Reject) và thêm/xoá dòng.
+- Đã chạy thử trong Chromium với API giả (payload đúng); CHƯA thử với DESM thật. Định dạng ngày server trả về chưa kiểm chứng (mrrFmt đoán yyyy/MM/dd, yy/MM/dd, timestamp; không parse được thì gửi nguyên chuỗi gốc).
+
+## Mục "Lịch sử Packing List" (Thêm)
+- Thêm ô "Lịch sử Packing List" vào `MoreSheet` -> mở `PackingHistorySheet` (cuối `BrowserView.swift`), tương ứng khung "Packing List Upload History (Last 3 days)" ở `home.do`.
+- Dữ liệu: `POST /getInitDefailProject.do` (lấy `SEGMENT1` = mã dự án) rồi `POST /dashboard/getHomeSummary.do` với `PROJECT_NO`, `DAY_TERM` (mặc định 3). Trường dùng: `INVOICE_NO, SHIPMENT_NO, ORGINAL_FILE, RESULT, CREATION_DATE, LAST_UPDATED_BY, ATT_ID`.
+- CHƯA kiểm chứng: `DAY_TERM` = 1/7 có được máy chủ chấp nhận; chưa build bằng Xcode (JS đã qua `node --check`).
+
+## Mục "RSI chưa đóng / vừa đóng" và "MRF trả hàng" (Thêm)
+- `DesmDocSheet` + `BrowserModel.fetchDocs` (cuối `BrowserView.swift`). API: RSI = `getDesmRsiViewList.do` + `getDesmRsiOutGoingList.do`; MRF = `getMrfSummaryList.do` + `getDesmMrfReturnList.do` (đều POST, xem log 2026-10-28).
+- "Chưa đóng" = tổng BALANCE_QTY (RSI) / MRF_BALANCE_QTY (MRF) > 0. "Vừa đóng" = có HANDOVER_DATE / RETURN_DATE trong N ngày và không còn số lượng còn lại. Đây là QUY ƯỚC suy từ dữ liệu, chưa xác nhận với nghiệp vụ; chưa biết hết giá trị STATUS.
+- Chưa kiểm chứng: máy chủ lọc đúng theo START/END_*_DATE khi để trống số phiếu (đã lọc thêm phía máy khách); RSI chưa đóng chỉ xét phiếu có ngày yêu cầu trong 180 ngày gần nhất.

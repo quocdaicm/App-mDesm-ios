@@ -696,7 +696,9 @@ final class BrowserModel: ObservableObject {
                   if (!hit.length && n > 0) { fail(); return; }
                   used = true;
                   var rows = hit.map(function(r) {
-                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION'].forEach(function(c) { o[c] = nz(r[c]); });
+                    var o = {}; ['PACKAGE_NO', 'DESCRIPTION', 'DRAWING_NO', 'TAG_NO', 'REMARKS', 'COMMENTS', 'MATERIAL_CODE', 'LOCATION', 'PROJECT_NO', 'UNIT', 'NET', 'GROSS',
+                      'IN_QTY', 'OUT_QTY', 'REMAIN_QTY', 'RSI_QTY', 'BALANCE_QTY', 'MRF_QTY', 'MRF_BALANCE_QTY', 'RSI_CANCEL_QTY',
+                      'REPORT_SHORT', 'REPORT_OVER', 'REPORT_DMG', 'REPORT_MISSING', 'REPORT_SHORT_QTY', 'REPORT_OVER_QTY', 'REPORT_DMG_QTY', 'REPORT_MISSING_QTY'].forEach(function(c) { o[c] = nz(r[c]); });
                     o._id = null;
                     return o;
                   });
@@ -716,9 +718,23 @@ final class BrowserModel: ObservableObject {
             if (!$j || !$j.ajax) { bad(); return; }
             try {
               $j.ajax({ url: url, data: param, timeout: 20000,
-                success: function(d) { var res = d && d.results; if (!res || res === 'Err' || !res.list) { bad(); return; } ok(res.list, res.length); },
+                success: function(d) {
+                  var res = d && d.results, list = Array.isArray(res) ? res : (res && res.list);
+                  if (!res || res === 'Err' || !list) { bad(); return; } ok(list, Array.isArray(res) ? res.length : res.length);
+                },
                 error: function() { bad(); } });
             } catch (e) { bad(); }
+          }
+          // Lưu hạng mục: giống btnSaveClick của plDetail.js — /saveIdsmOsDetailList.do, tham số list = JSON mảng dòng; lỗi khi result.error != null
+          function diSave(idoc, list, ok, bad) {
+            var top = diTop(idoc), W = idoc.defaultView, $j = null;
+            try { $j = W.jQuery || W.$ || top.jQuery || top.$; } catch (e) {}
+            if (!$j || !$j.ajax) { bad('không tìm thấy jQuery của trang'); return; }
+            try {
+              $j.ajax({ url: '/saveIdsmOsDetailList.do', data: { list: JSON.stringify(list) }, timeout: 30000,
+                success: function(r) { if (r && r.error != null) bad(String(r.error)); else ok(r); },
+                error: function(_x, st) { bad('lỗi mạng hoặc hết phiên (' + st + ')'); } });
+            } catch (e) { bad('không gửi được yêu cầu'); }
           }
           var DI_HIDE = 'position:fixed;left:-200vw;top:0;width:100vw;height:80vh;border:0;opacity:0;pointer-events:none;';
           // Chọn đúng các hạng mục trong lưới ẩn (xs = mảng) rồi bấm nút Location Update gốc của trang "Hạng mục chi tiết"
@@ -978,6 +994,23 @@ final class BrowserModel: ObservableObject {
             function sameStr(a, b2) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b2 == null ? '' : b2).replace(/\s+/g, ' ').trim(); }
             // Màn "Detail Item": thông tin + số lượng của một hạng mục, kèm danh sách RSI của hạng mục đó
             function openItemDetail(x) {
+              if (x.UNIT === undefined || x.TRK_ITEM_NAME === undefined || (x.UNIT === '' && x.IN_QTY === '' && x.REMAIN_QTY === '')) {
+                // Hàng đến từ lưới ẩn/bộ nhớ cũ nên thiếu số lượng: lấy lại bản đầy đủ bằng API rồi mở
+                diAjax(idoc, '/getIdsmOsDetailList.do', { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: x.PROJECT_NO || diProj(idoc), PACKAGE_LIST_NO: '', PACKAGE_NO: x.PACKAGE_NO, DESCRIPTION: '', DRAWING_NO: '',
+                  TAG_NO: '', QTY_TYPE: 'rsi', QTY: '', KEY1: '', VALUE1: '', LOCATION: '', SEQUENCE: '', VENDOR: '', ATTRIBUTE10: '',
+                  TYPE: '', CATEGORY: '', SUB_CATEGORY: '', COMMENTS: '' }, function(list) {
+                  var full = null;
+                  [].forEach.call(list, function(r) { if (!full && String(r.MATERIAL_CODE == null ? '' : r.MATERIAL_CODE) === String(x.MATERIAL_CODE || '') && String(r.PACKAGE_NO == null ? '' : r.PACKAGE_NO) === String(x.PACKAGE_NO)) full = r; });
+                  if (!full) { showItemDetail(x); return; }
+                  var o = {}; for (var k in x) o[k] = x[k];
+                  for (var k2 in full) { var v = full[k2]; if (o[k2] === undefined || o[k2] === '') o[k2] = v == null ? '' : String(v); }
+                  showItemDetail(o);
+                }, function() { showItemDetail(x); });
+                return;
+              }
+              showItemDetail(x);
+            }
+            function showItemDetail(x) {
               var S = subScreen('Detail Item', 'Package'), b = S.body;
               var m = el('div', 'desm-dcard');
               m.appendChild(el('div', 'desm-d-h', x.PACKAGE_NO));
@@ -990,26 +1023,79 @@ final class BrowserModel: ObservableObject {
               b.appendChild(m);
               b.appendChild(bandOf([["In Q'ty", fnum(x.IN_QTY)], ["Out Q'ty", fnum(x.OUT_QTY)], ['Remain', fnum(x.REMAIN_QTY)], ["RSI Q'ty", fnum(x.RSI_QTY)]]));
               b.appendChild(bandOf([['RSI Bal.', fnum(x.BALANCE_QTY)], ["MRF Q'ty", fnum(x.MRF_QTY)], ['MRF Bal.', fnum(x.MRF_BALANCE_QTY)], ['Cancel', fnum(x.RSI_CANCEL_QTY)]]));
-              var fl = el('div', 'desm-dband desm-dband4');
+              // SHORT / OVER / DMG / MISSING + số lượng + Remarks: sửa được và lưu qua /saveIdsmOsDetailList.do (giống nút Save của trang web).
+              // Web chỉ cho sửa khi IS_CONFIRM_MATERIAL = 'Y'; cờ REPORT_* gửi "1"/"0" theo số lượng > 0.
+              function qn(v) { var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+              var canEdit = x.TRK_ITEM_NAME !== undefined && String(x.IS_CONFIRM_MATERIAL == null ? '' : x.IS_CONFIRM_MATERIAL).toUpperCase() === 'Y';
+              var fl = el('div', 'desm-dband desm-dband4'), fq = el('div', 'desm-dband desm-dband4 desm-fqty'), flds = [];
               [['SHORT', 'REPORT_SHORT'], ['OVER', 'REPORT_OVER'], ['DMG', 'REPORT_DMG'], ['MISSING', 'REPORT_MISSING']].forEach(function(f) {
-                var q1 = parseFloat(String(x[f[1]] || '').replace(/,/g, '')), q2 = parseFloat(String(x[f[1] + '_QTY'] || '').replace(/,/g, ''));
+                var q1 = qn(x[f[1]]), q2 = qn(x[f[1] + '_QTY']), on = q1 > 0 || q2 > 0;
                 var c = el('div', 'desm-dband-c'); c.appendChild(el('div', 'desm-dband-v', f[0]));
-                var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk'; cb.disabled = true;
-                cb.checked = (!isNaN(q1) && q1 > 0) || (!isNaN(q2) && q2 > 0); c.appendChild(cb); fl.appendChild(c);
+                var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk'; cb.disabled = !canEdit;
+                cb.checked = on; c.appendChild(cb); fl.appendChild(c);
+                var qc = el('div', 'desm-dband-c'), qi = doc.createElement('input');
+                qi.type = 'text'; qi.setAttribute('inputmode', 'decimal'); qi.className = 'desm-sub-in'; qi.placeholder = "Q'ty";
+                qi.value = q2 > 0 ? String(q2) : ''; qi.disabled = !canEdit || !on; qc.appendChild(qi); fq.appendChild(qc);
+                cb.addEventListener('change', function() { qi.disabled = !cb.checked; if (cb.checked) { try { qi.focus(); } catch (e) {} } else qi.value = ''; });
+                flds.push({ name: f[0], col: f[1], cb: cb, qi: qi, orig: x[f[1] + '_QTY'] });
               });
-              b.appendChild(fl);
-              if (x.REMARKS || x.COMMENTS) b.appendChild(el('div', 'desm-detail-note', 'Remarks: ' + (x.REMARKS || x.COMMENTS)));
+              b.appendChild(fl); b.appendChild(fq);
+              var rmk = doc.createElement('textarea'); rmk.className = 'desm-sub-in desm-rmk'; rmk.rows = 3; rmk.placeholder = 'Remarks';
+              rmk.value = x.REMARKS == null ? '' : String(x.REMARKS); rmk.disabled = !canEdit; b.appendChild(rmk);
+              if (x.COMMENTS) b.appendChild(el('div', 'desm-detail-note', 'Note: ' + x.COMMENTS));
+              var svBtn = el('button', 'desm-detail-list', 'SAVE'); svBtn.type = 'button'; svBtn.disabled = !canEdit;
+              var svMsg = el('div', 'desm-detail-note', canEdit ? '' : (x.TRK_ITEM_NAME === undefined ? 'Chưa tải đủ dữ liệu hạng mục nên chưa thể lưu.' : 'Hạng mục chưa được xác nhận (Confirm Material) nên không sửa được.'));
+              svBtn.addEventListener('click', function() {
+                var bad = '', vals = {};
+                flds.forEach(function(f) {
+                  var on = f.cb.checked, q = on ? parseFloat(String(f.qi.value).replace(/,/g, '')) : 0;
+                  if (on && (isNaN(q) || q <= 0)) bad = bad || ('Nhập số lượng > 0 cho ' + f.name + '.');
+                  vals[f.col] = on ? q : ((f.orig == null || f.orig === '') ? '' : 0);
+                });
+                var rsiQ = qn(x.RSI_QTY), mrfQ = qn(x.MRF_QTY), inQ = qn(x.IN_QTY);
+                if (!bad && inQ < (rsiQ - mrfQ)) bad = "In Q'ty nhỏ hơn (RSI Q'ty − MRF Q'ty), không thể lưu.";
+                if (bad) { svMsg.style.color = '#dc2626'; svMsg.textContent = bad; return; }
+                var win = doc.defaultView;
+                if (win.confirm && !win.confirm('Lưu thay đổi của hạng mục này?')) return;
+                var row = {
+                  PROJECT_NO: x.PROJECT_NO || diProj(idoc), TRK_ITEM_NAME: x.TRK_ITEM_NAME, PACKAGE_NO: x.PACKAGE_NO, MATERIAL_CODE: x.MATERIAL_CODE,
+                  ITEM_SIZE: x.ITEM_SIZE, DESCRIPTION: x.DESCRIPTION, DRAWING_NO: x.DRAWING_NO, LOCATION: x.LOCATION, TAG_NO: x.TAG_NO, UNIT: x.UNIT,
+                  IN_QTY: (x.IN_QTY === '' || x.IN_QTY == null) ? '' : inQ, MATERIAL: x.MATERIAL, REMARKS: rmk.value,
+                  REPORT_SHORT: qn(vals.REPORT_SHORT) > 0 ? '1' : '0', REPORT_OVER: qn(vals.REPORT_OVER) > 0 ? '1' : '0',
+                  REPORT_DMG: qn(vals.REPORT_DMG) > 0 ? '1' : '0', REPORT_MISSING: qn(vals.REPORT_MISSING) > 0 ? '1' : '0',
+                  REPORT_SHORT_QTY: vals.REPORT_SHORT, REPORT_OVER_QTY: vals.REPORT_OVER, REPORT_DMG_QTY: vals.REPORT_DMG, REPORT_MISSING_QTY: vals.REPORT_MISSING
+                };
+                for (var k in row) if (row[k] == null) row[k] = '';
+                svBtn.disabled = true; svMsg.style.color = ''; svMsg.textContent = 'Đang lưu…';
+                diSave(idoc, [row], function() {
+                  svBtn.disabled = false; svMsg.style.color = '#15803d'; svMsg.textContent = 'Đã lưu ✓';
+                  x.REMARKS = row.REMARKS;
+                  ['REPORT_SHORT', 'REPORT_OVER', 'REPORT_DMG', 'REPORT_MISSING'].forEach(function(c) { x[c] = row[c]; x[c + '_QTY'] = row[c + '_QTY']; });
+                  flds.forEach(function(f) { f.orig = row[f.col + '_QTY']; });
+                  try { delete (diTop(idoc).__desmDI || {})[pkgNo]; } catch (e) {}
+                  try { if (ov.parentNode) loadItems(true); } catch (e) {}
+                }, function(msg) {
+                  svBtn.disabled = false; svMsg.style.color = '#dc2626'; svMsg.textContent = 'Lưu thất bại: ' + msg;
+                });
+              });
+              b.appendChild(svBtn); b.appendChild(svMsg);
               var lub = el('button', 'desm-detail-list', 'Location Update'); lub.type = 'button';
               lub.addEventListener('click', function() { updateItemsLoc([x]); });
               b.appendChild(lub);
               var rb = el('button', 'desm-detail-list', 'RSI & MRF List  ↑'); rb.type = 'button';
-              var rn = el('div', 'desm-detail-note', 'Đang tải danh sách RSI…'), rl = el('div', 'desm-ditems'), open = true;
+              var rn = el('div', 'desm-detail-note', 'Đang tải RSI & MRF…'), rl = el('div', 'desm-ditems'), open = true;
+              var rl1 = el('div', ''), rl2 = el('div', ''); rl.appendChild(rl1); rl.appendChild(rl2);
               rb.addEventListener('click', function() { open = !open; rl.style.display = open ? '' : 'none'; rb.textContent = 'RSI & MRF List  ' + (open ? '↑' : '↓'); });
               b.appendChild(rb); b.appendChild(rn); b.appendChild(rl);
+              var pend = 2, cnt = 0, failed = 0;
+              function done() {
+                if (--pend > 0 || !S.ov.parentNode) return;
+                rn.textContent = cnt ? '' : (failed ? 'Không tải được danh sách RSI/MRF.' : 'Hạng mục này chưa có phiếu RSI hoặc MRF.');
+              }
               diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PROJECT_NO: x.PROJECT_NO, MATERIAL_CODE: x.MATERIAL_CODE }), function(list) {
                 if (!S.ov.parentNode) return;
                 var hit = [].filter.call(list, function(r) { return sameStr(r.MATERIAL_CODE, x.MATERIAL_CODE); });
-                rn.textContent = hit.length ? '' : 'Hạng mục này chưa có RSI.';
+                cnt += hit.length;
                 hit.forEach(function(r) {
                   var c = el('div', 'desm-rsi-card');
                   var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO))); t1.appendChild(el('span', '', dash(r.STATUS)));
@@ -1018,9 +1104,67 @@ final class BrowserModel: ObservableObject {
                   var t3 = el('div', 'desm-rsi-row'); t3.appendChild(el('span', '', dash(r.RSI_APPROVED_DATE || r.REQUEST_DATE)));
                   t3.appendChild(el('span', '', fnum(r.REQ_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(t3);
                   c.addEventListener('click', function() { openRsiDetail(r); });
+                  rl1.appendChild(c);
+                });
+                done();
+              }, function() { failed++; done(); });
+              // MRF của hạng mục (/getMrfSummaryList.do): mỗi dòng là một thẻ, chạm để xem cả MRF
+              diAjax(idoc, '/getMrfSummaryList.do', mrfParam({ PROJECT_NO: x.PROJECT_NO, MATERIAL_CODE: x.MATERIAL_CODE }), function(list) {
+                if (!S.ov.parentNode) return;
+                var hit = [].filter.call(list, function(r) { return sameStr(r.MATERIAL_CODE, x.MATERIAL_CODE); });
+                cnt += hit.length;
+                hit.forEach(function(r) {
+                  var c = el('div', 'desm-rsi-card desm-mrf-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.MRF_NO)));
+                  t1.appendChild(el('span', '', dash(r.STATUS))); c.appendChild(t1);
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.SUBCONTRACTOR)));
+                  var t3 = el('div', 'desm-rsi-row'); t3.appendChild(el('span', '', dash(r.MRF_NAME)));
+                  t3.appendChild(el('span', '', dash(r.RETURN_REQ_DATE))); c.appendChild(t3);
+                  var t4 = el('div', 'desm-rsi-row'); t4.appendChild(el('span', '', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
+                  t4.appendChild(el('span', '', fnum(r.MRF_REQ_RETURN_QTY) + ' ' + (r.UNIT || x.UNIT || ''))); c.appendChild(t4);
+                  c.addEventListener('click', function() { openMrfDetail(r, x.UNIT); });
+                  rl2.appendChild(c);
+                });
+                done();
+              }, function() { failed++; done(); });
+            }
+            function mrfParam(over) {
+              var p = { PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
+                ZIM_ATTRIBUTE10: '', RSI_BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '', MRF_NO: '', MRF_NAME: '',
+                PACKAGE_NO: '', ITEM_DESC: '', RETURN_TYPE: '', MRF_BALANCE_QTY: '' };
+              for (var k in over) p[k] = over[k];
+              if (!p.PROJECT_NO) p.PROJECT_NO = diProj(idoc);
+              return p;
+            }
+            // Màn "MRF Detail": các dòng của một MRF (RSI, kiện, vật tư, số lượng trả, vị trí). Dữ liệu: /getMrfSummaryList.do
+            function openMrfDetail(h, unit) {
+              var S = subScreen('MRF Detail', 'Detail Item'), b = S.body;
+              var m = el('div', 'desm-dcard desm-mrf-head');
+              m.appendChild(el('div', 'desm-d-h', dash(h.MRF_NO)));
+              m.appendChild(el('div', 'desm-d-l', dash(h.SUBCONTRACTOR) + ' · ' + dash(h.STATUS)));
+              m.appendChild(el('div', 'desm-d-l', dash(h.MRF_NAME)));
+              if (h.RETURN_REQ_DATE) m.appendChild(el('div', 'desm-d-l', 'Ngày yêu cầu trả : ' + h.RETURN_REQ_DATE));
+              b.appendChild(m);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              b.appendChild(rn); b.appendChild(rl);
+              diAjax(idoc, '/getMrfSummaryList.do', mrfParam({ PROJECT_NO: h.PROJECT_NO, MRF_NO: h.MRF_NO }), function(list) {
+                if (!S.ov.parentNode) return;
+                var rows = [].filter.call(list, function(r) { return sameStr(r.MRF_NO, h.MRF_NO); });
+                rn.textContent = rows.length ? rows.length + ' dòng' : 'MRF này không có dòng nào.';
+                rows.forEach(function(r) {
+                  var c = el('div', 'desm-rsi-card desm-mrf-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO)));
+                  t1.appendChild(el('span', 'desm-mrf-type', dash(r.RETURN_TYPE))); c.appendChild(t1);
+                  c.appendChild(el('div', 'desm-ditem-no', dash(r.RSI_NAME)));
+                  c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
+                  c.appendChild(el('div', 'desm-ditem-l', 'DWG : ' + (r.DRAWING_NO || 'N/A') + '   TAG : ' + (r.TAG_NO || 'N/A')));
+                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                  ft.appendChild(el('span', 'desm-mrf-type', fnum(r.MRF_REQ_RETURN_QTY) + ' / ' + fnum(r.MRF_RETURN_QTY) + ' ' + (r.UNIT || unit || ''))); c.appendChild(ft);
+                  c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + '   Req : ' + dash(r.RETURN_REQ_DATE)));
                   rl.appendChild(c);
                 });
-              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được danh sách RSI.'; });
+              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được chi tiết MRF.'; });
             }
             // Màn "RSI Detail": các hạng mục thuộc một RSI, lọc theo PKG / SCH
             function openRsiDetail(h) {
@@ -1414,6 +1558,146 @@ final class BrowserModel: ObservableObject {
             } catch (e) {}
             return best;
           }
+          // ===== Sửa dòng MRR: Received Date / Visual Check hàng loạt, lưu như nút Save của popup MRR trên web =====
+          // Web (desmMrrCreationPopUp.js): đọc /getDesmMrrInfoList.do {MRR_HEADER_ID} -> results.{headerList,lineList};
+          // lưu /saveDesmMrrSave.do với TRANS_TYPE='Incomplete', updateList = JSON các dòng đã đổi. Chỉ sửa được khi STATUS = Incomplete/Rejected.
+          function mrrFmt(d) {
+            if (d == null || d === '') return '';
+            var s = String(d).trim(), m;
+            if ((m = /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/.exec(s))) return m[1] + '/' + ('0' + m[2]).slice(-2) + '/' + ('0' + m[3]).slice(-2);
+            if ((m = /^(\d{2})[\/\-.](\d{2})[\/\-.](\d{2})$/.exec(s))) return '20' + m[1] + '/' + m[2] + '/' + m[3];
+            var t = /^\d{10,}$/.test(s) ? new Date(Number(s)) : new Date(s);
+            if (isNaN(t.getTime())) return '';
+            return t.getFullYear() + '/' + ('0' + (t.getMonth() + 1)).slice(-2) + '/' + ('0' + t.getDate()).slice(-2);
+          }
+          function mrrKeep(v) { var f = mrrFmt(v); return f || (v == null ? '' : String(v)); }
+          function mrrPost(win, url, data, ok, bad) {
+            var $j = null; try { $j = win.jQuery || win.$; } catch (e) {}
+            if (!$j || !$j.ajax) { bad('không tìm thấy jQuery của trang'); return; }
+            try {
+              $j.ajax({ url: url, data: data, timeout: 30000, success: function(d) { ok(d); },
+                error: function(_x, st) { bad('lỗi mạng hoặc hết phiên (' + st + ')'); } });
+            } catch (e) { bad('không gửi được yêu cầu'); }
+          }
+          function mrrEditor(win, doc, hid, projNo, afterSave) {
+            var ov = el('div', 'desm-detail desm-sub'), tp = el('div', 'desm-detail-top');
+            var bk = el('button', 'desm-detail-back', '‹  MRR'); bk.type = 'button';
+            bk.addEventListener('click', function() { if (ov.parentNode) ov.parentNode.removeChild(ov); });
+            tp.appendChild(bk); tp.appendChild(el('div', 'desm-detail-title', 'MRR Lines')); ov.appendChild(tp);
+            var body = el('div', 'desm-detail-body'); ov.appendChild(body); doc.body.appendChild(ov);
+            var H = null, lines = [], sel = {}, note = { t: 'Đang tải…', c: '' };
+            function load() {
+              mrrPost(win, '/getDesmMrrInfoList.do', { MRR_HEADER_ID: hid }, function(d) {
+                var r = d && d.results;
+                if (!r || r === 'Err' || !r.headerList || !r.headerList.length || !Array.isArray(r.lineList)) { note = { t: 'Không tải được MRR.', c: '#dc2626' }; render(); return; }
+                H = r.headerList[0]; lines = r.lineList; sel = {}; render();
+              }, function(m) { note = { t: 'Không tải được MRR: ' + m, c: '#dc2626' }; render(); });
+            }
+            function render() {
+              while (body.firstChild) body.removeChild(body.firstChild);
+              if (!H) { body.appendChild(el('div', 'desm-detail-note', note.t)); return; }
+              var canEdit = H.STATUS === 'Incomplete' || H.STATUS === 'Rejected';
+              var card = el('div', 'desm-dcard');
+              card.appendChild(el('div', 'desm-d-h', H.MRR_NO || ''));
+              card.appendChild(el('div', 'desm-d-l', H.MRR_NAME || ''));
+              card.appendChild(el('div', 'desm-d-l', 'Status : ' + (H.STATUS || '-')));
+              card.appendChild(el('div', 'desm-d-l', 'Received : ' + (H.RECEIVED_DATE_FROM || '-') + ' ~ ' + (H.RECEIVED_DATE_TO || '-')));
+              card.appendChild(el('div', 'desm-d-l', 'Inspection : ' + (H.INSPECTION_DATE_FROM || '-') + ' ~ ' + (H.INSPECTION_DATE_TO || '-')));
+              body.appendChild(card);
+              if (!canEdit) body.appendChild(el('div', 'desm-detail-note', 'MRR đang ở trạng thái ' + (H.STATUS || '?') + ' nên chỉ xem, không sửa được.'));
+              var cnt = el('div', 'desm-detail-note');
+              function nSel() { var n = 0; for (var k in sel) if (sel[k]) n++; return n; }
+              function refreshCnt() { cnt.textContent = lines.length + ' dòng' + (nSel() ? ' · đã chọn ' + nSel() : ''); }
+              var cards = [];
+              function refreshCards() {
+                cards.forEach(function(c) {
+                  var on = !!sel[c.i]; c.card.classList.toggle('desm-sel', on); c.ck.checked = on;
+                  c.rd.textContent = 'Received: ' + (mrrFmt(lines[c.i].RECEIVED_DATE) || '-');
+                  c.vc.textContent = 'V/C: ' + (lines[c.i].VISUAL_CHECK || '-') + (lines[c.i].__chg ? '  ● đã sửa' : '');
+                });
+                refreshCnt();
+              }
+              if (canEdit) {
+                var bar = el('div', 'desm-ditems-bar'), all = doc.createElement('input'); all.type = 'checkbox'; all.className = 'desm-chk';
+                bar.appendChild(all); bar.appendChild(el('span', '', 'Chọn tất cả'));
+                bar.addEventListener('click', function(ev) {
+                  var on = !(lines.length && nSel() === lines.length); if (ev.target === all) on = all.checked;
+                  lines.forEach(function(_l, i) { sel[i] = on; }); all.checked = on; refreshCards();
+                });
+                body.appendChild(bar);
+                var di = doc.createElement('input'); di.type = 'date'; di.className = 'desm-sub-in desm-mrr-in';
+                var db = el('button', 'desm-detail-list', 'Đặt Received Date cho dòng đã chọn'); db.type = 'button';
+                db.addEventListener('click', function() {
+                  if (!nSel()) { note = { t: 'Chưa chọn dòng nào.', c: '#dc2626' }; msgEl.style.color = note.c; msgEl.textContent = note.t; return; }
+                  if (!di.value) { msgEl.style.color = '#dc2626'; msgEl.textContent = 'Chưa chọn ngày.'; return; }
+                  var v = di.value.replace(/-/g, '/');
+                  lines.forEach(function(l, i) { if (sel[i]) { l.RECEIVED_DATE = v; l.__chg = 1; } });
+                  msgEl.style.color = ''; msgEl.textContent = 'Đã đặt Received Date ' + v + ' (chưa lưu).'; refreshCards();
+                });
+                var vs = doc.createElement('select'); vs.className = 'desm-sub-in desm-mrr-in';
+                ['Good', 'Defect'].forEach(function(o) { var op = doc.createElement('option'); op.value = o; op.textContent = o; vs.appendChild(op); });
+                var vb = el('button', 'desm-detail-list', 'Đặt Visual Check cho dòng đã chọn'); vb.type = 'button';
+                vb.addEventListener('click', function() {
+                  if (!nSel()) { msgEl.style.color = '#dc2626'; msgEl.textContent = 'Chưa chọn dòng nào.'; return; }
+                  lines.forEach(function(l, i) { if (sel[i]) { l.VISUAL_CHECK = vs.value; l.__chg = 1; } });
+                  msgEl.style.color = ''; msgEl.textContent = 'Đã đặt Visual Check ' + vs.value + ' (chưa lưu).'; refreshCards();
+                });
+                body.appendChild(di); body.appendChild(db); body.appendChild(vs); body.appendChild(vb);
+              }
+              body.appendChild(cnt);
+              var listEl = el('div', 'desm-ditems');
+              lines.forEach(function(l, i) {
+                var c = el('div', 'desm-ditem'), ck = doc.createElement('input'); ck.type = 'checkbox'; ck.className = 'desm-chk desm-ditem-chk';
+                c.appendChild(ck); c.appendChild(el('div', 'desm-ditem-no', l.PACKAGE_NO || '-'));
+                c.appendChild(el('div', 'desm-ditem-l', l.DESCRIPTION || '-'));
+                var ft = el('div', 'desm-ditem-foot'), rd = el('span', ''), vc = el('span', ''); ft.appendChild(rd); ft.appendChild(vc); c.appendChild(ft);
+                if (canEdit) c.addEventListener('click', function() { sel[i] = !sel[i]; refreshCards(); }); else ck.style.display = 'none';
+                cards.push({ i: i, card: c, ck: ck, rd: rd, vc: vc }); listEl.appendChild(c);
+              });
+              var msgEl = el('div', 'desm-detail-note', note.t); msgEl.style.color = note.c;
+              if (canEdit) {
+                var sv = el('button', 'desm-detail-list', 'SAVE'); sv.type = 'button';
+                sv.addEventListener('click', function() {
+                  var chg = lines.filter(function(l) { return l.__chg; });
+                  function err(t) { msgEl.style.color = '#dc2626'; msgEl.textContent = t; }
+                  if (!chg.length) { err('Chưa có thay đổi nào để lưu.'); return; }
+                  var from = H.RECEIVED_DATE_FROM || '', to = H.RECEIVED_DATE_TO || '';
+                  if (!from || !to) { err('MRR chưa có khoảng Received Date (From/To). Hãy nhập trên bản web trước.'); return; }
+                  if (from > to) { err('Received Date From lớn hơn To.'); return; }
+                  var sD = Number(from.replace(/\//g, '')), eD = Number(to.replace(/\//g, '')), badPkg = '';
+                  lines.forEach(function(l) {
+                    var rd = mrrFmt(l.RECEIVED_DATE); if (!rd || badPkg) return;
+                    var n = Number(rd.replace(/\//g, '')); if (n < sD || n > eD) badPkg = l.PACKAGE_NO || '?';
+                  });
+                  if (badPkg) { err('Received Date nằm ngoài khoảng ' + from + ' ~ ' + to + ' [Package No: ' + badPkg + ']'); return; }
+                  if (win.confirm && !win.confirm('Lưu ' + chg.length + ' dòng đã sửa của MRR này?')) return;
+                  var list = chg.map(function(l) {
+                    var o = { MRR_LINE_ID: l.MRR_LINE_ID, TRK_ITEM_NAME: l.TRK_ITEM_NAME, PACKING_LIST_NO: l.PACKAGE_LIST_NO, PACKAGE_NO: l.PACKAGE_NO,
+                      DESCRIPTION: l.DESCRIPTION, SHIPMENT_NO: l.ATTRIBUTE10, PACKAGE_TYPE: l.PACKAGE_TYPE, VISUAL_CHECK: l.VISUAL_CHECK,
+                      VISUAL_CHECK_DATE: mrrKeep(l.VISUAL_CHECK_DATE), STORAGE_LOCATION: l.STORAGE_LOCATION, RECEIVED_DATE: mrrKeep(l.RECEIVED_DATE),
+                      REMARKS: l.REMARKS, ATTACH_GRP_CD: l.ATTACH_GRP_CD, FILE_PATH: l.FILE_PATH, QTY: l.QTY };
+                    for (var k in o) if (o[k] == null) o[k] = '';
+                    return o;
+                  });
+                  var pd = { MRR_HEADER_ID: hid, MRR_NO: H.MRR_NO, MRR_NAME: H.MRR_NAME, STATUS: H.STATUS, RECEIVED_DATE_FROM: from, RECEIVED_DATE_TO: to,
+                    INSPECTION_DATE_FROM: H.INSPECTION_DATE_FROM, INSPECTION_DATE_TO: H.INSPECTION_DATE_TO, REMARK: H.REMARK, ATTACH_GRP_CD: H.ATTACH_GRP_CD,
+                    PREPARED_BY: H.PREPARED_BY, CHECKED_BY: H.CHECKED_BY, CONFIRMED_BY: H.CONFIRMED_BY, APPROVED_BY: '', TRANS_TYPE: 'Incomplete', PROJECT_NO: projNo };
+                  for (var k2 in pd) if (pd[k2] == null) pd[k2] = '';
+                  pd.updateList = JSON.stringify(list);
+                  sv.disabled = true; msgEl.style.color = ''; msgEl.textContent = 'Đang lưu…';
+                  mrrPost(win, '/saveDesmMrrSave.do', pd, function(r) {
+                    sv.disabled = false;
+                    if (r && r.error != null) { err('Lưu thất bại: ' + r.error); return; }
+                    note = { t: 'Đã lưu ✓', c: '#15803d' }; try { afterSave(); } catch (e) {} load();
+                  }, function(m) { sv.disabled = false; err('Lưu thất bại: ' + m); });
+                });
+                body.appendChild(sv);
+              }
+              body.appendChild(msgEl); body.appendChild(listEl);
+              refreshCards();
+            }
+            load();
+          }
           function genericCards(doc) {
             var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
             try { var fe = win.frameElement; if (fe && (fe.id === 'desmDetailFrame' || !isShown(fe))) return; } catch (e) {}
@@ -1542,6 +1826,17 @@ final class BrowserModel: ObservableObject {
                 if (!d.v) return;
                 var kv = el('div', 'desm-gkv'); kv.appendChild(el('span', 'desm-gk', d.h)); kv.appendChild(el('span', 'desm-gv', d.v)); more.appendChild(kv);
               });
+              if (G.Cols.MRR_NO && G.Cols.INSPECTION_DATE_FROM && it.r.MRR_HEADER_ID != null && it.r.MRR_HEADER_ID !== '') {
+                var eb = el('button', 'desm-detail-list', 'Sửa dòng MRR (Received Date / Visual Check)'); eb.type = 'button';
+                eb.addEventListener('click', function(ev) {
+                  ev.stopPropagation();
+                  var pj = ''; try { pj = (doc.getElementById('txtProjectCode') || {}).value || ''; } catch (e) {}
+                  mrrEditor(win, doc, it.r.MRR_HEADER_ID, pj || it.r.PROJECT_NO || '', function() {
+                    try { doc.getElementById('btnSearch').click(); } catch (e) {}
+                  });
+                });
+                more.appendChild(eb);
+              }
               card.appendChild(more);
               card.addEventListener('click', function(ev) {
                 if (ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit')) {
@@ -2432,6 +2727,8 @@ struct BrowserView: View {
     @State private var pickedPhoto: PhotosPickerItem? = nil
     @State private var selectedTab: DesmTab = .package
     @State private var showMore = false
+    @State private var showPackingHistory = false
+    @State private var docKind: DesmDocKind? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2519,8 +2816,16 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false })
-                .presentationDetents([.height(430)])
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 })
+                .presentationDetents([.height(500)])
+        }
+        .sheet(item: $docKind) { kind in
+            DesmDocSheet(model: model, kind: kind, onClose: { docKind = nil })
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showPackingHistory) {
+            PackingHistorySheet(model: model, onClose: { showPackingHistory = false })
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
@@ -2766,6 +3071,8 @@ struct DesmTabBar: View {
 struct MoreSheet: View {
     @ObservedObject var model: BrowserModel
     var onClose: () -> Void
+    var onHistory: () -> Void = {}
+    var onDoc: (DesmDocKind) -> Void = { _ in }
 
     private struct Item: Identifiable {
         let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
@@ -2784,6 +3091,9 @@ struct MoreSheet: View {
             Item(symbol: "rectangle.topthird.inset.filled", title: model.barsHidden ? "Hiện thanh địa chỉ" : "Ẩn thanh địa chỉ") {
                 withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() }
             },
+            Item(symbol: "clock.arrow.circlepath", title: "Lịch sử Packing List", enabled: model.inDesm) { onHistory() },
+            Item(symbol: "doc.text.magnifyingglass", title: "RSI chưa đóng / vừa đóng", enabled: model.inDesm) { onDoc(.rsi) },
+            Item(symbol: "arrow.uturn.backward.circle", title: "MRF trả hàng", enabled: model.inDesm) { onDoc(.mrf) },
             Item(symbol: "slider.horizontal.3", title: "Cài đặt") { model.showSettings = true },
         ]
     }
@@ -3246,7 +3556,7 @@ struct SettingsView: View {
             .onAppear { model.setNetLog(netLogOn); model.setSnap(snapOn) }
             .navigationTitle("Cài đặt")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Xong") { model.applyStyles(); dismiss() } } }
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Xong") { model.applyStyles(); dismiss() } } }
             .sheet(item: $shareItem) { item in
                 ShareSheet(url: item.url)
             }
@@ -3787,5 +4097,431 @@ extension BrowserModel {
         let url = tmp.appendingPathComponent("desm-page-\(stamp).png")
         do { try png.write(to: url); shotItem = ShareItem(url: url) }
         catch { showToast("Không lưu được file: \(error.localizedDescription)") }
+    }
+}
+
+
+// MARK: - Lịch sử tải lên Packing List (mục "Thêm")
+//
+// Tương ứng khung "Packing List Upload History (Last 3 days)" ở trang chủ DESM (home.do).
+// Nguồn dữ liệu (theo nhật ký API 2026-10-28):
+//   POST /getInitDefailProject.do                      -> results[0].SEGMENT1 = mã dự án mặc định (vd. T25026)
+//   POST /dashboard/getHomeSummary.do  PROJECT_NO=..&DAY_TERM=3 -> results[] gồm INVOICE_NO, SHIPMENT_NO, ORGINAL_FILE,
+//        RESULT (SUCCESSFUL / FILE FORMAT ERROR ...), CREATION_DATE, LAST_UPDATED_BY, PROJECT_NAME, ATT_ID
+// Gọi bằng fetch trong trang DESM nên dùng sẵn phiên đăng nhập. CHƯA kiểm chứng: DAY_TERM khác 3 (1, 7) có được máy chủ chấp nhận không.
+
+struct PackingUploadRecord: Identifiable, Hashable {
+    let id: String
+    let invoice: String
+    let shipment: String
+    let file: String
+    let result: String
+    let created: String
+    let user: String
+    let project: String
+    var isSuccess: Bool { result.uppercased() == "SUCCESSFUL" }
+}
+
+extension BrowserModel {
+    func fetchPackingHistory(days: Int, done: @escaping ([PackingUploadRecord]?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang DESM để lấy dữ liệu."); return }
+        let js = #"""
+        if (!/(^|\.)doosanenerbility\.com$/i.test(location.hostname)) return JSON.stringify({ err: 'Hãy mở DESM và đăng nhập trước.' });
+        const H = { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' };
+        async function post(u, b) {
+          const r = await fetch(u, { method: 'POST', credentials: 'include', cache: 'no-store', headers: H, body: b });
+          const t = await r.text();
+          try { return JSON.parse(t); } catch (e) { throw new Error('HTTP ' + r.status + ': phản hồi không phải JSON (có thể đã hết phiên)'); }
+        }
+        try {
+          const pj = await post('/getInitDefailProject.do', '');
+          const no = pj && Array.isArray(pj.results) && pj.results[0] && pj.results[0].SEGMENT1;
+          if (!no) return JSON.stringify({ err: 'Chưa có dự án mặc định trong DESM.' });
+          const s = await post('/dashboard/getHomeSummary.do', 'PROJECT_NO=' + encodeURIComponent(no) + '&DAY_TERM=' + days);
+          if (!s || !Array.isArray(s.results)) return JSON.stringify({ err: 'Máy chủ trả về lỗi.' });
+          return JSON.stringify({ list: s.results });
+        } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["days": days], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e):
+                done(nil, "Không tải được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let text = v as? String, let data = text.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    done(nil, "Không đọc được phản hồi."); return
+                }
+                if let err = obj["err"] as? String { done(nil, err); return }
+                let rows = obj["list"] as? [[String: Any]] ?? []
+                func str(_ r: [String: Any], _ k: String) -> String {
+                    if let s = r[k] as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    if let n = r[k] as? NSNumber { return n.stringValue }
+                    return ""
+                }
+                var seen = Set<String>()
+                var out: [PackingUploadRecord] = []
+                for (i, r) in rows.enumerated() {
+                    let att = str(r, "ATT_ID")
+                    let key = att.isEmpty ? "row\(i)" : att
+                    if !seen.insert(key).inserted { continue }
+                    out.append(PackingUploadRecord(
+                        id: key, invoice: str(r, "INVOICE_NO"), shipment: str(r, "SHIPMENT_NO"),
+                        file: str(r, "ORGINAL_FILE"), result: str(r, "RESULT"),
+                        created: str(r, "CREATION_DATE"), user: str(r, "LAST_UPDATED_BY"),
+                        project: str(r, "PROJECT_NAME")))
+                }
+                out.sort { $0.created > $1.created }   // "yyyy/MM/dd HH:mm" so sánh chuỗi được
+                done(out, "")
+            }
+        }
+    }
+}
+
+struct PackingHistorySheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    @State private var days = 3
+    @State private var records: [PackingUploadRecord] = []
+    @State private var loading = false
+    @State private var error: String? = nil
+
+    private func load() {
+        loading = true; error = nil
+        model.fetchPackingHistory(days: days) { list, err in
+            loading = false
+            if let list = list { records = list } else { records = []; error = err }
+        }
+    }
+
+    private func badge(_ r: PackingUploadRecord) -> some View {
+        Text(r.result.isEmpty ? "—" : r.result)
+            .font(.system(size: 11, weight: .bold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .foregroundStyle(r.isSuccess ? Color.green : Color.red)
+            .background((r.isSuccess ? Color.green : Color.red).opacity(0.12), in: Capsule())
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Khoảng ngày", selection: $days) {
+                    Text("1 ngày").tag(1)
+                    Text("3 ngày").tag(3)
+                    Text("7 ngày").tag(7)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .onChange(of: days) { _ in load() }
+
+                if loading && records.isEmpty {
+                    Spacer(); ProgressView("Đang tải…"); Spacer()
+                } else if let error = error {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle").font(.system(size: 28)).foregroundStyle(.orange)
+                        Text(error).font(.callout).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Button("Thử lại") { load() }.buttonStyle(.borderedProminent)
+                    }.padding(24)
+                    Spacer()
+                } else if records.isEmpty {
+                    Spacer()
+                    Text("Không có lượt tải lên nào trong \(days) ngày gần đây.").font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).padding(24)
+                    Spacer()
+                } else {
+                    List(records) { r in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(r.invoice.isEmpty ? "(không có Invoice)" : r.invoice)
+                                    .font(.system(size: 15, weight: .bold))
+                                Spacer(minLength: 6)
+                                badge(r)
+                            }
+                            if !r.file.isEmpty {
+                                Label(r.file, systemImage: "doc.text").font(.system(size: 13))
+                                    .foregroundStyle(.primary).lineLimit(2)
+                            }
+                            HStack(spacing: 10) {
+                                if !r.shipment.isEmpty { Text("Shipment \(r.shipment)") }
+                                if !r.created.isEmpty { Text(r.created) }
+                                if !r.user.isEmpty { Text(r.user).lineLimit(1) }
+                            }
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Lịch sử Packing List")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
+                }
+            }
+        }
+        .onAppear { if records.isEmpty && !loading { load() } }
+    }
+}
+
+
+// MARK: - RSI chưa đóng / vừa đóng và MRF trả hàng (mục "Thêm")
+//
+// Nguồn dữ liệu (nhật ký API 2026-10-28), tất cả POST, dùng phiên đăng nhập của trang:
+//   RSI Summary   /getDesmRsiViewList.do   (STATUS, REQ_QTY, HANDOVER_QTY, BALANCE_QTY, REQUEST_DATE, RSI_APPROVED_DATE)
+//   Outgoing      /getDesmRsiOutGoingList.do (HANDOVER_DATE, HANDOVER_QTY)
+//   MRF Summary   /getMrfSummaryList.do    (STATUS, MRF_REQ_RETURN_QTY, MRF_RETURN_QTY, MRF_BALANCE_QTY, RETURN_REQ_DATE)
+//   Return Control /getDesmMrfReturnList.do (RETURN_DATE, RETURN_QTY)
+// QUY ƯỚC (suy từ dữ liệu, CHƯA xác nhận với nghiệp vụ DESM): "chưa đóng" = tổng số lượng còn lại (BALANCE_QTY / MRF_BALANCE_QTY) > 0;
+// "vừa đóng" = có bàn giao / trả hàng trong N ngày gần đây và không còn số lượng còn lại. Chưa biết hết các giá trị STATUS.
+// CHƯA kiểm chứng: máy chủ lọc đúng theo START/END_*_DATE khi để trống số phiếu (đã lọc thêm phía máy khách để an toàn).
+
+enum DesmDocKind: String, Identifiable {
+    case rsi, mrf
+    var id: String { rawValue }
+    var title: String { self == .rsi ? "RSI" : "MRF trả hàng" }
+    var noun: String { self == .rsi ? "xuất" : "trả" }
+}
+
+struct DesmDocGroup: Identifiable {
+    let id: String
+    var name = ""
+    var date = ""
+    var closeDate = ""
+    var status = ""
+    var extra = ""
+    var lines = 0
+    var qty = 0.0
+    var done = 0.0
+    var balance: Double? = nil
+}
+
+extension BrowserModel {
+    /// POST một endpoint .do bằng phiên đăng nhập hiện có; trả mảng dòng (results hoặc results.list).
+    func desmQuery(_ path: String, body: String, done: @escaping ([[String: Any]]?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang DESM để lấy dữ liệu."); return }
+        let js = #"""
+        if (!/(^|\.)doosanenerbility\.com$/i.test(location.hostname)) return JSON.stringify({ err: 'Hãy mở DESM và đăng nhập trước.' });
+        try {
+          const r = await fetch(path, { method: 'POST', credentials: 'include', cache: 'no-store',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }, body: body });
+          const t = await r.text(); let s;
+          try { s = JSON.parse(t); } catch (e) { return JSON.stringify({ err: 'HTTP ' + r.status + ': phản hồi không phải JSON (có thể đã hết phiên)' }); }
+          const x = s && s.results;
+          const list = Array.isArray(x) ? x : (x && Array.isArray(x.list) ? x.list : null);
+          if (!list) return JSON.stringify({ err: 'Máy chủ trả về lỗi.' });
+          return JSON.stringify({ list: list });
+        } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["path": path, "body": body], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e): done(nil, "Không tải được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let text = v as? String, let data = text.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { done(nil, "Không đọc được phản hồi."); return }
+                if let err = obj["err"] as? String { done(nil, err); return }
+                done(obj["list"] as? [[String: Any]] ?? [], "")
+            }
+        }
+    }
+
+    private static func fstr(_ r: [String: Any], _ k: String) -> String {
+        if let s = r[k] as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let n = r[k] as? NSNumber { return n.stringValue }
+        return ""
+    }
+    private static func fnum(_ r: [String: Any], _ k: String) -> Double {
+        if let n = r[k] as? NSNumber { return n.doubleValue }
+        if let s = r[k] as? String { return Double(s) ?? 0 }
+        return 0
+    }
+    private static func enc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
+    }
+
+    /// Gộp các dòng thành từng phiếu (theo số phiếu).
+    private static func groups(_ rows: [[String: Any]], doc: String, name: String, date: String, status: String, extra: String,
+                               qty: String, done: String, bal: String?, close: String?) -> [DesmDocGroup] {
+        var order: [String] = []; var map: [String: DesmDocGroup] = [:]
+        for r in rows {
+            let id = fstr(r, doc); if id.isEmpty { continue }
+            var g: DesmDocGroup
+            if let ex = map[id] { g = ex } else { g = DesmDocGroup(id: id); order.append(id) }
+            g.lines += 1
+            if g.name.isEmpty { g.name = fstr(r, name) }
+            if g.date.isEmpty { g.date = fstr(r, date) }
+            if g.status.isEmpty { g.status = fstr(r, status) }
+            if g.extra.isEmpty { g.extra = fstr(r, extra) }
+            g.qty += fnum(r, qty); g.done += fnum(r, done)
+            if let b = bal { g.balance = (g.balance ?? 0) + fnum(r, b) }
+            if let c = close { let v = fstr(r, c); if v > g.closeDate { g.closeDate = v } }
+            map[id] = g
+        }
+        return order.compactMap { map[$0] }
+    }
+
+    /// open = còn số lượng chưa xử lý (mới nhất trước); closed = vừa bàn giao/trả trong `days` ngày và không còn số lượng còn lại.
+    func fetchDocs(kind: DesmDocKind, days: Int, done: @escaping ([DesmDocGroup], [DesmDocGroup], String) -> Void) {
+        desmQuery("/getInitDefailProject.do", body: "") { rows, err in
+            guard let rows = rows else { done([], [], err); return }
+            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { done([], [], "Chưa có dự án mặc định trong DESM."); return }
+            let P = Self.enc(no)
+            let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy/MM/dd"
+            let cal = Calendar.current; let now = Date()
+            let today = f.string(from: now)
+            let cutoff = f.string(from: cal.date(byAdding: .day, value: -days, to: now) ?? now)
+            let openFrom = f.string(from: cal.date(byAdding: .day, value: -180, to: now) ?? now)
+            func d(_ s: String) -> String { Self.enc(s) }
+
+            let pathA: String, bodyA: String, pathB: String, bodyB: String
+            switch kind {
+            case .rsi:
+                pathA = "/getDesmRsiViewList.do"
+                bodyA = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&ATTRIBUTE10=&MATERIAL_CODE=&START_REQUEST_DATE=\(d(openFrom))&END_REQUEST_DATE=\(d(today))&BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&PACKAGE_NO=&ITEM_DESC=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+                pathB = "/getDesmRsiOutGoingList.do"
+                bodyB = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&START_HANDOVER_DATE=\(d(cutoff))&END_HANDOVER_DATE=\(d(today))&PACKAGE_NO=&SUBCONTRACTOR=&RSI_NO=&MATERIAL_CODE=&ATTRIBUTE10=&RSI_NAME=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS=&PACKING_LIST_NO=&PENDING=&RECEIVER_REMARK=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+            case .mrf:
+                pathA = "/getMrfSummaryList.do"
+                bodyA = "PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&MATERIAL_CODE=&RSI_START_REQUEST_DATE=&RSI_END_REQUEST_DATE=&ZIM_ATTRIBUTE10=&RSI_BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&MRF_NO=&MRF_NAME=&PACKAGE_NO=&ITEM_DESC=&RETURN_TYPE=&MRF_BALANCE_QTY="
+                pathB = "/getDesmMrfReturnList.do"
+                bodyB = "PROJECT_NO=\(P)&START_HANDOVER_DATE=\(d(cutoff))&END_HANDOVER_DATE=\(d(today))&PACKAGE_NO=&SUBCONTRACTOR=&MRF_NO=&MATERIAL_CODE=&ATTRIBUTE10=&MRF_NAME=&TYPE=&CATEGORY="
+            }
+            self.desmQuery(pathA, body: bodyA) { rowsA, errA in
+                guard let rowsA = rowsA else { done([], [], errA); return }
+                self.desmQuery(pathB, body: bodyB) { rowsB, errB in
+                    guard let rowsB = rowsB else { done([], [], errB); return }
+                    let a: [DesmDocGroup], b: [DesmDocGroup]
+                    switch kind {
+                    case .rsi:
+                        a = Self.groups(rowsA, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "STATUS", extra: "SUBCONTRACTOR",
+                                        qty: "REQ_QTY", done: "HANDOVER_QTY", bal: "BALANCE_QTY", close: nil)
+                        b = Self.groups(rowsB, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "", extra: "SUBCONTRACTOR",
+                                        qty: "REQ_QTY", done: "HANDOVER_QTY", bal: nil, close: "HANDOVER_DATE")
+                    case .mrf:
+                        a = Self.groups(rowsA, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "STATUS", extra: "RETURN_TYPE",
+                                        qty: "MRF_REQ_RETURN_QTY", done: "MRF_RETURN_QTY", bal: "MRF_BALANCE_QTY", close: nil)
+                        b = Self.groups(rowsB, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "", extra: "RETURN_TYPE",
+                                        qty: "REQ_RETURN_QTY", done: "RETURN_QTY", bal: nil, close: "RETURN_DATE")
+                    }
+                    let open = a.filter { ($0.balance ?? 0) > 0 }.sorted { $0.date > $1.date }
+                    let byId = Dictionary(a.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+                    var closed: [DesmDocGroup] = []
+                    for var g in b where g.closeDate >= cutoff {
+                        if let m = byId[g.id] {
+                            if (m.balance ?? 0) > 0 { continue }   // còn số lượng chưa xử lý: thuộc nhóm "chưa đóng"
+                            g.balance = m.balance; g.status = m.status
+                        }
+                        closed.append(g)
+                    }
+                    closed.sort { $0.closeDate > $1.closeDate }
+                    done(open, closed, "")
+                }
+            }
+        }
+    }
+}
+
+struct DesmDocSheet: View {
+    @ObservedObject var model: BrowserModel
+    let kind: DesmDocKind
+    var onClose: () -> Void
+
+    @State private var tab = 0
+    @State private var days = 7
+    @State private var openList: [DesmDocGroup] = []
+    @State private var closedList: [DesmDocGroup] = []
+    @State private var loading = false
+    @State private var error: String? = nil
+
+    private func load() {
+        loading = true; error = nil
+        model.fetchDocs(kind: kind, days: days) { o, c, err in
+            loading = false
+            if err.isEmpty { openList = o; closedList = c } else { openList = []; closedList = []; error = err }
+        }
+    }
+
+    private func fmt(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v) }
+
+    private var current: [DesmDocGroup] { tab == 0 ? openList : closedList }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Nhóm", selection: $tab) {
+                    Text("Chưa đóng (\(openList.count))").tag(0)
+                    Text("Vừa đóng (\(closedList.count))").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.top, 10)
+                if tab == 1 {
+                    Picker("Trong", selection: $days) {
+                        Text("1 ngày").tag(1); Text("3 ngày").tag(3); Text("7 ngày").tag(7); Text("30 ngày").tag(30)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16).padding(.top, 8)
+                    .onChange(of: days) { _ in load() }
+                }
+                Spacer().frame(height: 8)
+
+                if loading && current.isEmpty && error == nil {
+                    Spacer(); ProgressView("Đang tải…"); Spacer()
+                } else if let error = error {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle").font(.system(size: 28)).foregroundStyle(.orange)
+                        Text(error).font(.callout).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Button("Thử lại") { load() }.buttonStyle(.borderedProminent)
+                    }.padding(24)
+                    Spacer()
+                } else if current.isEmpty {
+                    Spacer()
+                    Text(tab == 0 ? "Không có \(kind.title) nào còn chưa đóng."
+                                  : "Không có \(kind.title) nào vừa đóng trong \(days) ngày gần đây.")
+                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                    Spacer()
+                } else {
+                    List(current) { g in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(g.id).font(.system(size: 15, weight: .bold))
+                                Spacer(minLength: 6)
+                                if !g.status.isEmpty {
+                                    Text(g.status).font(.system(size: 11, weight: .bold))
+                                        .padding(.horizontal, 8).padding(.vertical, 3)
+                                        .foregroundStyle(Color.tabBlue)
+                                        .background(Color.tabBlue.opacity(0.12), in: Capsule())
+                                }
+                            }
+                            if !g.name.isEmpty { Text(g.name).font(.system(size: 13)).lineLimit(2) }
+                            HStack(spacing: 10) {
+                                Text("\(g.lines) dòng")
+                                Text("Đã \(kind.noun) \(fmt(g.done))/\(fmt(g.qty))")
+                                if let b = g.balance { Text("còn \(fmt(b))").foregroundStyle(b > 0 ? Color.red : Color.green) }
+                            }.font(.system(size: 12, weight: .medium))
+                            HStack(spacing: 10) {
+                                if !g.date.isEmpty { Text("Yêu cầu \(g.date)") }
+                                if !g.closeDate.isEmpty { Text("Đóng \(g.closeDate)") }
+                                if !g.extra.isEmpty { Text(g.extra).lineLimit(1) }
+                            }.font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle(kind == .rsi ? "RSI" : "MRF trả hàng")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
+                }
+            }
+        }
+        .onAppear { if openList.isEmpty && closedList.isEmpty && !loading { load() } }
     }
 }
