@@ -261,6 +261,7 @@ extension BrowserModel {
               }
             }
             collect(document, 0, 'Trang chính');
+            try { var dt0 = detailText(); if (dt0) push(dt0); } catch (e) {}
             push('[Nội dung trang DESM đang mở: ' + clean(document.title, 80) + ' — ' + location.pathname + ']');
             var gridCount = 0;
             frames.forEach(function(f) { try { fields(f.doc, f.tag); gridCount += grids(f.doc.defaultView, f.tag); } catch (e) {} });
@@ -277,6 +278,42 @@ extension BrowserModel {
             if (cut0) out.push('[Đã cắt bớt vì vượt giới hạn dữ liệu gửi AI; có thể còn dòng chưa gửi hoặc chưa tải hết trên trang]');
             return out.join('\n');
           }
+          // Màn CHI TIẾT một kiện (overlay #desmDetail do UserScript dựng) và các màn con (.desm-sub: RSI & MRF List, RSI Detail...): đọc chữ đang hiển thị
+          function detailText() {
+            var parts = [];
+            function walk(doc, depth) {
+              try {
+                var ns = doc.querySelectorAll('#desmDetail, .desm-sub');
+                for (var i = 0; i < ns.length; i++) {
+                  var n = ns[i]; if (!n.getClientRects || n.getClientRects().length === 0) continue;
+                  var t = String(n.innerText || n.textContent || '').replace(/[ \t\u00a0]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+                  var fl = [].map.call(n.querySelectorAll('.desm-dband-c'), function(c) { var k = c.querySelector('input[type=checkbox]'); return String(c.textContent || '').trim() + '=' + (k && k.checked ? 'Y' : 'N'); }).join(', ');
+                  if (t) parts.push('[' + (n.classList.contains('desm-sub') ? 'Màn con' : 'Màn chi tiết kiện') + (fl ? ' — ' + fl : '') + ']\n' + t.slice(0, 8000));
+                }
+              } catch (e) {}
+              if (depth > 4) return;
+              try {
+                var fs = doc.querySelectorAll('iframe');
+                for (var j = 0; j < fs.length; j++) {
+                  try { if (fs[j].id === 'desmDetailFrame' || !fs[j].contentDocument || fs[j].getClientRects().length === 0) continue; walk(fs[j].contentDocument, depth + 1); } catch (e) {}
+                }
+              } catch (e) {}
+            }
+            walk(document, 0);
+            return parts.length ? '[Dữ liệu đang hiển thị trên màn CHI TIẾT một kiện hàng — gồm thông tin kiện và Detail Item List]\n' + parts.join('\n\n') : '';
+          }
+          // Đọc BẤT KỲ màn nào đang chạy: màn chi tiết kiện/màn con (overlay) > danh sách thẻ Package (+ ô lọc) > mọi màn khác (lưới, ô nhập, chữ trên trang)
+          function allText(limit) {
+            limit = limit || 20000;
+            var dt = ''; try { dt = detailText(); } catch (e) {}
+            if (dt) return dt.slice(0, limit);
+            var sc = ''; try { sc = screenText(); } catch (e) {}
+            if (sc) {
+              var pt = ''; try { pt = pageText(Math.min(3000, limit)); } catch (e) {}
+              return (sc + (pt ? '\n\n' + pt : '')).slice(0, limit);
+            }
+            return pageText(limit);
+          }
           // Gắn vào câu hỏi gửi Dodo: dữ liệu màn hình (nếu bật) + yêu cầu trả lời tiếng Việt (nếu bật). Khung chat vẫn hiện nguyên câu bạn gõ.
           try {
             var f0 = w.fetch;
@@ -286,7 +323,7 @@ extension BrowserModel {
                 if ((w.__desmDodoVi || w.__desmDodoData || w.__desmDodoSlow) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
                   var q = init.body.get('user_prompt') || '', add = '';
                   if (w.__desmDodoSlow) init.body.set('mode', 'slow');
-                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = screenText(); if (!tx) { try { tx = pageText(20000); } catch (e2) { tx = ''; } } if (tx) add += '\n\n' + tx; }
+                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = ''; try { tx = allText(12000); } catch (e2) { tx = ''; } if (tx) add += '\n\n' + tx; }
                   if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0 && w.__desmDodoVi) add += '\n\n[Trả lời bằng tiếng Việt]';
                   if (add) init.body.set('user_prompt', q + add);
                 }
@@ -294,7 +331,7 @@ extension BrowserModel {
               return f0.apply(this, arguments);
             };
           } catch (e) {}
-          w.__desmDodo = { sync: sync, open: openChat, screenText: screenText, pageText: pageText };
+          w.__desmDodo = { sync: sync, open: openChat, screenText: screenText, pageText: allText };
           try { w.addEventListener('resize', function() { place(); vv(); }); } catch (e) {}
           try { if (w.visualViewport) { w.visualViewport.addEventListener('resize', vv); w.visualViewport.addEventListener('scroll', vv); } } catch (e) {}
           try { w.setInterval(sync, 400); } catch (e) {}

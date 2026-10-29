@@ -322,3 +322,37 @@ Người dùng báo hỏi vài câu thì AI riêng đứng/treo. Chưa tái hi�
 ## Khung chat AI riêng giao diện giống Dodo AI (2026-10-29)
 - `AI/AIChatView.swift` vẽ lại, không còn `NavigationStack`/toolbar: đầu khung gradient #4e73df→#224abe + vòng tròn mờ góc phải + avatar gấu (`DodoAvatar` tải `/resources/img/bear-assistant.png` từ web DESM bằng `AsyncImage`, lỗi thì hiện biểu tượng), tiêu đề "Trợ lý AI" + dòng nhà/model (chạm để đổi AI), nút xoá hội thoại và nút đóng trắng bo góc; bong bóng người dùng gradient bo (18,18,4,18), bong bóng AI trắng viền #e8eaf5 bo (4,18,18,18) kèm avatar 28pt; ô nhập bo 22 nền #f1f2f9, nút gửi tròn gradient 44pt. Màu/bo góc lấy từ `Dodo.js` (`enum AIStyle`, `CornerShape`).
 - CHƯA biên dịch/kiểm chứng trên máy thật.
+
+## Lỗi "Gemini: phản hồi không đọc được" + chat tải lâu (2026-10-29)
+- Nguyên nhân khả dĩ nhất: Gemini trả `candidates` không có `parts` (finishReason như MALFORMED_FUNCTION_CALL/MAX_TOKENS) sau khi tra công cụ. `geminiAgent` nay: nếu rỗng thì thử lại MỘT lần không kèm công cụ để buộc trả lời; vẫn rỗng thì báo `AIError.empty(finishReason/blockReason)` thay cho câu chung chung. `post()` nhận cả phản hồi dạng mảng. CHƯA kiểm chứng trên máy thật.
+- "Gửi sẵn dữ liệu DESM": lưu `Caches/desm_ai_snapshot.txt`; dùng ngay bản cũ rồi làm mới ở nền nếu quá 30 phút (stale-while-revalidate), tải mở khung chat bằng `.task`, hạng mục kiện tải song song từng đợt 5 → thoát app vào lại không phải chờ.
+- Sửa đầu khung chat bị tràn màu xuống che tin nhắn đầu (nền gradient chuyển sang `.background` sau `.clipped()`).
+
+## Dodo / AI riêng đọc màn CHI TIẾT một kiện (2026-10-29)
+- Nguyên nhân: `screenText()` chỉ đọc thẻ kiện của màn Package (`window.__desmItems`); khi bấm vào một kiện, màn chi tiết là overlay `#desmDetail` (+ `.desm-sub` cho RSI & MRF List / RSI Detail) do UserScript dựng, nên Dodo vẫn chỉ thấy danh sách Package phía sau.
+- Thêm `detailText()` trong `DodoBubble.swift`: duyệt document + iframe đang hiện (bỏ `desmDetailFrame`), lấy `innerText` của `#desmDetail` / `.desm-sub` đang hiển thị (cắt 8.000 ký tự/màn) + trạng thái SHORT/OVER/DMG/MISSING. Wrapper `fetch` gửi Dodo: `detailText() || screenText() || pageText(20000)`. `pageText` (AI riêng, `fetchScreenTextForAI`) cũng đẩy `detailText()` lên đầu.
+- Cần công tắc "Gửi dữ liệu kiện đang hiển thị cho Dodo" bật. JS đã `node --check`; CHƯA thử trên máy thật (đặc biệt: Detail Item List đã tải xong chưa lúc hỏi; nếu còn "đang tải" thì chờ rồi hỏi lại).
+
+## Dodo / AI riêng đọc mọi màn (2026-10-29)
+- Thêm `allText(limit)` trong `DodoBubble.swift` và dùng làm đầu vào duy nhất cho Dodo (`allText(12000)`, giới hạn thấp để tránh lỗi 422) và cho AI riêng (`window.__desmDodo.pageText = allText`). Thứ tự: màn chi tiết kiện/màn con (`detailText`) → danh sách thẻ Package + ô lọc (`screenText` + `pageText(3000)`) → mọi màn khác (`pageText`: lưới TreeGrid đã tải, ô nhập, chữ trên trang, mọi iframe đang hiện).
+- Màn gốc SwiftUI của app (Cài đặt, camera quét…) không đọc được vì không phải trang web. CHƯA thử trên máy thật; màn nào Dodo vẫn không đọc được thì chụp ảnh + xuất `desm-screens` của màn đó để chỉnh.
+
+## Đính kèm ảnh / tệp cho AI riêng (2026-10-29)
+- `AIChatView`: nút ảnh (PhotosPicker, tối đa 4/lần) và nút kẹp giấy (fileImporter: ảnh, PDF có chữ, TXT/CSV/JSON/MD), tối đa 6 đính kèm; chip xem trước + nút xoá. Ảnh thu nhỏ ≤1600px JPEG 0.7 và gửi dạng ảnh thật cho model (`AIClient.currentImages`, gắn vào tin nhắn người dùng cuối: Gemini `inline_data`, Claude `image/base64`, OpenAI-compatible `image_url` data URL — cả đường hỏi đáp thường lẫn đường agent). Tệp chữ/PDF được đọc ra chữ (PDFKit cho PDF, cắt 30.000 ký tự/tệp) và nối vào câu hỏi (còn trong lịch sử các lượt sau); ảnh chỉ gửi ở lượt hiện tại.
+- `AIChatMessage.display` = chữ hiện trong bong bóng (không hiện nội dung tệp), `attachNames` hiện "📎 tên tệp".
+- Model không hỗ trợ ảnh (một số model Groq/DeepSeek chữ) sẽ báo lỗi API → chọn Gemini/Claude/GPT. PDF dạng ảnh quét và Word/Excel chưa hỗ trợ.
+- Dodo gốc: `Dodo.js` chỉ gửi `user_prompt`, `menu_context`, `session_id`, `mode`, `ui_selection` (không có tải tệp) → không đính kèm được; muốn thì phải đọc chữ (OCR) trên máy rồi nối vào `user_prompt` — chưa làm.
+- CHƯA biên dịch/kiểm chứng trên máy thật.
+
+## Lỗi bàn phím / đầu khung bản cũ + AI hướng dẫn thay vì tra (2026-10-29)
+- Ảnh người dùng gửi (bản cũ) cho thấy gradient đầu khung tràn xuống che tin nhắn đầu: đã sửa ở lượt "Lỗi Gemini phản hồi không đọc được" (nền gradient chuyển sang `.background` sau `.clipped()`); cần build bản mới.
+- Thêm: vuốt danh sách tin nhắn để ẩn bàn phím (`scrollDismissesKeyboard(.interactively)`, iOS 16+), chạm đầu khung cũng ẩn bàn phím.
+- Gemini trả lời kiểu "hãy vào /getIdsmOsSummaryList.do nhập PACKAGE_LIST_NO=…" thay vì tự gọi công cụ: thêm câu IMPORTANT vào system prompt khi bật `aiTools` (phải TỰ gọi công cụ, không hướng dẫn người dùng).
+
+## Treo/thoát app khi nhắn tin thứ 2 (2026-10-29) — chưa có crash log
+- Nghi ngờ chính: `Text(...).textSelection(.enabled)` trên tin nhắn rất dài trong `LazyVStack` (treo layout khi danh sách đổi) + `AsyncImage` tạo lại cho từng dòng + `withAnimation { scrollTo }` mỗi lần thêm tin. Đã bỏ cả ba: copy bằng menu giữ (contextMenu "Sao chép"), avatar tải một lần qua `DodoAvatarStore`, cuộn không animation.
+- Nếu vẫn thoát app: cần crash log (Cài đặt > Quyền riêng tư & Bảo mật > Phân tích & Cải tiến > Dữ liệu phân tích, tìm "DESM"/"DESMMobile" .ips) hoặc chạy qua Xcode/TestFlight crash report; ghi lại công tắc AI nào đang bật.
+
+## Phân tích crash log DESMMobile-2026-10-30-060708.ips (2026-10-30)
+- Không phải crash lỗi code mà là iOS giết app: `0x8BADF00D scene-update watchdog` — luồng chính bận >10 giây khi app chuyển nền (CPU app 10s liên tục). Không có khung nào của DESMMobile trong stack; luồng chính đang ở `SwiftUICore PlatformViewChild.updateValue` → `UIView _updateTraitCollection… _UIViewGetInteractionTintColor` (cập nhật một view UIKit nằm trong SwiftUI). Bộ nhớ ổn (WebKit ~190MB), nhiệt bình thường.
+- Trong khung chat bản cũ, view UIKit-backed duy nhất trong danh sách tin là `Text(...).textSelection(.enabled)` (và TextField) → khớp nghi ngờ tin nhắn dài + textSelection. Bản mới đã bỏ textSelection (copy bằng menu giữ), cache avatar, bỏ animation cuộn. Chưa xác nhận; nếu còn treo: gửi lại .ips của bản mới.

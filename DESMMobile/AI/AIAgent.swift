@@ -63,6 +63,7 @@ extension AIClient {
         var msgs: [[String: Any]] = []
         if !system.isEmpty { msgs.append(["role": "system", "content": system]) }
         msgs += messages.map { ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text] }
+        openAIAttach(&msgs)
         let defs: [[String: Any]] = tools.map {
             ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]]
         }
@@ -102,6 +103,7 @@ extension AIClient {
         var msgs: [[String: Any]] = messages.map {
             ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text]
         }
+        anthropicAttach(&msgs)
         let defs: [[String: Any]] = tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.parameters] }
 
         for step in 0..<maxSteps {
@@ -138,6 +140,7 @@ extension AIClient {
         if name.hasPrefix("models/") { name = String(name.dropFirst(7)) }
         guard let url = URL(string: "\(c.base)/models/\(name):generateContent") else { throw AIError.badResponse }
         var contents: [[String: Any]] = messages.map { ["role": $0.role, "parts": [["text": $0.text]]] }
+        geminiAttach(&contents)
         let decls: [[String: Any]] = tools.map { t in
             var d: [String: Any] = ["name": t.name, "description": t.description]
             // Gemini không nhận object rỗng không có properties
@@ -145,14 +148,22 @@ extension AIClient {
             return d
         }
 
-        for step in 0..<maxSteps {
+        var noTools = false          // sau một lần rỗng/lỗi hàm: bắt trả lời thẳng, không dùng công cụ
+        var lastWhy = ""
+        for step in 0..<(maxSteps + 1) {
             var body: [String: Any] = ["contents": contents, "generationConfig": ["temperature": 0.3]]
             if !system.isEmpty { body["system_instruction"] = ["parts": [["text": system]]] }
-            if step < maxSteps - 1 { body["tools"] = [["functionDeclarations": decls]] }
+            if step < maxSteps - 1 && !noTools { body["tools"] = [["functionDeclarations": decls]] }
             let root = try await post(url, headers: ["x-goog-api-key": c.key], body: body, timeout: timeout)
             guard let cands = root["candidates"] as? [[String: Any]],
                   let content = cands.first?["content"] as? [String: Any],
-                  let parts = content["parts"] as? [[String: Any]] else { throw AIError.badResponse }
+                  let parts = content["parts"] as? [[String: Any]], !parts.isEmpty else {
+                lastWhy = geminiWhy(root)
+                if noTools { throw AIError.empty(lastWhy) }
+                noTools = true
+                status("Gemini trả rỗng (\(lastWhy)), thử lại không dùng công cụ…")
+                continue
+            }
             let calls = parts.filter { $0["functionCall"] != nil }
             if !calls.isEmpty {
                 contents.append(["role": "model", "parts": parts])   // giữ nguyên (kể cả thoughtSignature)
@@ -169,9 +180,15 @@ extension AIClient {
             }
             let t = parts.filter { ($0["thought"] as? Bool) != true }.compactMap { $0["text"] as? String }
                 .joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { throw AIError.badResponse }
+            if t.isEmpty {
+                lastWhy = geminiWhy(root)
+                if noTools { throw AIError.empty(lastWhy) }
+                noTools = true
+                status("Gemini trả rỗng (\(lastWhy)), thử lại không dùng công cụ…")
+                continue
+            }
             return t
         }
-        throw AIError.badResponse
+        throw AIError.empty(lastWhy.isEmpty ? "hết số bước tra cứu" : lastWhy)
     }
 }

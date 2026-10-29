@@ -6,6 +6,7 @@ import Foundation
 enum AIError: LocalizedError {
     case http(Int, String)
     case badResponse
+    case empty(String)
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +21,8 @@ enum AIError: LocalizedError {
             }
         case .badResponse:
             return "phản hồi không đọc được"
+        case .empty(let why):
+            return "AI trả về nội dung rỗng (\(why)). Thử hỏi ngắn gọn hơn, tắt bớt công tắc dữ liệu hoặc đổi model."
         }
     }
 }
@@ -32,6 +35,37 @@ struct AIProviderError: LocalizedError {
 
 enum AIClient {
     typealias Msg = (role: String, text: String)   // role: "user" | "model"
+
+    /// Ảnh (JPEG) đính kèm cho CÂU HỎI HIỆN TẠI. Chỉ gắn vào tin nhắn người dùng cuối cùng; các lượt trước chỉ còn chữ.
+    /// Đặt trước khi gọi và xoá sau khi xong (xem AIChatView.send).
+    static var currentImages: [Data] = []
+
+    static func geminiAttach(_ contents: inout [[String: Any]]) {
+        guard !currentImages.isEmpty, let i = contents.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
+        var parts = contents[i]["parts"] as? [[String: Any]] ?? []
+        for d in currentImages { parts.append(["inline_data": ["mime_type": "image/jpeg", "data": d.base64EncodedString()]]) }
+        contents[i]["parts"] = parts
+    }
+
+    static func anthropicAttach(_ msgs: inout [[String: Any]]) {
+        guard !currentImages.isEmpty, let i = msgs.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
+        let text = msgs[i]["content"] as? String ?? ""
+        var blocks: [[String: Any]] = currentImages.map {
+            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": $0.base64EncodedString()]]
+        }
+        blocks.append(["type": "text", "text": text])
+        msgs[i]["content"] = blocks
+    }
+
+    static func openAIAttach(_ msgs: inout [[String: Any]]) {
+        guard !currentImages.isEmpty, let i = msgs.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
+        let text = msgs[i]["content"] as? String ?? ""
+        var blocks: [[String: Any]] = [["type": "text", "text": text]]
+        for d in currentImages {
+            blocks.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + d.base64EncodedString()]])
+        }
+        msgs[i]["content"] = blocks
+    }
 
     static func complete(_ c: AIConfig, system: String, messages: [Msg],
                          temperature: Double?, timeout: TimeInterval) async throws -> String {
@@ -57,10 +91,10 @@ enum AIClient {
             let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(140))
             throw AIError.http(http.statusCode, snippet)
         }
-        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AIError.badResponse
-        }
-        return obj
+        let any = try JSONSerialization.jsonObject(with: data)
+        if let obj = any as? [String: Any] { return obj }
+        if let arr = any as? [[String: Any]], let first = arr.first { return first }   // một số API trả mảng
+        throw AIError.badResponse
     }
 
     private static func gemini(_ c: AIConfig, _ system: String, _ messages: [Msg],
@@ -69,7 +103,8 @@ enum AIClient {
         if name.hasPrefix("models/") { name = String(name.dropFirst(7)) }
         guard let url = URL(string: "\(c.base)/models/\(name):generateContent") else { throw AIError.badResponse }
 
-        let contents: [[String: Any]] = messages.map { ["role": $0.role, "parts": [["text": $0.text]]] }
+        var contents: [[String: Any]] = messages.map { ["role": $0.role, "parts": [["text": $0.text]]] }
+        geminiAttach(&contents)
         var gen: [String: Any] = [:]
         if let t = temperature { gen["temperature"] = t }
         var body: [String: Any] = ["contents": contents, "generationConfig": gen]
@@ -78,7 +113,9 @@ enum AIClient {
         let root = try await post(url, headers: ["x-goog-api-key": c.key], body: body, timeout: timeout)
         guard let cands = root["candidates"] as? [[String: Any]],
               let content = cands.first?["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else { throw AIError.badResponse }
+              let parts = content["parts"] as? [[String: Any]] else {
+            throw AIError.empty(geminiWhy(root))
+        }
         let text = parts.filter { ($0["thought"] as? Bool) != true }
             .compactMap { $0["text"] as? String }.joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -86,12 +123,20 @@ enum AIClient {
         return text
     }
 
+    /// Lý do Gemini không trả nội dung: finishReason / blockReason
+    static func geminiWhy(_ root: [String: Any]) -> String {
+        if let pf = root["promptFeedback"] as? [String: Any], let b = pf["blockReason"] as? String { return "bị chặn: \(b)" }
+        if let c = (root["candidates"] as? [[String: Any]])?.first, let f = c["finishReason"] as? String { return "finishReason=\(f)" }
+        return "không có candidates"
+    }
+
     private static func anthropic(_ c: AIConfig, _ system: String, _ messages: [Msg],
                                   _ timeout: TimeInterval) async throws -> String {
         guard let url = URL(string: c.base) else { throw AIError.badResponse }
-        let msgs: [[String: Any]] = messages.map {
+        var msgs: [[String: Any]] = messages.map {
             ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text]
         }
+        anthropicAttach(&msgs)
         var body: [String: Any] = ["model": c.model, "max_tokens": 2048, "messages": msgs]
         if !system.isEmpty { body["system"] = system }
 
@@ -115,6 +160,7 @@ enum AIClient {
         var msgs: [[String: Any]] = []
         if !system.isEmpty { msgs.append(["role": "system", "content": system]) }
         msgs += messages.map { ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text] }
+        openAIAttach(&msgs)
 
         var body: [String: Any] = ["model": c.model, "messages": msgs]
         // Một số model (vd. dòng reasoning của OpenAI) không cho đổi temperature

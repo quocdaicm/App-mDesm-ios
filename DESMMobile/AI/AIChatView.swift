@@ -2,6 +2,9 @@
 // Mở từ bong bóng Dodo. Có thể gửi kèm dữ liệu kiện đang hiển thị (nếu bật) và đổi nhà/model ngay trong khung.
 
 import SwiftUI
+import PhotosUI
+import PDFKit
+import UniformTypeIdentifiers
 
 struct AIChatMessage: Identifiable, Equatable {
     let id = UUID()
@@ -9,6 +12,16 @@ struct AIChatMessage: Identifiable, Equatable {
     var text: String
     var by: String = ""
     var isError = false
+    var display: String? = nil          // chữ hiện trong bong bóng (text đầy đủ, gồm nội dung tệp, chỉ dùng để gửi AI)
+    var attachNames: [String] = []
+}
+
+/// Tệp/ảnh đính kèm cho câu hỏi sắp gửi
+struct AIAttachment: Identifiable, Equatable {
+    let id = UUID()
+    let name: String
+    var jpeg: Data? = nil               // ảnh (đã thu nhỏ)
+    var text: String? = nil             // nội dung chữ của tệp (PDF/TXT/CSV/JSON…)
 }
 
 /// Giữ hội thoại khi đóng/mở lại khung chat (chỉ trong lúc app còn chạy).
@@ -16,6 +29,7 @@ final class AIChatSession: ObservableObject {
     static let shared = AIChatSession()
     @Published var messages: [AIChatMessage] = []
     var snapshot: (text: String, at: Date)?
+    var refreshing = false
 }
 
 struct AIChatView: View {
@@ -29,6 +43,9 @@ struct AIChatView: View {
     @State private var tick = 0
     @State private var status = ""
     @State private var job: Task<Void, Never>?
+    @State private var attachments: [AIAttachment] = []
+    @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var showFileImporter = false
     @FocusState private var focused: Bool
 
     private var primary: AIConfig? { AIStore.active().first }
@@ -44,6 +61,14 @@ struct AIChatView: View {
             }
         }
         .background(AIStyle.bg.ignoresSafeArea())
+        .task {
+            // Mở khung chat: nếu bật "gửi sẵn dữ liệu" và dữ liệu đã cũ thì tải mới ở nền, không chặn giao diện
+            guard model.aiAll else { return }
+            if session.snapshot == nil { session.snapshot = DesmAITools.loadSnapshot() }
+            if session.snapshot == nil || Date().timeIntervalSince(session.snapshot!.at) > 1800 {
+                await refreshSnapshot()
+            }
+        }
         .sheet(isPresented: $showQuick, onDismiss: { tick += 1 }) {
             AIQuickSheet(openSettings: { showQuick = false; showProviders = true })
         }
@@ -84,14 +109,13 @@ struct AIChatView: View {
             }
         }
         .padding(.leading, 18).padding(.trailing, 16).padding(.vertical, 16)
-        .background(
-            ZStack(alignment: .topTrailing) {
-                AIStyle.gradient
-                Circle().fill(Color.white.opacity(0.1)).frame(width: 160, height: 160).offset(x: 40, y: -60)
-            }
-            .clipped()
-            .ignoresSafeArea(edges: .top)
-        )
+        .overlay(alignment: .topTrailing) {
+            Circle().fill(Color.white.opacity(0.1)).frame(width: 160, height: 160)
+                .offset(x: 40, y: -60).allowsHitTesting(false)
+        }
+        .clipped()
+        .background(AIStyle.gradient.ignoresSafeArea(edges: .top))
+        .onTapGesture { focused = false }
     }
 
     private var welcome: some View {
@@ -149,10 +173,11 @@ struct AIChatView: View {
                 }
                 .padding(.horizontal, 16).padding(.vertical, 18)
             }
+            .modifier(DismissKeyboardOnScroll())
             .onChange(of: session.messages) { _ in
-                if let last = session.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                if let last = session.messages.last { DispatchQueue.main.async { proxy.scrollTo(last.id, anchor: .bottom) } }
             }
-            .onChange(of: sending) { s in if s { withAnimation { proxy.scrollTo("typing", anchor: .bottom) } } }
+            .onChange(of: sending) { s in if s { DispatchQueue.main.async { proxy.scrollTo("typing", anchor: .bottom) } } }
         }
     }
 
@@ -161,10 +186,15 @@ struct AIChatView: View {
         return HStack(alignment: .top, spacing: 10) {
             if mine {
                 Spacer(minLength: 40)
-                Text(m.text)
-                    .font(.system(size: 15)).lineSpacing(3)
-                    .foregroundStyle(Color.white)
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(m.display ?? m.text)
+                        .font(.system(size: 15)).lineSpacing(3)
+                        .foregroundStyle(Color.white)
+                    if !m.attachNames.isEmpty {
+                        Text("📎 " + m.attachNames.joined(separator: ", "))
+                            .font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.85))
+                    }
+                }
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(AIStyle.gradient.clipShape(CornerShape(tl: 18, tr: 18, br: 4, bl: 18)))
             } else {
@@ -173,7 +203,6 @@ struct AIChatView: View {
                     Text(m.text)
                         .font(.system(size: 15)).lineSpacing(4)
                         .foregroundStyle(m.isError ? Color.red : AIStyle.text)
-                        .textSelection(.enabled)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(AIStyle.aiBubble(CornerShape(tl: 4, tr: 18, br: 18, bl: 18)))
                     if !m.by.isEmpty {
@@ -184,10 +213,62 @@ struct AIChatView: View {
                 Spacer(minLength: 24)
             }
         }
+        .contextMenu {
+            Button { UIPasteboard.general.string = m.display ?? m.text } label: { Label("Sao chép", systemImage: "doc.on.doc") }
+        }
+    }
+
+    private var attachmentChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { a in
+                    HStack(spacing: 6) {
+                        if let d = a.jpeg, let ui = UIImage(data: d) {
+                            Image(uiImage: ui).resizable().scaledToFill().frame(width: 34, height: 34)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        } else {
+                            Image(systemName: "doc.text").foregroundStyle(AIStyle.blue1).frame(width: 34, height: 34)
+                        }
+                        Text(a.name).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 110, alignment: .leading)
+                            .foregroundStyle(AIStyle.text)
+                        Button { attachments.removeAll { $0.id == a.id } } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(Color.secondary)
+                        }
+                    }
+                    .padding(6)
+                    .background(Color(red: 241 / 255, green: 242 / 255, blue: 249 / 255), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .padding(.horizontal, 14)
+        }
     }
 
     private var inputBar: some View {
+        VStack(spacing: 8) {
+            if !attachments.isEmpty { attachmentChips.padding(.top, 10) }
+            inputRow
+        }
+        .background(Color.white.ignoresSafeArea(edges: .bottom))
+        .overlay(Rectangle().fill(Color(red: 235 / 255, green: 236 / 255, blue: 245 / 255)).frame(height: 1), alignment: .top)
+        .onChange(of: pickerItems) { items in
+            guard !items.isEmpty else { return }
+            Task { @MainActor in await addPhotos(items) }
+        }
+        .fileImporter(isPresented: $showFileImporter,
+                      allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .json, .text, .image],
+                      allowsMultipleSelection: true) { addFiles($0) }
+    }
+
+    private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            PhotosPicker(selection: $pickerItems, maxSelectionCount: 4, matching: .images) {
+                Image(systemName: "photo").font(.system(size: 20))
+                    .foregroundStyle(AIStyle.blue1).frame(width: 34, height: 44)
+            }
+            Button { showFileImporter = true } label: {
+                Image(systemName: "paperclip").font(.system(size: 20))
+                    .foregroundStyle(AIStyle.blue1).frame(width: 30, height: 44)
+            }
             TextField("Hỏi AI bất cứ điều gì", text: $input, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($focused)
@@ -214,19 +295,90 @@ struct AIChatView: View {
             }
             .disabled(!sending && !canSend)
         }
-        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 14)
-        .background(Color.white.ignoresSafeArea(edges: .bottom))
-        .overlay(Rectangle().fill(Color(red: 235 / 255, green: 236 / 255, blue: 245 / 255)).frame(height: 1), alignment: .top)
+        .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 14)
     }
 
-    private var canSend: Bool { !sending && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// Tải lại "ảnh chụp" dữ liệu DESM, lưu vào bộ nhớ + đĩa. Không chạy chồng nhau.
+    private func refreshSnapshot(progress: @escaping (String) -> Void = { _ in }) async {
+        guard model.aiAll, !session.refreshing else { return }
+        session.refreshing = true
+        let snap = await DesmAITools.snapshotAll(model: model, budget: max(model.aiLimit, 40000), status: progress)
+        session.refreshing = false
+        if !snap.isEmpty {
+            session.snapshot = (snap, Date())
+            DesmAITools.saveSnapshot(snap)
+        }
+    }
+
+    private var canSend: Bool { !sending && (!input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
+
+    // MARK: Đính kèm ảnh / tệp
+    private func jpeg(_ img: UIImage) -> Data? {
+        let maxSide: CGFloat = 1600
+        let s = min(1, maxSide / max(img.size.width, img.size.height, 1))
+        let size = CGSize(width: img.size.width * s, height: img.size.height * s)
+        return UIGraphicsImageRenderer(size: size).jpegData(withCompressionQuality: 0.7) { _ in
+            img.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    private func addPhotos(_ items: [PhotosPickerItem]) async {
+        for it in items {
+            guard attachments.count < 6 else { break }
+            if let d = try? await it.loadTransferable(type: Data.self), let img = UIImage(data: d), let j = jpeg(img) {
+                attachments.append(AIAttachment(name: "Ảnh \(attachments.count + 1)", jpeg: j))
+            }
+        }
+        pickerItems = []
+    }
+
+    private func addFiles(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            guard attachments.count < 6 else { break }
+            let ok = url.startAccessingSecurityScopedResource()
+            defer { if ok { url.stopAccessingSecurityScopedResource() } }
+            let name = url.lastPathComponent
+            let ext = url.pathExtension.lowercased()
+            if ["jpg", "jpeg", "png", "heic", "webp"].contains(ext) {
+                if let d = try? Data(contentsOf: url), let img = UIImage(data: d), let j = jpeg(img) {
+                    attachments.append(AIAttachment(name: name, jpeg: j))
+                }
+            } else if ext == "pdf" {
+                if let t = PDFDocument(url: url)?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                    attachments.append(AIAttachment(name: name, text: cap(t)))
+                } else {
+                    session.messages.append(AIChatMessage(role: "model", text: "Không đọc được chữ trong \(name) (có thể là PDF dạng ảnh quét). Hãy chụp từng trang rồi gửi dưới dạng ảnh.", isError: true))
+                }
+            } else if let t = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .isoLatin1)) {
+                attachments.append(AIAttachment(name: name, text: cap(t)))
+            } else {
+                session.messages.append(AIChatMessage(role: "model", text: "Chưa hỗ trợ định dạng \(name). Hỗ trợ: ảnh, PDF có chữ, TXT/CSV/JSON/MD.", isError: true))
+            }
+        }
+    }
+
+    private func cap(_ t: String) -> String {
+        t.count > 30000 ? String(t.prefix(30000)) + "\n[… đã cắt bớt, tệp dài hơn 30.000 ký tự]" : t
+    }
 
     private func send() {
-        let q = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, !sending else { return }
+        var q = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (!q.isEmpty || !attachments.isEmpty), !sending else { return }
+        if q.isEmpty { q = "Hãy xem nội dung đính kèm và tóm tắt những điểm chính." }
+        let files = attachments
+        let images = files.compactMap { $0.jpeg }
+        var full = q
+        for f in files { if let t = f.text { full += "\n\n[Tệp đính kèm: \(f.name)]\n" + t } }
+        if !images.isEmpty { full += "\n\n[Có \(images.count) ảnh đính kèm ở lượt này]" }
         input = ""
-        session.messages.append(AIChatMessage(role: "user", text: q))
+        attachments = []
+        var um = AIChatMessage(role: "user", text: full)
+        um.display = q
+        um.attachNames = files.map { $0.name }
+        session.messages.append(um)
         sending = true
+        AIClient.currentImages = images
         let history = session.messages.filter { !$0.isError }.suffix(20).map { (role: $0.role, text: $0.text) }
         let providers = AIStore.active()
         job = Task { @MainActor in
@@ -241,22 +393,24 @@ struct AIChatView: View {
                 if !screen.isEmpty { system += "\n\n" + screen }
             }
             if model.aiAll {
-                if let s = session.snapshot, Date().timeIntervalSince(s.at) < 300 {
+                if session.snapshot == nil { session.snapshot = DesmAITools.loadSnapshot() }
+                if let s = session.snapshot {
+                    // Có sẵn (kể cả bản cũ): dùng ngay; nếu cũ hơn 30 phút thì tải mới ở nền
                     system += "\n\n" + s.text
+                    if Date().timeIntervalSince(s.at) > 1800 { Task { @MainActor in await refreshSnapshot() } }
                 } else {
-                    status = "Đang tải dữ liệu DESM…"
-                    let snap = await DesmAITools.snapshotAll(model: model, budget: max(model.aiLimit, 40000),
-                                                             status: { s in status = s })
-                    if !snap.isEmpty {
-                        session.snapshot = (snap, Date())
-                        system += "\n\n" + snap
-                    }
+                    status = "Đang tải dữ liệu DESM (lần đầu)…"
+                    await refreshSnapshot(progress: { s in status = s })
+                    if let s = session.snapshot { system += "\n\n" + s.text }
                 }
             }
             if model.aiTools {
                 system += """
 
 
+                IMPORTANT: when the user asks about data (package, packing list, RSI, MRF, items, counts), CALL the tools \
+                yourself and answer with the real result. Never tell the user which endpoint, API name or parameter to use \
+                or ask them to search manually — they cannot; only you can query.
                 You can look up DESM data with tools (read-only; you cannot change anything). Use desm_query with the \
                 right endpoint: packages /getIdsmOsSummaryList.do, detail items of a package /getIdsmOsDetailList.do, \
                 RSI/MRF/WIP lists, vessels, notices. If unsure which endpoint, call desm_list_endpoints first; \
@@ -292,6 +446,7 @@ struct AIChatView: View {
             status = ""
             sending = false
             job = nil
+            AIClient.currentImages = []
         }
         // Chốt chặn: quá 150 giây thì tự huỷ để không treo khung chat
         let current = job
@@ -320,6 +475,13 @@ enum AIStyle {
     }
 }
 
+/// Vuốt danh sách tin nhắn thì tự ẩn bàn phím (iOS 16+)
+struct DismissKeyboardOnScroll: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) { content.scrollDismissesKeyboard(.interactively) } else { content }
+    }
+}
+
 /// Hình chữ nhật bo từng góc riêng (trái-trên, phải-trên, phải-dưới, trái-dưới)
 struct CornerShape: Shape {
     var tl: CGFloat, tr: CGFloat, br: CGFloat, bl: CGFloat
@@ -342,13 +504,33 @@ struct CornerShape: Shape {
     }
 }
 
-/// Avatar gấu của Dodo (tải từ web DESM; nếu chưa tải được thì hiện biểu tượng).
+/// Tải avatar gấu MỘT lần cho cả khung chat (AsyncImage trong từng dòng bị tải lại mỗi lần danh sách đổi).
+final class DodoAvatarStore: ObservableObject {
+    static let shared = DodoAvatarStore()
+    @Published var image: UIImage?
+    private var loading = false
+    func load() {
+        guard image == nil, !loading,
+              let url = URL(string: BrowserModel.apiOrigin + "/resources/img/bear-assistant.png") else { return }
+        loading = true
+        URLSession.shared.dataTask(with: url) { d, r, _ in
+            let img = ((r as? HTTPURLResponse)?.statusCode == 200) ? d.flatMap { UIImage(data: $0) } : nil
+            DispatchQueue.main.async {
+                self.loading = false
+                if let img = img { self.image = img }
+            }
+        }.resume()
+    }
+}
+
+/// Avatar gấu của Dodo (nếu chưa tải được thì hiện biểu tượng).
 struct DodoAvatar: View {
     var size: CGFloat
+    @ObservedObject private var store = DodoAvatarStore.shared
     var body: some View {
-        AsyncImage(url: URL(string: BrowserModel.apiOrigin + "/resources/img/bear-assistant.png")) { phase in
-            if let img = phase.image {
-                img.resizable().scaledToFill()
+        Group {
+            if let img = store.image {
+                Image(uiImage: img).resizable().scaledToFill()
             } else {
                 Image(systemName: "sparkles").resizable().scaledToFit()
                     .padding(size * 0.25).foregroundStyle(AIStyle.blue1)
@@ -358,6 +540,7 @@ struct DodoAvatar: View {
         .background(Color(red: 219 / 255, green: 229 / 255, blue: 251 / 255))
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.white, lineWidth: size > 40 ? 0 : 2))
+        .onAppear { store.load() }
     }
 }
 

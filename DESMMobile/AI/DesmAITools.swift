@@ -109,7 +109,9 @@ enum DesmAITools {
     /// RSI, MRF, tàu, thông báo. Chỉ ĐỌC. Cắt theo `budget` ký tự; phần nào không tải được thì bỏ qua và ghi chú.
     @MainActor
     static func snapshotAll(model: BrowserModel, budget: Int, status: @escaping (String) -> Void) async -> String {
-        var out: [String] = ["[DỮ LIỆU DESM TẢI SẴN — chỉ đọc; mỗi dòng JSON là một bản ghi]"]
+        let stamp = DateFormatter()
+        stamp.dateFormat = "HH:mm dd/MM/yyyy"
+        var out: [String] = ["[DỮ LIỆU DESM TẢI SẴN lúc \(stamp.string(from: Date())) — chỉ đọc; mỗi dòng JSON là một bản ghi]"]
         var used = out[0].count
         var cut = false
         let deadline = Date().addingTimeInterval(30)   // tối đa 30 giây cho cả ảnh chụp
@@ -140,16 +142,41 @@ enum DesmAITools {
             status("Đang tải \(t.components(separatedBy: " (")[0])…")
             add(t, await run(p, prm, 300))
         }
-        var done = 0
-        for no in nos.prefix(25) {
+        // Tải hạng mục các kiện song song từng đợt 5 kiện cho nhanh
+        let pick = Array(nos.prefix(25))
+        var idx = 0
+        while idx < pick.count {
             if used >= budget || late() { cut = true; break }
-            status("Đang tải hạng mục kiện \(done + 1)/\(min(nos.count, 25))…")
-            add("HẠNG MỤC CỦA KIỆN \(no) (/getIdsmOsDetailList.do)", await run("/getIdsmOsDetailList.do", ["PACKAGE_NO": no, "QTY_TYPE": "rsi"], 200))
-            done += 1
+            let batch = Array(pick[idx..<min(idx + 5, pick.count)])
+            status("Đang tải hạng mục kiện \(idx + 1)–\(idx + batch.count)/\(pick.count)…")
+            let handles = batch.map { no in
+                (no, Task { @MainActor in await run("/getIdsmOsDetailList.do", ["PACKAGE_NO": no, "QTY_TYPE": "rsi"], 200) })
+            }
+            for (no, h) in handles {
+                add("HẠNG MỤC CỦA KIỆN \(no) (/getIdsmOsDetailList.do)", await h.value)
+            }
+            idx += 5
         }
         if nos.count > 25 { out.append("\n[Chỉ tải hạng mục của 25/\(nos.count) kiện đầu; các kiện còn lại dùng công cụ desm_query nếu được bật.]") }
         if cut { out.append("\n[ĐÃ CẮT vì vượt giới hạn dữ liệu gửi AI; có thể thiếu một số mục.]") }
         return out.joined(separator: "\n")
+    }
+
+    // Bộ nhớ đệm trên đĩa: mở lại app vẫn dùng được ngay dữ liệu lần trước (không phải chờ tải lại)
+    private static var snapshotURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("desm_ai_snapshot.txt")
+    }
+
+    static func saveSnapshot(_ text: String) {
+        guard let u = snapshotURL else { return }
+        try? text.write(to: u, atomically: true, encoding: .utf8)
+    }
+
+    static func loadSnapshot() -> (text: String, at: Date)? {
+        guard let u = snapshotURL,
+              let text = try? String(contentsOf: u, encoding: .utf8), !text.isEmpty,
+              let at = (try? FileManager.default.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date else { return nil }
+        return (text, at)
     }
 
     private static func matches(_ s: String, _ pattern: String) -> [String] {
