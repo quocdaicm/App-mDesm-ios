@@ -3279,7 +3279,15 @@ enum DesmTab: CaseIterable, Identifiable {
         }
     }
     /// id thẻ <a> trong menu (đã biết: 196 = Kiện hàng). nil = tìm theo tên.
-    var menuId: String? { self == .package ? "196" : nil }
+    var menuId: String? {
+        switch self {
+        case .package: return "196"   // Package
+        case .inbound: return "816"   // Material Receiving (dự phòng; tab này mở màn Trả hàng native)
+        case .outbound: return "376"  // Outgoing Control (dự phòng; tab này mở màn xuất kho native)
+        case .report: return "436"    // RSI Summary (xác nhận từ dump DESM 2026-10-29)
+        case .more: return nil
+        }
+    }
     /// Tên mục menu (không phân biệt hoa thường, cả tiếng Anh và tiếng Việt).
     var pattern: String {
         switch self {
