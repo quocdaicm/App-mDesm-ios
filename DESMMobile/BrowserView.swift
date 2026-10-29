@@ -2485,10 +2485,27 @@ final class BrowserModel: ObservableObject {
               var win = d.defaultView, pl = d.getElementById('txtPackingListNo'), inp = d.getElementById('txtPackageNo'), btn = d.getElementById('btnSearch');
               if (!pl || !btn) { scanMsg({ status: 'nopage' }); return; }
               function setv(x, v) { x.value = v; ['input', 'change'].forEach(function(n) { x.dispatchEvent(new win.Event(n, { bubbles: true })); }); }
+              var G = cfg.open ? pkgGridOf(win) : null;
+              var before = ''; try { before = G ? diRows(G).map(function(r) { return r.id; }).join(',') : ''; } catch (e) {}
               setv(pl, cfg.pl);
               if (inp && inp.value) setv(inp, '');
               btn.click();
-              scanMsg({ status: 'plsearch', term: cfg.pl });
+              if (!G) { scanMsg({ status: 'plsearch', term: cfg.pl }); return; }
+              // Quét camera/ảnh: đợi lưới tải xong; đúng 1 kiện thì mở luôn, nhiều kiện thì để người dùng chọn
+              var t0 = Date.now(), last = '', stable = 0;
+              (function poll() {
+                var rows = diRows(G);
+                var sig = rows.map(function(r) { return r.id; }).join(',');
+                stable = sig === last ? stable + 1 : 0; last = sig;
+                var el = Date.now() - t0;
+                var changed = sig !== before;
+                var done = (rows.length && changed && stable >= 2 && el > 1200) || (rows.length && stable >= 5 && el > 3500) ||
+                  (!rows.length && stable >= 6 && el > 6000) || el > 20000;
+                if (!done) { setTimeout(poll, 400); return; }
+                if (!rows.length) { scanMsg({ status: 'plempty', term: cfg.pl }); return; }
+                if (rows.length === 1 && win.__desmOpenPkg && win.__desmOpenPkg(rows[0].id)) { scanMsg({ status: 'opened' }); return; }
+                scanMsg({ status: 'plsearch', term: cfg.pl, n: rows.length });
+              })();
             });
           };
           // ===== Quét QR nhãn hạng mục (DETAIL!!!…): tra Material Code ở khung ẩn "Hạng mục chi tiết", lấy Package No rồi mở kiện đó =====
@@ -2914,13 +2931,23 @@ final class BrowserModel: ObservableObject {
 
 extension BrowserModel {
     /// Quét xong: điền Số kiện hàng, Search rồi mở chi tiết kiện (theo cài đặt) trong trang DESM đang mở.
+    /// Package No → điền ô Package No; Packing List No (Shipment No / Shipping Invoice No) → điền ô Packing List No.
     func runScan(_ c: PkgCandidate) {
         let open = UserDefaults.standard.object(forKey: "desmScanOpenDetail") as? Bool ?? true
-        let cfg: [String: Any] = ["term": c.term, "key": c.key, "open": open]
-        guard let d = try? JSONSerialization.data(withJSONObject: cfg),
-              let js = String(data: d, encoding: .utf8) else { return }
-        showToast("Đang tìm \(c.display)…")
-        webView?.evaluateJavaScript("window.__desmFindPkg ? window.__desmFindPkg(\(js)) : 0;", completionHandler: nil)
+        switch c.kind {
+        case .package:
+            let cfg: [String: Any] = ["term": c.term, "key": c.key, "open": open]
+            guard let d = try? JSONSerialization.data(withJSONObject: cfg),
+                  let js = String(data: d, encoding: .utf8) else { return }
+            showToast("Đang tìm kiện \(c.display)…")
+            webView?.evaluateJavaScript("window.__desmFindPkg ? window.__desmFindPkg(\(js)) : 0;", completionHandler: nil)
+        case .packingList:
+            let cfg: [String: Any] = ["pl": c.term, "open": open]
+            guard let d = try? JSONSerialization.data(withJSONObject: cfg),
+                  let js = String(data: d, encoding: .utf8) else { return }
+            showToast("Đang tìm Packing List \(c.display)…")
+            webView?.evaluateJavaScript("window.__desmFindPackingList ? window.__desmFindPackingList(\(js)) : 0;", completionHandler: nil)
+        }
     }
 }
 
@@ -2944,6 +2971,7 @@ struct BrowserView: View {
     @State private var showScanChoice = false
     @State private var showPhotoPicker = false
     @State private var pickedPhoto: PhotosPickerItem? = nil
+    @State private var photoChoice: ScanChoice? = nil
     @State private var selectedTab: DesmTab = .package
     @State private var showMore = false
     @State private var showPackingHistory = false
@@ -3024,6 +3052,15 @@ struct BrowserView: View {
             DesmDialogAction(title: "Hủy", kind: .cancel),
         ])
         .photosPicker(isPresented: $showPhotoPicker, selection: $pickedPhoto, matching: .images)
+        .sheet(item: $photoChoice) { ch in
+            ScanChoiceSheet(choice: ch, onPick: { c in
+                photoChoice = nil
+                PkgParser.learn(c)
+                model.runScan(c)
+            }, onCancel: { photoChoice = nil })
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.visible)
+        }
         .onChange(of: pickedPhoto) { item in
             guard let item = item else { return }
             Task {
@@ -3035,11 +3072,12 @@ struct BrowserView: View {
                 ImageScanner.scan(img) { r in
                     switch r {
                     case .detail(let d): model.runQRScan(d)
-                    case .package(let c): model.runScan(c)
+                    case .package(let c): PkgParser.learn(c); model.runScan(c)
+                    case .choose(let ch): photoChoice = ch
                     case .otherQR(let q):
                         UIPasteboard.general.string = q
                         model.showToast("QR chưa hỗ trợ, đã sao chép: \(q.prefix(60))")
-                    case .none: model.showToast("Không thấy QR hoặc Package No trong ảnh")
+                    case .none: model.showToast("Không thấy QR, Package No hay Packing List No trong ảnh")
                     }
                 }
             }
