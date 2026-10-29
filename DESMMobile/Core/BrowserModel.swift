@@ -71,7 +71,7 @@ final class BrowserModel: ObservableObject {
     @AppStorage("desmDodoBubble") var dodoBubble = true
     /// Gắn thêm yêu cầu "trả lời bằng tiếng Việt" vào câu hỏi gửi Dodo
     @AppStorage("desmDodoVi") var dodoVi = true
-    @AppStorage("desmDodoSlow") var dodoSlow = true
+    @AppStorage("desmDodoSlow") var dodoSlow = false
     /// Gửi kèm dữ liệu kiện đang hiển thị (màn Package) trong câu hỏi gửi Dodo
     @AppStorage("desmDodoData") var dodoData = true
     /// Trợ lý khi chạm bong bóng: "dodo" (Dodo của web DESM) hoặc "ai" (AI riêng bằng API key — xem AI/)

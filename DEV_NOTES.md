@@ -301,4 +301,4 @@ Dodo trả lời "không có dữ liệu bảng" dù màn Package đang có 17 k
 - Vẫn CHƯA build Xcode (môi trường không có). Việc kế tiếp: build bằng GitHub Actions, gửi log lỗi để sửa.
 
 ## Dodo luôn Slow (2026-10-29)
-- `Dodo.js` bản này đặt `.dodo-model{display:none}` nên người dùng không chọn được Fast/Slow. Thêm công tắc Cài đặt > "Dodo luôn dùng chế độ Slow (chính xác)" (`desmDodoSlow`, mặc định bật): wrapper `fetch` trong `DodoBubble.swift` ghi đè `mode=slow` trong form gửi `/dodo/chat/stream`. CHƯA kiểm chứng máy chủ có trả lời khác đi ở Slow hay không.
+- `Dodo.js` bản này đặt `.dodo-model{display:none}` nên người dùng không chọn được Fast/Slow. Thêm công tắc Cài đặt > "Dodo luôn dùng chế độ Slow (chính xác)" (`desmDodoSlow`, mặc định TẮT từ lượt sau: nghi ép slow gây lỗi `[오류] ... (status 422)` từ AI service của Dodo — chưa xác định nguyên nhân): wrapper `fetch` trong `DodoBubble.swift` ghi đè `mode=slow` trong form gửi `/dodo/chat/stream`. CHƯA kiểm chứng máy chủ có trả lời khác đi ở Slow hay không.
