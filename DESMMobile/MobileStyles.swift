@@ -150,6 +150,10 @@ enum MobileStyles {
       }
       /* Thanh nút gọn: chỉ chừa Location Delete + Location Update (nút "⋯" mở ra các nút còn lại) */
       html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim:not(.desm-tb-all) > :not(#btnLocationDelete):not(#btnLocationSetup):not(#desmMoreToggle):not(#desmViewToggle):not(#desmTapToggle) { display:none!important; }
+      /* Chưa tích chọn kiện nào (dạng thẻ): ẩn cả thanh nút, chỉ chừa nút nhỏ "⋯" (chạm để mở toàn bộ). Tích chọn kiện thì các nút hiện lại */
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > :not(#desmMoreToggle) { display:none!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) { padding:2px 10px!important; justify-content:flex-end; min-height:0!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > #desmMoreToggle { height:26px!important; min-height:0!important; min-width:36px; padding:0 10px!important; line-height:1; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim > #desmMoreToggle { order:99; min-width:40px; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmViewToggle { order:98; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmTapToggle { order:97; }
@@ -467,6 +471,11 @@ enum MobileStyles {
       box-shadow:0 4px 12px rgba(30,136,245,.38), inset 0 1px 0 rgba(255,255,255,.9);
       -webkit-tap-highlight-color:transparent; transition:transform .12s ease, box-shadow .12s ease;
     }
+    /* Chưa chọn hạng mục nào: thu thành dấu "⋯" nhỏ gọn */
+    html.desm-mobile-mode .desm-detail-lu.desm-lu-min {
+      width:auto; min-width:46px; max-width:none; min-height:30px; padding:0 14px; font-size:20px; letter-spacing:1px;
+      margin:4px 0 calc(8px + env(safe-area-inset-bottom));
+    }
     html.desm-mobile-mode .desm-detail-lu:active { transform:scale(.96); box-shadow:0 2px 6px rgba(30,136,245,.35); }
 
     /* ===== Nút + icon SVG vẽ riêng (thay icon font) ===== */
@@ -629,6 +638,85 @@ enum MobileStyles {
       html.desm-mobile-mode #accordionSidebar .collapse-item:active,
       html.desm-mobile-mode #accordionSidebar .collapse-item.active { background:#e8f1ff!important; color:#1761e8!important; font-weight:700; }
       html.desm-mobile-mode #accordionSidebar .collapse-header { color:#7d9cc8!important; }
+    }
+
+    /* ===== Trang Vessel Finder (bản đồ tàu): danh sách chuyến trên, bản đồ dưới, màu/bo góc đồng bộ app ===== */
+    @media(max-width:800px) {
+      html.desm-mobile-mode .row:has(#vesselFinderMap) { display:block!important; margin:0!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) > [class*="col-"] {
+        width:100%!important; max-width:100%!important; flex:none!important; padding:0 10px!important; margin:0 0 10px!important;
+      }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .table-grid { height:auto!important; max-height:34vh; overflow:auto!important; margin:0!important;
+        background:#fff; border-radius:16px; box-shadow:0 2px 10px rgba(47,125,224,.10); padding:6px; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .fixed-table-container { height:auto!important; padding-bottom:0!important; border:0!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .fixed-table-body { height:auto!important; overflow:auto!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .fixed-table-toolbar { padding:2px 4px!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .fixed-table-toolbar .search-input { border-radius:999px!important; min-height:36px; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) .fixed-table-toolbar .btn { border-radius:999px!important; min-height:36px; background:#e8f1ff!important; color:#1761e8!important; border:0!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) table { width:100%!important; border:0!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) thead th { background:#eef4ff!important; color:#35507a!important; border:0!important; font-weight:700; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) tbody td { border-color:#eef2f8!important; background:transparent!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) tbody tr.choice td { background:rgba(47,125,224,.12)!important; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) td.green-row, html.desm-mobile-mode .row:has(#vesselFinderMap) td.yellow-row {
+        width:10px; background:transparent!important; position:relative;
+      }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) td.green-row::after, html.desm-mobile-mode .row:has(#vesselFinderMap) td.yellow-row::after {
+        content:""; position:absolute; left:50%; top:50%; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+      }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) td.green-row::after { background:#34c759; }
+      html.desm-mobile-mode .row:has(#vesselFinderMap) td.yellow-row::after { background:#ff9f0a; }
+      html.desm-mobile-mode #divProjectGird { height:56vh!important; min-height:320px; padding:0 10px!important; }
+      html.desm-mobile-mode #vesselFinderMap { border-radius:16px!important; box-shadow:0 2px 10px rgba(47,125,224,.14); }
+      html.desm-mobile-mode .gm-style .gm-style-iw-c { border-radius:14px!important; }
+    }
+
+    /* ===== Đồng bộ ô tìm kiếm / Bộ lọc / nút Tìm kiếm - Reset / thanh nút (trang Package và các trang có thanh lọc) ===== */
+    @media(max-width:800px) {
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-bar {
+        gap:10px; padding:12px 12px 12px; background:linear-gradient(180deg,#ffffff,#f5f9ff);
+        border-bottom:1px solid #dfe7f5; box-shadow:0 4px 12px rgba(47,125,224,.08);
+      }
+      /* Mọi ô điều khiển cùng chiều cao, bo góc và viền */
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-toggle,
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick input,
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button {
+        box-sizing:border-box; height:44px!important; min-height:44px!important; border-radius:14px!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-toggle {
+        background:#fff!important; color:#1f3a7a!important; border:1.5px solid #d3dcee!important; box-shadow:none!important;
+        padding:0 14px; font-size:15px; font-weight:700;
+      }
+      html.desm-mobile-mode.desm-mobile-mode .desm-filter-toggle:active { background:#f1f6ff!important; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick { gap:10px; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick input {
+        padding:0 14px!important; border:1.5px solid #d3dcee!important; background:#fff!important; color:#1f2937;
+        font-size:15px!important; box-shadow:none; outline:none; -webkit-appearance:none; appearance:none;
+      }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick input::placeholder { color:#94a3b8; opacity:1; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-quick input:focus {
+        border-color:#2f7de0!important; box-shadow:0 0 0 3px rgba(47,125,224,.16)!important;
+      }
+      /* Nút Tìm kiếm (chính) = xanh đậm giống nút Location Update; nút Reset (phụ) = viền xanh nhạt */
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns { gap:8px; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button .icon,
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button .text { color:inherit!important; }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button:first-child {
+        background:linear-gradient(135deg,#1e88f5,#0ea5e9)!important; background-image:linear-gradient(135deg,#1e88f5,#0ea5e9)!important;
+        color:#fff!important; border:0!important; font-weight:700; padding:0 6px!important;
+        box-shadow:0 4px 10px rgba(30,136,245,.35)!important;
+      }
+      html.desm-mobile-mode.desm-mobile-mode .desm-btns button:not(:first-child) {
+        background:#e8f1ff!important; background-image:none!important; color:#1761e8!important;
+        border:1.5px solid #cfe0fb!important; box-shadow:none!important; min-width:48px;
+      }
+      /* Thanh nút Xóa vị trí / Cập nhật vị trí / Dạng / Chạm: cùng nhịp với thanh lọc */
+      html.desm-mobile-mode.desm-mobile-mode #toolbar { background:#f5f9ff; border-bottom:1px solid #dfe7f5; padding:10px 12px!important; gap:10px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button { height:40px!important; border-radius:999px!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > button.btn-secondary {
+        background:#fff!important; color:#2d4a8a!important; box-shadow:inset 0 0 0 1.5px #d3dcee!important;
+      }
+      /* Thanh "Chọn tất cả" khớp bo góc/đổ bóng với thẻ */
+      html.desm-mobile-mode .desm-cards-bar { margin:10px 12px 8px!important; box-shadow:0 2px 8px rgba(15,23,42,.08); }
     }
 
     """#

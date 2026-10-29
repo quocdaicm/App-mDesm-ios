@@ -189,3 +189,16 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Thay: hộp "Quét mã" (trước là confirmationDialog), "Không mở được địa chỉ", Kết quả (Cài đặt), lỗi tải xlsx, 3 xác nhận (Xuất kho / WIP / Trả hàng).
 - Alert/confirm JS của trang và hỏi "Lưu tài khoản?" (`WebView.swift`) đi qua `BrowserModel.presentDialog` (hàng đợi `dialogQueue`, hiện ở `BrowserView`). Nếu đang có sheet/camera phủ lên (`useOverlayDialog()` = false) thì dùng `UIAlertController` như cũ để `completionHandler` luôn được gọi. Prompt có ô nhập vẫn dùng alert hệ thống.
 - Chưa build Xcode.
+
+
+## Tải file / API cho AI (Thêm > "Tải file / API cho AI")
+- Mục đích: khi AI cần xem mã nguồn DESM (.js, .css, HTML) hoặc kết quả một API mà app chưa có, AI đưa link/địa chỉ, người dùng dán vào màn này, bấm Tải rồi chia sẻ file lại.
+- Mỗi dòng một yêu cầu: `/resources/scripts/....js?rv=xxx` hoặc nguyên link https://desm... (GET); `POST /duong/dan.do KEY=VALUE&...` (POST form, có X-Requested-With). Chỉ cùng domain với trang đang mở, dùng phiên đăng nhập hiện có.
+- Một dòng -> file đúng loại (.js/.json/.css/.html/.txt); nhiều dòng -> gộp một file .txt có tiêu đề `===== METHOD url =====` và `HTTP status · content-type · số ký tự`. Dòng bắt đầu bằng # bị bỏ qua. Có danh sách "đã dùng gần đây".
+- Code: `BrowserModel.fetchResource`, `DesmFetched`, `DesmFetchSheet` (cuối BrowserView.swift). CHƯA kiểm chứng trên máy thật. Ô cũ "Tải địa chỉ" trong Cài đặt > Nâng cao vẫn còn.
+- Dành cho AI: nếu cần file JS/API của DESM, hãy bảo người dùng mở Thêm > "Tải file / API cho AI", dán đúng dòng cần tải (ví dụ `/resources/scripts/shippingStatus/vesselFinder.js?rv=bJ5Z2O2Jp5`) và gửi file lại.
+
+## Bản đồ tàu (Thêm > "Bản đồ tàu")
+- Dữ liệu `POST /vessel/getVesselFinderList.do` (PROJECT_NO). LATITUDE/LONGITUDE/IMO hiện null nên bản đồ vẽ tuyến POL -> POD (toạ độ cảng gần đúng trong `DesmPorts.known`, cảng lạ tra CLGeocoder). Trang web gốc: `/page_crt.do?MENU_SEQ=1057` (script `/resources/scripts/shippingStatus/vesselFinder.js`, chưa đọc được). CSS đồng bộ app cho trang đó nằm cuối MobileStyles.swift.
+
+- Mục \"Mã nguồn trang này\" (Thêm): quét JS/CSS của trang đang mở (`BrowserModel.listPageResources`, cả iframe cùng domain + Performance API), mặc định bỏ thư viện (.min, /ext/, jQuery...). Tải JS/CSS bằng `fetchResource`, HTML bằng `fetchHTML`, API bằng `fetchNetLog(.json)` (cần bật Ghi API trước). CHƯA kiểm chứng trên máy thật.

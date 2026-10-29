@@ -10,6 +10,8 @@
 import SwiftUI
 import PhotosUI
 import WebKit
+import MapKit
+import CoreLocation
 
 enum LayoutMode: String, CaseIterable, Identifiable {
     case mobile, fit, off
@@ -960,7 +962,11 @@ final class BrowserModel: ObservableObject {
                 selAll.indeterminate = chosen.length > 0 && chosen.length < itemCards.length;
               }
               if (selTxt) selTxt.textContent = 'Chọn tất cả · ' + itemCards.length + ' hạng mục' + (chosen.length ? ' · đã chọn ' + chosen.length : '');
-              if (lu) lu.textContent = chosen.length ? 'Location Update (' + chosen.length + ' hạng mục)' : 'Location Update';
+              if (lu) {
+                // Chưa tích chọn hạng mục nào: ẩn hẳn nút Location Update; tích chọn xong mới hiện
+                lu.style.display = chosen.length ? '' : 'none';
+                lu.textContent = chosen.length ? 'Location Update (' + chosen.length + ' hạng mục)' : 'Location Update';
+              }
             }
             // ===== Màn hình lồng nhau: Detail Item -> RSI & MRF List -> RSI Detail =====
             function subScreen(title, backText) {
@@ -1484,6 +1490,7 @@ final class BrowserModel: ObservableObject {
               close(); btn.click();
             });
             ov.appendChild(lu);
+            refreshSel();
             doc.documentElement.classList.add('desm-detail-open');
             doc.body.appendChild(ov);
           }
@@ -1556,6 +1563,7 @@ final class BrowserModel: ObservableObject {
             host.classList.toggle('desm-grid-off', on);
             box.style.display = on ? '' : 'none';
             if (!on) {
+              if (tb) tb.classList.remove('desm-tb-nosel');
               if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
               return;
             }
@@ -1587,6 +1595,10 @@ final class BrowserModel: ObservableObject {
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
+            // Mặc định ẩn nút Xóa vị trí / Cập nhật vị trí; chỉ hiện khi đã tích chọn ít nhất một kiện
+            if (tb) tb.classList.toggle('desm-tb-nosel', !items.some(function(i) { return i.sel; }));
+            // Thanh nút đổi chiều cao (thu/mở) nên tính lại chiều cao vùng thẻ cho vừa màn hình
+            try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
             try { diWarm(box.ownerDocument); } catch (e) {}
             var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
             if (box.__sig === sig) return;
@@ -2937,6 +2949,9 @@ struct BrowserView: View {
     @State private var showPackingHistory = false
     @State private var showActivity = false
     @State private var showEditLog = false
+    @State private var showVessel = false
+    @State private var showFetcher = false
+    @State private var showSource = false
     @State private var docKind: DesmDocKind? = nil
     @State private var showOutgoing = false
     @State private var showWip = false
@@ -3030,7 +3045,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true })
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onFetch: { showFetcher = true }, onSource: { showSource = true })
                 .presentationDetents([.height(560)])
                 .presentationDragIndicator(.visible)
                 .tint(Color.tabBlue)
@@ -3057,6 +3072,18 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $showActivity) {
             DesmActivitySheet(model: model, onClose: { showActivity = false })
+                .desmSheet()
+        }
+        .sheet(isPresented: $showVessel) {
+            DesmVesselSheet(model: model, onClose: { showVessel = false })
+                .desmSheet()
+        }
+        .sheet(isPresented: $showFetcher) {
+            DesmFetchSheet(model: model, onClose: { showFetcher = false })
+                .desmSheet()
+        }
+        .sheet(isPresented: $showSource) {
+            DesmSourceSheet(model: model, onClose: { showSource = false })
                 .desmSheet()
         }
         .sheet(isPresented: $showPackingHistory) {
@@ -3424,6 +3451,9 @@ struct MoreSheet: View {
     var onWip: () -> Void = {}
     var onActivity: () -> Void = {}
     var onEditLog: () -> Void = {}
+    var onVessel: () -> Void = {}
+    var onFetch: () -> Void = {}
+    var onSource: () -> Void = {}
 
     private struct Item: Identifiable {
         let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
@@ -3448,6 +3478,9 @@ struct MoreSheet: View {
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
             Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },
             Item(symbol: "clock.arrow.2.circlepath", title: "Tra Edit Log", enabled: model.inDesm) { onEditLog() },
+            Item(symbol: "ferry.fill", title: "Bản đồ tàu", enabled: model.inDesm) { onVessel() },
+            Item(symbol: "chevron.left.forwardslash.chevron.right", title: "Mã nguồn trang này", enabled: model.inDesm) { onSource() },
+            Item(symbol: "square.and.arrow.down.on.square", title: "Tải file / API cho AI", enabled: model.inDesm) { onFetch() },
             Item(symbol: "slider.horizontal.3", title: "Cài đặt") { model.showSettings = true },
         ]
     }
@@ -6712,5 +6745,644 @@ struct DesmEditLogSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } } }
         }
+    }
+}
+
+
+// MARK: - Bản đồ tàu (mục "Thêm")
+//
+// Dữ liệu: POST /vessel/getVesselFinderList.do (PROJECT_NO) — trang "Vessel Finder" của DESM (MENU_SEQ=1057), mỗi dòng là một chuyến tàu:
+// INV_NO, VESSEL_NAME, MFR, POL (cảng đi), POD (cảng đến), ETD_ATD / ETA_ATA (có ngoặc "( )" = dự kiến, không ngoặc = thực tế), MAIN_ITEM, LATITUDE, LONGITUDE.
+// Lưu ý: ở dữ liệu đã bắt được, LATITUDE/LONGITUDE đều null nên DESM chưa có vị trí tàu; khi đó bản đồ vẽ tuyến cảng đi -> cảng đến
+// (toạ độ cảng tra từ bảng nhỏ trong app, cảng lạ thì tra bằng CLGeocoder). Khi DESM có toạ độ thì tàu được đặt đúng vị trí.
+// CHƯA kiểm chứng trên máy thật.
+
+struct DesmVessel: Identifiable, Hashable {
+    let id: String
+    var invoice = "", vessel = "", mfr = "", pol = "", pod = "", etd = "", eta = "", item = ""
+    var departed = false, arrived = false
+    var lat: Double? = nil, lon: Double? = nil
+}
+
+enum DesmPorts {
+    static func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+    /// Toạ độ gần đúng của các cảng hay gặp (không phải số liệu của DESM).
+    static let known: [String: CLLocationCoordinate2D] = [
+        "haiphong": .init(latitude: 20.8449, longitude: 106.6881),
+        "busan": .init(latitude: 35.1028, longitude: 129.0403),
+        "hochiminh": .init(latitude: 10.7597, longitude: 106.7933),
+        "hochiminhcity": .init(latitude: 10.7597, longitude: 106.7933),
+        "catlai": .init(latitude: 10.7597, longitude: 106.7933),
+        "om4jetty": .init(latitude: 10.1000, longitude: 105.6300),
+        "incheon": .init(latitude: 37.4563, longitude: 126.5927),
+        "ulsan": .init(latitude: 35.5384, longitude: 129.3114),
+        "shanghai": .init(latitude: 31.2304, longitude: 121.4737),
+        "singapore": .init(latitude: 1.2644, longitude: 103.8222),
+    ]
+}
+
+extension BrowserModel {
+    func fetchVessels(done: @escaping ([DesmVessel], String) -> Void) {
+        desmQuery("/getInitDefailProject.do", body: "") { rows, err in
+            guard let rows = rows else { done([], err); return }
+            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { done([], "Chưa có dự án mặc định trong DESM."); return }
+            let P = no.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? no
+            self.desmQuery("/vessel/getVesselFinderList.do", body: "PROJECT_NO=\(P)") { list, e in
+                guard let list = list else { done([], e); return }
+                func s(_ r: [String: Any], _ k: String) -> String {
+                    if let v = r[k] as? String { return v.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines) }
+                    if let n = r[k] as? NSNumber { return n.stringValue }
+                    return ""
+                }
+                func d(_ r: [String: Any], _ k: String) -> Double? {
+                    if let n = r[k] as? NSNumber { return n.doubleValue }
+                    if let v = r[k] as? String { return Double(v.trimmingCharacters(in: .whitespaces)) }
+                    return nil
+                }
+                var out: [DesmVessel] = []
+                for (i, r) in list.enumerated() {
+                    var v = DesmVessel(id: "\(i)-\(s(r, "INV_NO"))")
+                    v.invoice = s(r, "INV_NO"); v.vessel = s(r, "VESSEL_NAME"); v.mfr = s(r, "MFR")
+                    v.pol = s(r, "POL"); v.pod = s(r, "POD"); v.item = s(r, "MAIN_ITEM")
+                    let etd = s(r, "ETD_ATD"), eta = s(r, "ETA_ATA")
+                    v.departed = !etd.isEmpty && !etd.hasPrefix("(")
+                    v.arrived = !eta.isEmpty && !eta.hasPrefix("(")
+                    v.etd = etd.trimmingCharacters(in: CharacterSet(charactersIn: "()"))
+                    v.eta = eta.trimmingCharacters(in: CharacterSet(charactersIn: "()"))
+                    v.lat = d(r, "LATITUDE"); v.lon = d(r, "LONGITUDE")
+                    out.append(v)
+                }
+                done(out, "")
+            }
+        }
+    }
+}
+
+final class DesmVesselPin: MKPointAnnotation {
+    enum Kind { case pol, pod, ship }
+    var kind = Kind.pol
+    var vesselId = ""
+}
+
+struct DesmVesselMap: UIViewRepresentable {
+    var vessels: [DesmVessel]
+    var ports: [String: CLLocationCoordinate2D]
+    var selected: String?
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> MKMapView {
+        let m = MKMapView()
+        m.delegate = context.coordinator
+        m.pointOfInterestFilter = .excludingAll
+        m.showsCompass = false
+        m.layer.cornerRadius = 16; m.clipsToBounds = true
+        return m
+    }
+    func updateUIView(_ m: MKMapView, context: Context) {
+        let sig = vessels.map { $0.id }.joined(separator: ",") + "|" + (selected ?? "") + "|\(ports.count)"
+        if context.coordinator.sig == sig { return }
+        context.coordinator.sig = sig
+        m.removeAnnotations(m.annotations); m.removeOverlays(m.overlays)
+        var focus: [MKMapPoint] = []
+        func pt(_ c: CLLocationCoordinate2D) -> MKMapPoint { MKMapPoint(c) }
+        for v in vessels {
+            let isSel = selected == nil || selected == v.id
+            let a = ports[DesmPorts.key(v.pol)], b = ports[DesmPorts.key(v.pod)]
+            if let a = a, let b = b {
+                var cs = [a, b]
+                let line = MKGeodesicPolyline(coordinates: &cs, count: 2)
+                line.title = selected == v.id ? "sel" : ""
+                m.addOverlay(line)
+            }
+            if let a = a {
+                let p = DesmVesselPin(); p.coordinate = a; p.kind = .pol; p.vesselId = v.id; p.title = v.pol; p.subtitle = "Cảng đi · " + v.invoice
+                m.addAnnotation(p); if isSel { focus.append(pt(a)) }
+            }
+            if let b = b {
+                let p = DesmVesselPin(); p.coordinate = b; p.kind = .pod; p.vesselId = v.id; p.title = v.pod; p.subtitle = "Cảng đến · " + v.invoice
+                m.addAnnotation(p); if isSel { focus.append(pt(b)) }
+            }
+            if let la = v.lat, let lo = v.lon, abs(la) <= 90, abs(lo) <= 180 {
+                let c = CLLocationCoordinate2D(latitude: la, longitude: lo)
+                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.vesselId = v.id
+                p.title = v.vessel.isEmpty ? v.invoice : v.vessel; p.subtitle = v.invoice
+                m.addAnnotation(p); if isSel { focus.append(pt(c)) }
+            }
+        }
+        if let first = focus.first {
+            var rect = MKMapRect(origin: first, size: MKMapSize(width: 0, height: 0))
+            for q in focus.dropFirst() { rect = rect.union(MKMapRect(origin: q, size: MKMapSize(width: 0, height: 0))) }
+            m.setVisibleMapRect(rect, edgePadding: UIEdgeInsets(top: 50, left: 40, bottom: 50, right: 40), animated: true)
+        }
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        var sig = ""
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            guard let l = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
+            let r = MKPolylineRenderer(polyline: l)
+            let sel = l.title == "sel"
+            r.strokeColor = sel ? UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1) : UIColor.systemGray
+            r.lineWidth = sel ? 3 : 2
+            r.lineDashPattern = [6, 6]
+            return r
+        }
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard let a = annotation as? DesmVesselPin else { return nil }
+            let v = MKMarkerAnnotationView(annotation: a, reuseIdentifier: "desmVesselPin")
+            v.canShowCallout = true
+            switch a.kind {
+            case .pol: v.markerTintColor = .systemGray; v.glyphImage = UIImage(systemName: "arrow.up.right")
+            case .pod: v.markerTintColor = UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1); v.glyphImage = UIImage(systemName: "flag.fill")
+            case .ship: v.markerTintColor = .systemGreen; v.glyphImage = UIImage(systemName: "ferry.fill")
+            }
+            return v
+        }
+    }
+}
+
+struct DesmVesselSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    @State private var vessels: [DesmVessel] = []
+    @State private var ports: [String: CLLocationCoordinate2D] = DesmPorts.known
+    @State private var selected: String? = nil
+    @State private var loading = false
+    @State private var error = ""
+    private let geocoder = CLGeocoder()
+
+    private func load() {
+        loading = true; error = ""
+        model.fetchVessels { list, err in
+            loading = false; error = err
+            vessels = list
+            if let s = selected, !list.contains(where: { $0.id == s }) { selected = nil }
+            geocodeMissing(list)
+        }
+    }
+
+    /// Cảng chưa có trong bảng: tra từng cái một bằng CLGeocoder (giới hạn tốc độ của hệ thống).
+    private func geocodeMissing(_ list: [DesmVessel]) {
+        var names: [String] = []
+        for v in list { for n in [v.pol, v.pod] where !n.isEmpty && ports[DesmPorts.key(n)] == nil && !names.contains(n) { names.append(n) } }
+        func step(_ i: Int) {
+            guard i < names.count else { return }
+            geocoder.geocodeAddressString(names[i] + " port") { marks, _ in
+                if let c = marks?.first?.location?.coordinate { ports[DesmPorts.key(names[i])] = c }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { step(i + 1) }
+            }
+        }
+        step(0)
+    }
+
+    private var hasPositions: Bool { vessels.contains { $0.lat != nil && $0.lon != nil } }
+
+    private func row(_ v: DesmVessel) -> some View {
+        let color: Color = v.arrived ? .gray : (v.departed ? .green : .orange)
+        let state = v.arrived ? "Đã đến" : (v.departed ? "Đang đi" : "Chưa khởi hành")
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "ferry.fill")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(color)
+                .frame(width: 34, height: 34).background(color.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(v.invoice.isEmpty ? "(không có Invoice)" : v.invoice).font(.system(size: 15, weight: .bold)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(state).font(.system(size: 11, weight: .bold)).foregroundStyle(color)
+                }
+                if !v.vessel.isEmpty { Text(v.vessel + (v.mfr.isEmpty ? "" : " · " + v.mfr)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) }
+                Text("\(v.pol.isEmpty ? "—" : v.pol) → \(v.pod.isEmpty ? "—" : v.pod)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.tabBlue)
+                Text("\(v.departed ? "ATD" : "ETD") \(v.etd.isEmpty ? "-" : v.etd)   ·   \(v.arrived ? "ATA" : "ETA") \(v.eta.isEmpty ? "-" : v.eta)")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                if !v.item.isEmpty { Text(v.item).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2) }
+            }
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture { selected = selected == v.id ? nil : v.id }
+        .listRowBackground(selected == v.id ? Color.tabBlue.opacity(0.10) : Color(.secondarySystemGroupedBackground))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                DesmVesselMap(vessels: vessels, ports: ports, selected: selected)
+                    .frame(height: 290)
+                    .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
+                if !vessels.isEmpty && !hasPositions {
+                    Text("DESM chưa có toạ độ tàu — bản đồ vẽ tuyến cảng đi → cảng đến (toạ độ cảng là gần đúng).")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 16).padding(.bottom, 6)
+                }
+                if !error.isEmpty {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.orange).padding(.horizontal, 16).padding(.bottom, 6)
+                }
+                if loading && vessels.isEmpty {
+                    Spacer(); ProgressView("Đang tải…"); Spacer()
+                } else if vessels.isEmpty {
+                    Spacer()
+                    Text(error.isEmpty ? "Chưa có chuyến tàu nào." : "").font(.callout).foregroundStyle(.secondary).padding(24)
+                    Spacer()
+                } else {
+                    List(vessels) { v in row(v) }.listStyle(.insetGrouped)
+                }
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Bản đồ tàu")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
+                }
+            }
+        }
+        .onAppear { if vessels.isEmpty && !loading { load() } }
+    }
+}
+
+
+// MARK: - Tải file / API cho AI (mục "Thêm")
+//
+// Để khi AI khác cần xem mã nguồn của DESM (file .js, .css, trang HTML) hoặc kết quả một API, người dùng chỉ cần dán link/địa chỉ vào đây,
+// bấm tải rồi chia sẻ file lại cho AI. Chạy bằng phiên đăng nhập hiện có của trang DESM, chỉ tải được địa chỉ cùng domain.
+// Mỗi dòng là một yêu cầu:
+//   /resources/scripts/shippingStatus/vesselFinder.js?rv=bJ5Z2O2Jp5            (GET; có thể dán nguyên link https://desm...)
+//   POST /vessel/getVesselFinderList.do PROJECT_NO=T25026                       (POST form: sau địa chỉ là phần body)
+// Một dòng -> lưu đúng nội dung (đuôi .js/.json/.css/.html/.txt theo loại trả về); nhiều dòng -> gộp thành một file văn bản có tiêu đề từng phần.
+// CHƯA kiểm chứng trên máy thật.
+
+extension BrowserModel {
+    /// Tải một yêu cầu ("[GET|POST] địa chỉ [body]"). done(kết quả, lỗi): lỗi rỗng = thành công.
+    func fetchResource(_ spec: String, done: @escaping (DesmFetched?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang DESM để tải. Hãy mở DESM và đăng nhập trước."); return }
+        let js = #"""
+        var m = 'GET', u = String(spec || '').trim(), b = null;
+        var mm = u.match(/^(GET|POST)\s+(\S+)(?:\s+([\s\S]*))?$/i);
+        if (mm) { m = mm[1].toUpperCase(); u = mm[2]; b = mm[3] || ''; }
+        var a;
+        try { a = new URL(u, location.href); } catch (e) { return JSON.stringify({ err: 'Địa chỉ không hợp lệ' }); }
+        if (a.origin !== location.origin) return JSON.stringify({ err: 'Chỉ tải được địa chỉ cùng domain với trang đang mở (' + location.origin + ')' });
+        try {
+          var o = { method: m, credentials: 'include', cache: 'no-store', headers: {} };
+          if (m === 'POST') { o.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8'; o.headers['X-Requested-With'] = 'XMLHttpRequest'; o.body = b || ''; }
+          var r = await fetch(a.href, o);
+          var t = await r.text();
+          return JSON.stringify({ method: m, url: a.href, status: r.status, ct: (r.headers.get('content-type') || '').split(';')[0], text: t });
+        } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["spec": spec], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e): done(nil, "Không tải được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let s = v as? String, let data = s.data(using: .utf8),
+                      let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { done(nil, "Không đọc được phản hồi."); return }
+                if let err = o["err"] as? String { done(nil, err); return }
+                done(DesmFetched(method: o["method"] as? String ?? "GET", url: o["url"] as? String ?? spec,
+                                 status: (o["status"] as? NSNumber)?.intValue ?? 0,
+                                 contentType: o["ct"] as? String ?? "", text: o["text"] as? String ?? ""), "")
+            }
+        }
+    }
+}
+
+struct DesmFetched {
+    var method: String, url: String, status: Int, contentType: String, text: String
+    /// Đuôi file theo loại nội dung (rồi đến đuôi trong địa chỉ).
+    var ext: String {
+        let c = contentType.lowercased(), p = (URL(string: url)?.path ?? "").lowercased()
+        if c.contains("json") || p.hasSuffix(".json") { return "json" }
+        if c.contains("javascript") || p.hasSuffix(".js") { return "js" }
+        if c.contains("css") || p.hasSuffix(".css") { return "css" }
+        if c.contains("html") || p.hasSuffix(".html") || p.hasSuffix(".do") && c.contains("html") { return "html" }
+        return "txt"
+    }
+    var baseName: String {
+        let last = (URL(string: url)?.lastPathComponent ?? "").replacingOccurrences(of: ".\(ext)", with: "")
+        let clean = last.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        return clean.isEmpty ? "desm-fetch" : clean
+    }
+}
+
+struct DesmFetchSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    private static let recentKey = "desmFetchRecent"
+    @AppStorage("desmFetchLines") private var lines = ""
+    @State private var loading = false
+    @State private var progress = ""
+    @State private var message = ""
+    @State private var shareItem: ShareItem? = nil
+    @State private var recent: [String] = UserDefaults.standard.stringArray(forKey: DesmFetchSheet.recentKey) ?? []
+
+    private var specs: [String] {
+        lines.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    }
+
+    private func save(_ text: String, name: String, ext: String) {
+        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(f.string(from: Date())).\(ext)")
+        do { try text.write(to: url, atomically: true, encoding: .utf8); shareItem = ShareItem(url: url) }
+        catch { message = "Không lưu được file: \(error.localizedDescription)" }
+    }
+
+    private func run() {
+        let list = specs
+        guard !list.isEmpty else { message = "Hãy dán ít nhất một link hoặc địa chỉ."; return }
+        loading = true; message = ""
+        var results: [(String, DesmFetched?, String)] = []
+        func step(_ i: Int) {
+            if i >= list.count {
+                loading = false; progress = ""
+                // nhớ các dòng đã dùng (tối đa 12)
+                var rc = recent
+                for s in list.reversed() { rc.removeAll { $0 == s }; rc.insert(s, at: 0) }
+                recent = Array(rc.prefix(12)); UserDefaults.standard.set(recent, forKey: DesmFetchSheet.recentKey)
+                if list.count == 1 {
+                    if let f = results[0].1 { save(f.text, name: f.baseName, ext: f.ext); if f.status >= 400 { message = "HTTP \(f.status) — nội dung có thể là trang lỗi." } }
+                    else { message = results[0].2 }
+                } else {
+                    var out = "DESM — NỘI DUNG ĐÃ TẢI (\(list.count) yêu cầu)\n"
+                    for (spec, f, err) in results {
+                        if let f = f {
+                            out += "\n\n===== \(f.method) \(f.url) =====\nHTTP \(f.status) · \(f.contentType.isEmpty ? "?" : f.contentType) · \(f.text.count) ký tự\n\n\(f.text)"
+                        } else {
+                            out += "\n\n===== \(spec) =====\nLỖI: \(err)"
+                        }
+                    }
+                    save(out, name: "desm-fetch", ext: "txt")
+                    let bad = results.filter { $0.1 == nil }.count
+                    if bad > 0 { message = "\(bad)/\(list.count) yêu cầu bị lỗi (đã ghi trong file)." }
+                }
+                return
+            }
+            progress = "Đang tải \(i + 1)/\(list.count)…"
+            model.fetchResource(list[i]) { f, err in
+                results.append((list[i], f, err))
+                step(i + 1)
+            }
+        }
+        step(0)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $lines)
+                        .font(.system(.footnote, design: .monospaced))
+                        .autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .frame(minHeight: 140)
+                    Button {
+                        run()
+                    } label: {
+                        HStack { if loading { ProgressView() }; Text(loading ? progress : "Tải và chia sẻ file…").fontWeight(.semibold) }
+                    }
+                    .disabled(loading)
+                    if !lines.isEmpty { Button("Xóa ô nhập", role: .destructive) { lines = "" } }
+                } header: {
+                    Text("Link / địa chỉ cần tải")
+                } footer: {
+                    Text("Mỗi dòng một yêu cầu. Dán nguyên link https://desm… hoặc chỉ đường dẫn /resources/…js. API dạng POST: POST /đường/dẫn.do PROJECT_NO=T25026. Một dòng lưu đúng file (.js/.json/.css/.html); nhiều dòng gộp thành một file văn bản. Dòng bắt đầu bằng # bị bỏ qua.")
+                }
+                if !message.isEmpty { Section { Text(message).font(.footnote).foregroundStyle(.orange) } }
+                if !recent.isEmpty {
+                    Section {
+                        ForEach(recent, id: \.self) { s in
+                            Button { lines = lines.isEmpty ? s : lines + "\n" + s } label: {
+                                Text(s).font(.system(size: 12, design: .monospaced)).lineLimit(2).foregroundStyle(.primary)
+                            }
+                        }
+                        Button("Xóa danh sách gần đây", role: .destructive) { recent = []; UserDefaults.standard.removeObject(forKey: DesmFetchSheet.recentKey) }
+                    } header: { Text("Đã dùng gần đây (chạm để thêm lại)") }
+                }
+                Section {
+                    Text("Khi AI cần xem code hoặc API của DESM, nó sẽ gửi bạn link hoặc dòng POST. Dán vào ô trên, bấm Tải, rồi chia sẻ file (Lưu vào Tệp, hoặc gửi thẳng cho AI). Cần đang đăng nhập DESM; file có thể chứa thông tin nội bộ nên hãy xem lại trước khi gửi.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } header: { Text("Cách dùng") }
+            }
+            .navigationTitle("Tải file / API")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } } }
+            .sheet(item: $shareItem) { item in ShareSheet(url: item.url) }
+        }
+    }
+}
+
+
+// MARK: - Mã nguồn trang đang mở (mục "Thêm")
+//
+// Đang ở trang DESM nào thì mở mục này: app tự quét danh sách file JS, CSS mà trang (và các khung iframe cùng domain) đang dùng,
+// kèm HTML đã dựng của trang và nhật ký API đã ghi. Tích chọn thứ cần rồi bấm Tải: app tự tải bằng phiên đăng nhập hiện có và gộp thành một file để chia sẻ,
+// không cần tự tìm link. API chỉ có khi đã bật "Ghi API" (bật ngay trong màn này) rồi thao tác trên trang (Search, mở chi tiết…).
+// Mặc định chọn: HTML + CSS/JS của DESM (không gồm thư viện .min / ext như jQuery, Bootstrap; bật công tắc nếu cần).
+// CHƯA kiểm chứng trên máy thật.
+
+struct DesmRes: Identifiable, Hashable {
+    enum Kind: String { case js, css }
+    let url: String
+    let kind: Kind
+    var id: String { url }
+    var path: String { URL(string: url)?.path ?? url }
+    var label: String {
+        let u = URL(string: url)
+        let name = (u?.path ?? url).split(separator: "/").suffix(2).joined(separator: "/")
+        return name.isEmpty ? url : name
+    }
+    /// Thư viện bên thứ ba (jQuery, Bootstrap, font…) — thường không cần cho việc sửa giao diện/logic DESM.
+    var vendor: Bool {
+        let p = path.lowercased()
+        return p.contains(".min.") || p.contains("/ext/") || p.contains("/jquery") || p.contains("/node_modules/") || p.contains("/webfonts/") || p.contains("fontawesome")
+    }
+}
+
+extension BrowserModel {
+    /// Quét JS/CSS của trang đang mở (kể cả iframe cùng domain và tài nguyên đã tải qua Performance API).
+    func listPageResources(done: @escaping (String, [DesmRes], String) -> Void) {
+        guard let webView = webView else { done("", [], "Chưa có trang DESM để quét."); return }
+        let js = #"""
+        var seen = {}, out = [];
+        function add(u, k) {
+          try {
+            var a = new URL(u, location.href);
+            if (a.origin !== location.origin) return;
+            var key = k + a.pathname + a.search;
+            if (seen[key]) return; seen[key] = 1; out.push({ u: a.href, k: k });
+          } catch (e) {}
+        }
+        function scan(doc, l) {
+          [].forEach.call(doc.querySelectorAll('script[src]'), function(s) { add(s.src, 'js'); });
+          [].forEach.call(doc.querySelectorAll('link[rel~="stylesheet"][href]'), function(s) { add(s.href, 'css'); });
+          if (l > 3) return;
+          [].forEach.call(doc.querySelectorAll('iframe,frame'), function(f) { try { if (f.contentDocument) scan(f.contentDocument, l + 1); } catch (e) {} });
+        }
+        scan(document, 0);
+        try {
+          performance.getEntriesByType('resource').forEach(function(e) {
+            var p = String(e.name).split('?')[0];
+            if (/\.js$/i.test(p)) add(e.name, 'js'); else if (/\.css$/i.test(p)) add(e.name, 'css');
+          });
+        } catch (e) {}
+        return JSON.stringify({ page: location.href, items: out });
+        """#
+        webView.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e): done("", [], "Không quét được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let s = v as? String, let data = s.data(using: .utf8),
+                      let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { done("", [], "Không đọc được kết quả quét."); return }
+                var items: [DesmRes] = []
+                for it in (o["items"] as? [[String: Any]] ?? []) {
+                    guard let u = it["u"] as? String, let k = it["k"] as? String, let kind = DesmRes.Kind(rawValue: k) else { continue }
+                    items.append(DesmRes(url: u, kind: kind))
+                }
+                done(o["page"] as? String ?? "", items, "")
+            }
+        }
+    }
+}
+
+struct DesmSourceSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    @AppStorage("desmNetLogOn") private var netLogOn = false
+    @AppStorage("desmSourceVendor") private var includeVendor = false
+    @State private var page = ""
+    @State private var items: [DesmRes] = []
+    @State private var selected: Set<String> = []
+    @State private var wantHTML = true
+    @State private var wantAPI = false
+    @State private var scanning = false
+    @State private var loading = false
+    @State private var progress = ""
+    @State private var message = ""
+    @State private var shareItem: ShareItem? = nil
+
+    private func shown(_ k: DesmRes.Kind) -> [DesmRes] { items.filter { $0.kind == k && (includeVendor || !$0.vendor) } }
+
+    private func scan() {
+        scanning = true; message = ""
+        model.listPageResources { pg, list, err in
+            scanning = false; page = pg; items = list; message = err
+            selected = Set(list.filter { !$0.vendor }.map { $0.id })
+        }
+    }
+
+    private func save(_ text: String, name: String, ext: String) {
+        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(f.string(from: Date())).\(ext)")
+        do { try text.write(to: url, atomically: true, encoding: .utf8); shareItem = ShareItem(url: url) }
+        catch { message = "Không lưu được file: \(error.localizedDescription)" }
+    }
+
+    private func run() {
+        let css = shown(.css).filter { selected.contains($0.id) }, js = shown(.js).filter { selected.contains($0.id) }
+        let jobs = css + js
+        guard wantHTML || wantAPI || !jobs.isEmpty else { message = "Hãy chọn ít nhất một mục."; return }
+        loading = true; message = ""
+        var out = "DESM — MÃ NGUỒN TRANG ĐANG MỞ\nTrang: \(page)\n"
+        var bad = 0
+        func finish() {
+            loading = false; progress = ""
+            save(out, name: "desm-source", ext: "txt")
+            if bad > 0 { message = "\(bad) mục không tải được (đã ghi lỗi trong file)." }
+        }
+        func apiStep() {
+            guard wantAPI else { finish(); return }
+            progress = "Đang lấy nhật ký API…"
+            model.fetchNetLog(format: .json) { text, err in
+                if let text = text { out += "\n\n===== NHẬT KÝ API (JSON) =====\n\(text)" }
+                else { bad += 1; out += "\n\n===== NHẬT KÝ API =====\nLỖI: \(err.isEmpty ? "chưa ghi request nào — bật Ghi API rồi thao tác trên trang" : err)" }
+                finish()
+            }
+        }
+        func fileStep(_ i: Int) {
+            if i >= jobs.count { apiStep(); return }
+            progress = "Đang tải \(i + 1)/\(jobs.count)…"
+            model.fetchResource(jobs[i].url) { f, err in
+                if let f = f {
+                    out += "\n\n===== \(jobs[i].kind == .css ? "CSS" : "JS") \(f.url) =====\nHTTP \(f.status) · \(f.contentType.isEmpty ? "?" : f.contentType) · \(f.text.count) ký tự\n\n\(f.text)"
+                    if f.status >= 400 { bad += 1 }
+                } else { bad += 1; out += "\n\n===== \(jobs[i].url) =====\nLỖI: \(err)" }
+                fileStep(i + 1)
+            }
+        }
+        if wantHTML {
+            progress = "Đang lấy HTML trang…"
+            model.fetchHTML(stripValues: false, stripScripts: false) { html, err in
+                if let html = html { out += "\n\n===== HTML TRANG (đã dựng, gồm iframe cùng domain) =====\n\(html)" }
+                else { bad += 1; out += "\n\n===== HTML TRANG =====\nLỖI: \(err)" }
+                fileStep(0)
+            }
+        } else { fileStep(0) }
+    }
+
+    private func listSection(_ title: String, _ k: DesmRes.Kind) -> some View {
+        let list = shown(k)
+        let allSel = !list.isEmpty && list.allSatisfy { selected.contains($0.id) }
+        return Section {
+            if list.isEmpty { Text("Không thấy file nào.").font(.footnote).foregroundStyle(.secondary) }
+            ForEach(list) { r in
+                Button {
+                    if selected.contains(r.id) { selected.remove(r.id) } else { selected.insert(r.id) }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: selected.contains(r.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected.contains(r.id) ? Color.tabBlue : Color.secondary)
+                        Text(r.label).font(.system(size: 13, design: .monospaced)).foregroundStyle(.primary).lineLimit(1)
+                    }
+                }
+            }
+        } header: {
+            HStack {
+                Text("\(title) (\(list.count))")
+                Spacer()
+                if !list.isEmpty {
+                    Button(allSel ? "Bỏ chọn" : "Chọn hết") {
+                        if allSel { list.forEach { selected.remove($0.id) } } else { list.forEach { selected.insert($0.id) } }
+                    }.font(.system(size: 12, weight: .semibold)).textCase(nil)
+                }
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if !page.isEmpty { Text(page).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(3) }
+                    Button { run() } label: {
+                        HStack { if loading { ProgressView() }; Text(loading ? progress : "Tải mục đã chọn và chia sẻ file…").fontWeight(.semibold) }
+                    }.disabled(loading || scanning)
+                    if !message.isEmpty { Text(message).font(.footnote).foregroundStyle(.orange) }
+                } header: { Text("Trang đang mở") }
+
+                Section {
+                    Toggle("HTML của trang (đã dựng, gồm iframe)", isOn: $wantHTML)
+                    Toggle("Nhật ký API đã ghi", isOn: $wantAPI)
+                    Toggle("Ghi lại API khi thao tác trang", isOn: $netLogOn).onChange(of: netLogOn) { model.setNetLog($0) }
+                    Toggle("Gồm cả thư viện (.min, ext, jQuery…)", isOn: $includeVendor)
+                } header: { Text("Chọn loại") } footer: {
+                    Text("API: bật công tắc ghi, thao tác trên trang DESM (Search, mở chi tiết…) rồi quay lại mục này, bật \"Nhật ký API đã ghi\" và tải.")
+                }
+
+                if scanning { Section { HStack { ProgressView(); Text("Đang quét file của trang…") } } }
+                else {
+                    listSection("CSS", .css)
+                    listSection("Script JS", .js)
+                }
+            }
+            .navigationTitle("Mã nguồn trang này")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) { Button { scan() } label: { Image(systemName: "arrow.clockwise") }.disabled(scanning || loading) }
+            }
+            .sheet(item: $shareItem) { item in ShareSheet(url: item.url) }
+        }
+        .onAppear { if items.isEmpty && !scanning { scan() } }
     }
 }

@@ -44,3 +44,7 @@ Icon đã được gắn sẵn vào project (DESMMobile/Assets.xcassets, AppIcon
 - CSS tổng quát có thể không sửa hoàn hảo mọi biểu mẫu hoặc thành phần dựng bằng iframe/canvas; cần tinh chỉnh theo DOM thực tế.
 - Đăng nhập phụ thuộc chính sách website, SSO, VPN, chứng chỉ hoặc quản trị thiết bị của doanh nghiệp. Không dùng ứng dụng để vượt qua kiểm soát truy cập.
 - Kiểm thử thao tác nghiệp vụ ở môi trường an toàn trước khi sử dụng thực tế.
+
+- Thêm > "Tải file / API cho AI": dán link/địa chỉ DESM (mỗi dòng một yêu cầu; GET hoặc `POST /đường/dẫn.do body`) rồi bấm Tải để lưu/chia sẻ file .js/.json/.css/.html cho AI khi cần xem code hoặc API. Thêm > "Bản đồ tàu": danh sách chuyến tàu và tuyến cảng đi - cảng đến.
+
+- Thêm > \"Mã nguồn trang này\": đang ở trang DESM nào thì mở mục này, app tự quét danh sách JS/CSS (kể cả iframe cùng domain), kèm HTML đã dựng và nhật ký API; tích chọn rồi Tải để gộp thành một file chia sẻ cho AI, không cần tự tìm link (code: `listPageResources`, `DesmSourceSheet`).
