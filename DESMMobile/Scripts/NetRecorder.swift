@@ -77,6 +77,7 @@ extension BrowserModel {
           var t = Date.now(), p = f.apply(this, arguments);
           if (!on()) return p;
           var u = typeof inp === 'string' ? inp : (inp && inp.url), m = (init && init.method) || (inp && inp.method) || 'GET', b = init && init.body;
+          if (/\/dodo\/chat\/stream/.test(String(u))) return p;   // luồng SSE của Dodo: không nhân bản để ghi log
           return p.then(function(r) {
             try {
               var st = isStatic(u), ct = (r.headers.get('content-type') || '').split(';')[0];

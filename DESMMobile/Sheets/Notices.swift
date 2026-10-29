@@ -36,29 +36,35 @@ enum DesmNoticeSeen {
 }
 
 extension BrowserModel {
-    func fetchNotices(done: @escaping ([DesmNotice], [DesmNotice], String) -> Void) {
+    static func parseNotices(_ rows: [[String: Any]], rt: Bool) -> [DesmNotice] {
         func str(_ r: [String: Any], _ k: String) -> String {
             if let v = r[k] as? String { return v.trimmingCharacters(in: .whitespacesAndNewlines) }
             if let n = r[k] as? NSNumber { return n.stringValue }
             return ""
         }
-        func parse(_ rows: [[String: Any]], rt: Bool) -> [DesmNotice] {
-            let f = DateFormatter(); f.dateFormat = "dd/MM/yyyy"; f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh")
-            return rows.map { r in
-                var n = DesmNotice(id: str(r, "NOTICE_ID")); n.realtime = rt
-                n.title = str(r, "TITLE"); n.by = str(r, "LAST_UPDATED_BY"); n.fileGroup = str(r, "FILE_GRP_CD")
-                if let ms = r["LAST_UPDATE_DATE"] as? NSNumber { n.date = f.string(from: Date(timeIntervalSince1970: ms.doubleValue / 1000)) }
-                else { n.date = str(r, "LAST_UPDATE_DATE") }
-                n.attach = (r["ATT_CNT"] as? NSNumber)?.intValue ?? 0
-                return n
-            }
+        let f = DateFormatter(); f.dateFormat = "dd/MM/yyyy"; f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh")
+        return rows.map { r in
+            var n = DesmNotice(id: str(r, "NOTICE_ID")); n.realtime = rt
+            n.title = str(r, "TITLE"); n.by = str(r, "LAST_UPDATED_BY"); n.fileGroup = str(r, "FILE_GRP_CD")
+            if let ms = r["LAST_UPDATE_DATE"] as? NSNumber { n.date = f.string(from: Date(timeIntervalSince1970: ms.doubleValue / 1000)) }
+            else { n.date = str(r, "LAST_UPDATE_DATE") }
+            n.attach = (r["ATT_CNT"] as? NSNumber)?.intValue ?? 0
+            return n
         }
-        desmQuery("/getNotice.do", body: "jobCode=") { rows, err in
-            guard let rows = rows else { done([], [], err); return }
-            let list = parse(rows, rt: false)
-            self.desmQuery("/getRealTimeNotice.do", body: "") { rt, _ in
-                done(list, parse(rt ?? [], rt: true), "")
-            }
+    }
+
+    /// Danh sách thông báo + thông báo chạy đầu trang. Không cần WebView (dùng được khi chạy nền).
+    @MainActor
+    func fetchNoticesAsync() async throws -> (list: [DesmNotice], live: [DesmNotice]) {
+        let rows = try await desmQueryAsync("/getNotice.do", body: "jobCode=")
+        let rt = (try? await desmQueryAsync("/getRealTimeNotice.do", body: "")) ?? []
+        return (Self.parseNotices(rows, rt: false), Self.parseNotices(rt, rt: true))
+    }
+
+    func fetchNotices(done: @escaping ([DesmNotice], [DesmNotice], String) -> Void) {
+        Task { @MainActor in
+            do { let r = try await self.fetchNoticesAsync(); done(r.list, r.live, "") }
+            catch { done([], [], error.localizedDescription) }
         }
     }
 
@@ -75,7 +81,7 @@ extension BrowserModel {
     func setUnread(_ n: Int) {
         unreadNotices = n
         let c = UNUserNotificationCenter.current()
-        c.requestAuthorization(options: [.badge]) { ok, _ in
+        c.requestAuthorization(options: [.badge, .alert, .sound]) { ok, _ in
             if ok { c.setBadgeCount(n) { _ in } }
         }
     }

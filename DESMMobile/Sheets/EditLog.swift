@@ -37,65 +37,74 @@ struct DesmLogEntry: Identifiable {
 }
 
 extension BrowserModel {
+    @MainActor
+    func searchLogItemsAsync(byMaterial: Bool, term: String) async throws -> [DesmLogItem] {
+        let no = try await desmProjectNo()
+        let t = Self.enc(term.trimmingCharacters(in: .whitespacesAndNewlines))
+        let pkg = byMaterial ? "" : t
+        let key = byMaterial ? "material" : ""
+        let val = byMaterial ? t : ""
+        let body = "PAGE_NUM=1&PAGE_CNT=300&PROJECT_NO=\(Self.enc(no))&PACKAGE_LIST_NO=&PACKAGE_NO=\(pkg)&DESCRIPTION=&DRAWING_NO=&TAG_NO=&QTY_TYPE=rsi&QTY=&KEY1=\(key)&VALUE1=\(val)&LOCATION=&SEQUENCE=&VENDOR=&ATTRIBUTE10=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS="
+        let list = try await desmQueryAsync("/getIdsmOsDetailList.do", body: body)
+        var out: [DesmLogItem] = []
+        for (i, r) in list.enumerated() {
+            let trk = Self.fstr(r, "TRK_ITEM_NAME"), mat = Self.fstr(r, "MATERIAL_CODE")
+            if mat.isEmpty { continue }
+            out.append(DesmLogItem(id: "\(i)-\(mat)", project: Self.fstr(r, "PROJECT_NO").isEmpty ? no : Self.fstr(r, "PROJECT_NO"),
+                                   trk: trk, pkg: Self.fstr(r, "PACKAGE_NO"), material: mat,
+                                   desc: Self.fstr(r, "DESCRIPTION"), location: Self.fstr(r, "LOCATION")))
+        }
+        return out
+    }
+
     func searchLogItems(byMaterial: Bool, term: String, done: @escaping ([DesmLogItem], String) -> Void) {
-        desmQuery("/getInitDefailProject.do", body: "") { rows, err in
-            guard let rows = rows else { done([], err); return }
-            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { done([], "Chưa có dự án mặc định trong DESM."); return }
-            let t = Self.enc(term.trimmingCharacters(in: .whitespacesAndNewlines))
-            let pkg = byMaterial ? "" : t
-            let key = byMaterial ? "material" : ""
-            let val = byMaterial ? t : ""
-            let body = "PAGE_NUM=1&PAGE_CNT=300&PROJECT_NO=\(Self.enc(no))&PACKAGE_LIST_NO=&PACKAGE_NO=\(pkg)&DESCRIPTION=&DRAWING_NO=&TAG_NO=&QTY_TYPE=rsi&QTY=&KEY1=\(key)&VALUE1=\(val)&LOCATION=&SEQUENCE=&VENDOR=&ATTRIBUTE10=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS="
-            self.desmQuery("/getIdsmOsDetailList.do", body: body) { list, e in
-                guard let list = list else { done([], e); return }
-                var out: [DesmLogItem] = []
-                for (i, r) in list.enumerated() {
-                    let trk = Self.fstr(r, "TRK_ITEM_NAME"), mat = Self.fstr(r, "MATERIAL_CODE")
-                    if mat.isEmpty { continue }
-                    out.append(DesmLogItem(id: "\(i)-\(mat)", project: Self.fstr(r, "PROJECT_NO").isEmpty ? no : Self.fstr(r, "PROJECT_NO"),
-                                           trk: trk, pkg: Self.fstr(r, "PACKAGE_NO"), material: mat,
-                                           desc: Self.fstr(r, "DESCRIPTION"), location: Self.fstr(r, "LOCATION")))
-                }
-                done(out, "")
-            }
+        Task { @MainActor in
+            do { done(try await self.searchLogItemsAsync(byMaterial: byMaterial, term: term), "") }
+            catch { done([], error.localizedDescription) }
         }
     }
 
-    func fetchEditLog(_ item: DesmLogItem, done: @escaping ([DesmLogEntry], String) -> Void) {
+    @MainActor
+    func fetchEditLogAsync(_ item: DesmLogItem) async throws -> [DesmLogEntry] {
         let body = "PROJECT_NO=\(Self.enc(item.project))&TRK_ITEM_NAME=\(Self.enc(item.trk))&MATERIAL_CODE=\(Self.enc(item.material))"
-        desmQuery("/getDesmPlDetailEditLogList.do", body: body) { list, e in
-            guard var list = list else { done([], e); return }
-            list.sort { Self.fstr($0, "CREATION_DATE_TXT") > Self.fstr($1, "CREATION_DATE_TXT") }
-            let fields: [(String, String)] = [("LOCATION", "Location"), ("IN_QTY", "In Q'ty"), ("REMARKS", "Remarks"), ("DESCRIPTION", "Item"),
-                                              ("DRAWING_NO", "DWG"), ("TAG_NO", "TAG"), ("UNIT", "Unit"), ("MATERIAL", "Material"),
-                                              ("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")]
-            func norm(_ r: [String: Any], _ k: String) -> String {
-                Self.fstr(r, k).components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-            }
-            func num(_ r: [String: Any], _ k: String) -> String {
-                let v = Self.fnum(r, k); return v == v.rounded() ? String(Int(v)) : String(format: "%.3g", v)
-            }
-            var out: [DesmLogEntry] = []
-            for (i, r) in list.enumerated() {
-                var diffs: [String] = []
-                let older: [String: Any]? = i + 1 < list.count ? list[i + 1] : nil
-                if let o = older {
-                    for (k, label) in fields where norm(r, k) != norm(o, k) {
-                        diffs.append("\(label): \(norm(o, k).isEmpty ? "-" : norm(o, k)) → \(norm(r, k).isEmpty ? "-" : norm(r, k))")
-                    }
+        var list = try await desmQueryAsync("/getDesmPlDetailEditLogList.do", body: body)
+        list.sort { Self.fstr($0, "CREATION_DATE_TXT") > Self.fstr($1, "CREATION_DATE_TXT") }
+        let fields: [(String, String)] = [("LOCATION", "Location"), ("IN_QTY", "In Q'ty"), ("REMARKS", "Remarks"), ("DESCRIPTION", "Item"),
+                                          ("DRAWING_NO", "DWG"), ("TAG_NO", "TAG"), ("UNIT", "Unit"), ("MATERIAL", "Material"),
+                                          ("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")]
+        func norm(_ r: [String: Any], _ k: String) -> String {
+            Self.fstr(r, k).components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        func num(_ r: [String: Any], _ k: String) -> String {
+            let v = Self.fnum(r, k); return v == v.rounded() ? String(Int(v)) : String(format: "%.3g", v)
+        }
+        var out: [DesmLogEntry] = []
+        for (i, r) in list.enumerated() {
+            var diffs: [String] = []
+            let older: [String: Any]? = i + 1 < list.count ? list[i + 1] : nil
+            if let o = older {
+                for (k, label) in fields where norm(r, k) != norm(o, k) {
+                    diffs.append("\(label): \(norm(o, k).isEmpty ? "-" : norm(o, k)) → \(norm(r, k).isEmpty ? "-" : norm(r, k))")
                 }
-                var rep: [String] = []
-                for (k, label) in [("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")] where Self.fnum(r, k) > 0 {
-                    rep.append("\(label) \(num(r, k))")
-                }
-                let ld = norm(r, "LOC_UPDATE_DATE"), lb = norm(r, "LOC_UPDATED_BY")
-                let info = [ld, lb].filter { !$0.isEmpty }.joined(separator: " · ")
-                let qty = "In Q'ty \(num(r, "IN_QTY")) \(norm(r, "UNIT"))".trimmingCharacters(in: .whitespaces)
-                out.append(DesmLogEntry(id: i, date: norm(r, "CREATION_DATE_TXT"), by: norm(r, "CREATED_BY"), location: norm(r, "LOCATION"),
-                                        locInfo: info, qty: qty, remarks: norm(r, "REMARKS"), reports: rep.joined(separator: " · "),
-                                        diffs: diffs, hasOlder: older != nil))
             }
-            done(out, "")
+            var rep: [String] = []
+            for (k, label) in [("REPORT_SHORT_QTY", "Short"), ("REPORT_OVER_QTY", "Over"), ("REPORT_DMG_QTY", "DMG"), ("REPORT_MISSING_QTY", "Missing")] where Self.fnum(r, k) > 0 {
+                rep.append("\(label) \(num(r, k))")
+            }
+            let ld = norm(r, "LOC_UPDATE_DATE"), lb = norm(r, "LOC_UPDATED_BY")
+            let info = [ld, lb].filter { !$0.isEmpty }.joined(separator: " · ")
+            let qty = "In Q'ty \(num(r, "IN_QTY")) \(norm(r, "UNIT"))".trimmingCharacters(in: .whitespaces)
+            out.append(DesmLogEntry(id: i, date: norm(r, "CREATION_DATE_TXT"), by: norm(r, "CREATED_BY"), location: norm(r, "LOCATION"),
+                                    locInfo: info, qty: qty, remarks: norm(r, "REMARKS"), reports: rep.joined(separator: " · "),
+                                    diffs: diffs, hasOlder: older != nil))
+        }
+        return out
+    }
+
+    func fetchEditLog(_ item: DesmLogItem, done: @escaping ([DesmLogEntry], String) -> Void) {
+        Task { @MainActor in
+            do { done(try await self.fetchEditLogAsync(item), "") }
+            catch { done([], error.localizedDescription) }
         }
     }
 }

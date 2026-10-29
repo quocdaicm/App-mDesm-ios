@@ -70,37 +70,36 @@ final class DesmMrfReturnVM: ObservableObject {
 
     func search(_ model: BrowserModel) {
         loading = true; error = nil
-        model.desmQuery("/getInitDefailProject.do", body: "") { rows, err in
-            guard let rows = rows else { self.loading = false; self.error = err; return }
-            guard let pj = rows.first?["SEGMENT1"] as? String, !pj.isEmpty else {
-                self.loading = false; self.error = "Chưa có dự án mặc định trong DESM."; return
-            }
+        Task { @MainActor in
+            let pj: String
+            do { pj = try await model.desmProjectNo() }
+            catch { self.loading = false; self.error = error.localizedDescription; return }
             self.project = pj
             let e = desmFormEnc
             let body = "PROJECT_NO=\(e(pj))&PACKAGE_NO=\(e(self.pkg))&MRF_NO=\(e(self.mrfNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&TYPE=&CATEGORY="
-            model.desmQuery("/getDesmReturnCreationList.do", body: body) { list, err2 in
-                self.loading = false; self.searched = true
-                guard let list = list else { self.error = err2; self.lines = []; return }
-                var out: [DesmMrfLine] = []
-                for (i, r) in list.enumerated() {
-                    let lid = r["MRF_LINE_ID"], hid = r["MRF_HEADER_ID"]
-                    let ok = lid != nil && !(lid is NSNull) && hid != nil && !(hid is NSNull)
-                    var l = DesmMrfLine(id: ok ? Self.str(r, "MRF_LINE_ID") + "-" + Self.str(r, "RSI_LINE_ID") : "row\(i)")
-                    l.mrfNo = Self.str(r, "MRF_NO"); l.mrfName = Self.str(r, "MRF_NAME"); l.status = Self.str(r, "SUBCONTRACTOR")
-                    l.returnType = Self.str(r, "TYPE"); l.reqDate = Self.str(r, "RETURN_REQ_DATE")
-                    l.code = Self.str(r, "MATERIAL_CODE"); l.desc = Self.str(r, "DESCRIPTION"); l.pkg = Self.str(r, "PACKAGE_NO")
-                    l.loc = Self.str(r, "CATEGORY")
-                    l.req = Self.num(r, "REQ_RETURN_QTY"); l.balance = Self.num(r, "RETURN_AVAILABLE_QTY")
-                    l.headerId = hid ?? NSNull(); l.lineId = lid ?? NSNull(); l.rsiLineId = r["RSI_LINE_ID"] ?? NSNull()
-                    l.valid = ok
-                    if self.onlyOpen && l.balance <= 0 { continue }
-                    if !self.mrfName.isEmpty && !l.mrfName.localizedCaseInsensitiveContains(self.mrfName) { continue }
-                    out.append(l)
-                }
-                out.sort { $0.reqDate > $1.reqDate }
-                self.lines = out
-                self.selected = self.selected.intersection(Set(out.map { $0.id }))
+            defer { self.loading = false; self.searched = true }
+            let list: [[String: Any]]
+            do { list = try await model.desmQueryAsync("/getDesmReturnCreationList.do", body: body) }
+            catch { self.error = error.localizedDescription; self.lines = []; return }
+            var out: [DesmMrfLine] = []
+            for (i, r) in list.enumerated() {
+                let lid = r["MRF_LINE_ID"], hid = r["MRF_HEADER_ID"]
+                let ok = lid != nil && !(lid is NSNull) && hid != nil && !(hid is NSNull)
+                var l = DesmMrfLine(id: ok ? Self.str(r, "MRF_LINE_ID") + "-" + Self.str(r, "RSI_LINE_ID") : "row\(i)")
+                l.mrfNo = Self.str(r, "MRF_NO"); l.mrfName = Self.str(r, "MRF_NAME"); l.status = Self.str(r, "SUBCONTRACTOR")
+                l.returnType = Self.str(r, "TYPE"); l.reqDate = Self.str(r, "RETURN_REQ_DATE")
+                l.code = Self.str(r, "MATERIAL_CODE"); l.desc = Self.str(r, "DESCRIPTION"); l.pkg = Self.str(r, "PACKAGE_NO")
+                l.loc = Self.str(r, "CATEGORY")
+                l.req = Self.num(r, "REQ_RETURN_QTY"); l.balance = Self.num(r, "RETURN_AVAILABLE_QTY")
+                l.headerId = hid ?? NSNull(); l.lineId = lid ?? NSNull(); l.rsiLineId = r["RSI_LINE_ID"] ?? NSNull()
+                l.valid = ok
+                if self.onlyOpen && l.balance <= 0 { continue }
+                if !self.mrfName.isEmpty && !l.mrfName.localizedCaseInsensitiveContains(self.mrfName) { continue }
+                out.append(l)
             }
+            out.sort { $0.reqDate > $1.reqDate }
+            self.lines = out
+            self.selected = self.selected.intersection(Set(out.map { $0.id }))
         }
     }
 

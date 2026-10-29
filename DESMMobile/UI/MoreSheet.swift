@@ -24,20 +24,13 @@ struct MoreSheet: View {
     struct Item: Identifiable {
         let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
     }
-    var items: [Item] {
+    /// Nhóm 1: các mục của web DESM (mở màn hình / dữ liệu DESM)
+    var webItems: [Item] {
         [
             Item(symbol: "line.3.horizontal", title: "Menu đầy đủ") {
                 model.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
             },
-            Item(symbol: "chevron.left", title: "Quay lại", enabled: model.canGoBack || model.inDesm) { model.goBack() },
-            Item(symbol: "chevron.right", title: "Tiến", enabled: model.canGoForward) { model.goForward() },
-            Item(symbol: "arrow.clockwise", title: "Tải lại") { model.reload() },
             Item(symbol: "house.fill", title: "Về DESM") { model.home() },
-            Item(symbol: "camera.viewfinder", title: "Chụp trang") { model.captureFullPage() },
-            Item(symbol: model.layoutMode.symbol, title: model.layoutMode.shortTitle) { model.cycleMode() },
-            Item(symbol: "rectangle.topthird.inset.filled", title: model.barsHidden ? "Hiện thanh địa chỉ" : "Ẩn thanh địa chỉ") {
-                withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() }
-            },
             Item(symbol: "clock.arrow.circlepath", title: "Lịch sử Packing List", enabled: model.inDesm) { onHistory() },
             Item(symbol: "doc.text.magnifyingglass", title: "RSI chưa đóng / vừa đóng", enabled: model.inDesm) { onDoc(.rsi) },
             Item(symbol: "chart.bar.xaxis", title: "Tổng hợp RSI", enabled: model.inDesm) { model.openDesmTab(.report) },
@@ -45,21 +38,32 @@ struct MoreSheet: View {
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
             Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },
             Item(symbol: "clock.arrow.2.circlepath", title: "Tra Edit Log", enabled: model.inDesm) { onEditLog() },
-            Item(symbol: "list.clipboard", title: "Nhật ký thao tác ghi") { onAudit() },
             Item(symbol: "megaphone.fill", title: "Thông báo", enabled: model.inDesm) { onNotice() },
             Item(symbol: "ferry.fill", title: "Bản đồ tàu", enabled: model.inDesm) { onVessel() },
+        ]
+    }
+
+    /// Nhóm 2: công cụ của app (giao diện, nhật ký, xuất dữ liệu, cài đặt)
+    var toolItems: [Item] {
+        [
+            Item(symbol: "camera.viewfinder", title: "Chụp trang") { model.captureFullPage() },
+            Item(symbol: model.layoutMode.symbol, title: model.layoutMode.shortTitle) { model.cycleMode() },
+            Item(symbol: "rectangle.topthird.inset.filled", title: model.barsHidden ? "Hiện thanh địa chỉ" : "Ẩn thanh địa chỉ") {
+                withAnimation(.easeInOut(duration: 0.2)) { model.barsHidden.toggle() }
+            },
+            Item(symbol: "list.clipboard", title: "Nhật ký thao tác ghi") { onAudit() },
             Item(symbol: "chevron.left.forwardslash.chevron.right", title: "Mã nguồn trang này", enabled: model.inDesm) { onSource() },
             Item(symbol: "square.and.arrow.down.on.square", title: "Tải file / API cho AI", enabled: model.inDesm) { onFetch() },
             Item(symbol: "slider.horizontal.3", title: "Cài đặt") { model.showSettings = true },
         ]
     }
 
-    var body: some View {
-        VStack(spacing: 14) {
-            Capsule().fill(Color.secondary.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8)
-            Text("Thêm").font(.system(size: 18, weight: .bold))
+    func group(_ title: String, _ list: [Item]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 13, weight: .bold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                ForEach(items) { it in
+                ForEach(list) { it in
                     Button {
                         onClose()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { it.action() }
@@ -78,7 +82,20 @@ struct MoreSheet: View {
                 }
             }
             .padding(.horizontal, 16)
-            Spacer(minLength: 0)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Capsule().fill(Color.secondary.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8)
+            Text("Thêm").font(.system(size: 18, weight: .bold))
+            ScrollView {
+                VStack(spacing: 18) {
+                    group("MENU WEB DESM", webItems)
+                    group("CÔNG CỤ APP", toolItems)
+                }
+                .padding(.bottom, 24)
+            }
         }
     }
 }

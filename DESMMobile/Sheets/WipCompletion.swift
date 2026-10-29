@@ -89,35 +89,34 @@ final class DesmWipVM: ObservableObject {
 
     func search(_ model: BrowserModel) {
         loading = true; error = nil; notice = nil
-        model.desmQuery("/getInitDefailProject.do", body: "") { rows, err in
-            guard let rows = rows else { self.loading = false; self.error = err; return }
-            guard let pj = rows.first?["SEGMENT1"] as? String, !pj.isEmpty else {
-                self.loading = false; self.error = "Chưa có dự án mặc định trong DESM."; return
-            }
+        Task { @MainActor in
+            let pj: String
+            do { pj = try await model.desmProjectNo() }
+            catch { self.loading = false; self.error = error.localizedDescription; return }
             self.project = pj
             let e = desmFormEnc
             let body = "PROJECT_NO=\(e(pj))&PACKING_LIST_NO=&PACKAGE_NO=\(e(self.pkg))&RSI_NO=\(e(self.rsiNo))&RSI_NAME=\(e(self.rsiName))&SUBCON=&MATERIAL_CODE=\(e(self.code))&ATTRIBUTE10=&DESCRIPTION=&DRAWING_NO=&TAG_NO=&TYPE=&CATEGORY=&SUB_CATEGORY=&SHOP_UNIT=&SHOP_BLDG="
-            model.desmQuery("/material/getPlWipCreationList.do", body: body) { list, err2 in
-                self.loading = false; self.searched = true
-                guard let list = list else { self.error = err2; self.lines = []; return }
-                var out: [DesmWipLine] = []
-                for (i, r) in list.enumerated() {
-                    let lineId = r["RSI_LINE_ID"], headerId = r["RSI_HEADER_ID"]
-                    let hasIds = lineId != nil && !(lineId is NSNull) && headerId != nil && !(headerId is NSNull)
-                    var l = DesmWipLine(id: hasIds ? Self.str(r, "RSI_LINE_ID") : "row\(i)")
-                    l.rsiNo = Self.str(r, "RSI_NO"); l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR")
-                    l.reqDate = Self.str(r, "REQUEST_DATE"); l.pkg = Self.str(r, "PACKAGE_NO"); l.desc = Self.str(r, "DESCRIPTION")
-                    l.code = Self.str(r, "MATERIAL_CODE"); l.tag = Self.str(r, "TAG_NO"); l.unit = Self.str(r, "UNIT")
-                    l.project = Self.str(r, "PROJECT_NO")
-                    l.shopUnit = Self.str(r, "SHOP_UNIT"); l.shopBldg = Self.str(r, "SHOP_BLDG")
-                    l.avail = Self.num(r, "WIP_AVAILABLE_QTY"); l.handover = Self.num(r, "TOT_HANDOVER_QTY"); l.totWip = Self.num(r, "TOT_WIP_QTY")
-                    l.headerId = headerId ?? NSNull(); l.lineId = lineId ?? NSNull()
-                    l.valid = hasIds
-                    out.append(l)
-                }
-                self.lines = out
-                self.selected = self.selected.intersection(Set(out.map { $0.id }))
+            defer { self.loading = false; self.searched = true }
+            let list: [[String: Any]]
+            do { list = try await model.desmQueryAsync("/material/getPlWipCreationList.do", body: body) }
+            catch { self.error = error.localizedDescription; self.lines = []; return }
+            var out: [DesmWipLine] = []
+            for (i, r) in list.enumerated() {
+                let lineId = r["RSI_LINE_ID"], headerId = r["RSI_HEADER_ID"]
+                let hasIds = lineId != nil && !(lineId is NSNull) && headerId != nil && !(headerId is NSNull)
+                var l = DesmWipLine(id: hasIds ? Self.str(r, "RSI_LINE_ID") : "row\(i)")
+                l.rsiNo = Self.str(r, "RSI_NO"); l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR")
+                l.reqDate = Self.str(r, "REQUEST_DATE"); l.pkg = Self.str(r, "PACKAGE_NO"); l.desc = Self.str(r, "DESCRIPTION")
+                l.code = Self.str(r, "MATERIAL_CODE"); l.tag = Self.str(r, "TAG_NO"); l.unit = Self.str(r, "UNIT")
+                l.project = Self.str(r, "PROJECT_NO")
+                l.shopUnit = Self.str(r, "SHOP_UNIT"); l.shopBldg = Self.str(r, "SHOP_BLDG")
+                l.avail = Self.num(r, "WIP_AVAILABLE_QTY"); l.handover = Self.num(r, "TOT_HANDOVER_QTY"); l.totWip = Self.num(r, "TOT_WIP_QTY")
+                l.headerId = headerId ?? NSNull(); l.lineId = lineId ?? NSNull()
+                l.valid = hasIds
+                out.append(l)
             }
+            self.lines = out
+            self.selected = self.selected.intersection(Set(out.map { $0.id }))
         }
     }
 

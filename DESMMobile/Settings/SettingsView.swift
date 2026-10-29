@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage("desmRememberLogin") private var rememberLogin = true
     @AppStorage("desmAutofill") private var autofill = true
     @AppStorage("desmAutoReconnect") private var autoReconnect = true
+    @AppStorage("desmBgNotify") private var bgNotify = true
     @AppStorage("desmExportStripScripts2") private var stripScripts = false
     @AppStorage("desmScanOpenDetail") private var scanOpenDetail = true
     @AppStorage("desmNetLogOn") private var netLogOn = false
@@ -41,6 +42,8 @@ struct SettingsView: View {
             Form {
                 displaySection
                 languageSection
+                startSection
+                dodoSection
                 scanSection
                 loginSection
                 Section {
@@ -108,6 +111,36 @@ struct SettingsView: View {
         }
     }
 
+    var startSection: some View {
+        Section {
+            Toggle("Mở màn Package khi vào app", isOn: Binding(
+                get: { model.openPackageOnStart },
+                set: { model.openPackageOnStart = $0 }
+            ))
+        } header: {
+            Text("Màn hình chính")
+        } footer: {
+            Text("Mỗi lần mở app hoặc đăng nhập lại, app tự vào màn Package (Kiện hàng). Tắt thì ở trang chủ DESM.")
+        }
+    }
+
+    var dodoSection: some View {
+        Section {
+            Toggle("Nút chat Dodo (trợ lý AI)", isOn: Binding(
+                get: { model.dodoBubble },
+                set: { model.dodoBubble = $0; model.applyStyles() }
+            ))
+            Toggle("Dodo trả lời bằng tiếng Việt", isOn: Binding(
+                get: { model.dodoVi },
+                set: { model.dodoVi = $0; model.applyStyles() }
+            ))
+        } header: {
+            Text("Trợ lý Dodo")
+        } footer: {
+            Text("Hiện nút bong bóng trên trang DESM; chạm để mở khung chat với Dodo — trợ lý AI của web DESM, dùng chung tài khoản và lịch sử hội thoại với bản web. Kéo bong bóng để đổi vị trí.")
+        }
+    }
+
     var scanSection: some View {
         Section {
             Toggle("Quét xong mở luôn chi tiết kiện", isOn: $scanOpenDetail)
@@ -123,6 +156,8 @@ struct SettingsView: View {
             Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
             Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
             Toggle("Tự đăng nhập lại khi hết phiên", isOn: $autoReconnect)
+            Toggle("Thông báo khi app đóng (thông báo mới, tàu sắp đến)", isOn: $bgNotify)
+                .onChange(of: bgNotify) { on in if on { BackgroundRefresh.requestAuthorization(); BackgroundRefresh.schedule() } else { BackgroundRefresh.schedule() } }
             Button("Xóa tài khoản và phiên đã lưu", role: .destructive) {
                 CredStore.clear()
                 SessionStore.clear()

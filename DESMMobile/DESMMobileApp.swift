@@ -4,6 +4,8 @@ import SwiftUI
 
 @main
 struct DESMMobileApp: App {
+    init() { BackgroundRefresh.register() }
+
     var body: some Scene {
         WindowGroup { BrowserView() }
     }

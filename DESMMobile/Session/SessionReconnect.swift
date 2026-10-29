@@ -42,7 +42,24 @@ extension BrowserModel {
         let path = url?.path.lowercased() ?? ""
         guard host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"), !path.contains("login") else { return }
         markActive()
-        if reconnecting { reconnecting = false; autoSubmitCount = 0 }
+        if reconnecting { reconnecting = false; autoSubmitCount = 0; pendingHomeTab = true }
+        if openPackageOnStart, pendingHomeTab, path.contains("main.do") {
+            pendingHomeTab = false
+            openHomeTab(attempt: 0)
+        }
+    }
+
+    /// Mở màn Package ngay sau khi vào main.do. Menu trái nạp chậm nên thử lại tối đa ~12 giây; không mở ngăn kéo menu nếu thất bại.
+    func openHomeTab(attempt: Int) {
+        let tab = DesmTab.package
+        let id = tab.menuId.map { "'\($0)'" } ?? "null"
+        let js = "window.__desmOpenMenu ? window.__desmOpenMenu(\(id), '\(tab.pattern)') : 0;"
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0.8 : 0.7)) { [weak self] in
+            guard let self = self, self.inDesm, attempt < 18 else { return }
+            self.webView?.evaluateJavaScript(js) { [weak self] r, _ in
+                if (r as? Int ?? 0) == 0 { self?.openHomeTab(attempt: attempt + 1) }
+            }
+        }
     }
 
     /// Xoá cookie DESM trong WKWebView (chỉ cookie; giữ localStorage/bộ nhớ đệm khác).

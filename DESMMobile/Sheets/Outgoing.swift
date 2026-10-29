@@ -130,35 +130,34 @@ final class DesmOutgoingVM: ObservableObject {
 
     func search(_ model: BrowserModel) {
         loading = true; error = nil; notice = nil
-        model.desmQuery("/getInitDefailProject.do", body: "") { rows, err in
-            guard let rows = rows else { self.loading = false; self.error = err; return }
-            guard let pj = rows.first?["SEGMENT1"] as? String, !pj.isEmpty else {
-                self.loading = false; self.error = "Chưa có dự án mặc định trong DESM."; return
-            }
+        Task { @MainActor in
+            let pj: String
+            do { pj = try await model.desmProjectNo() }
+            catch { self.loading = false; self.error = error.localizedDescription; return }
             self.project = pj
             let e = desmFormEnc
             let body = "PROJECT_NO=\(e(pj))&PACKING_LIST_NO=&PACKAGE_NO=\(e(self.pkg))&RSI_NO=\(e(self.rsiNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&DESCRIPTION=&DRAWING_NO=&TAG_NO=&RSI_NAME=\(e(self.rsiName))&TYPE=&CATEGORY=&SUBCON=&PENDING=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
-            model.desmQuery("/getDesmOutGoingCreationList.do", body: body) { list, err2 in
-                self.loading = false; self.searched = true
-                guard let list = list else { self.error = err2; self.lines = []; return }
-                var out: [DesmOutLine] = []
-                for (i, r) in list.enumerated() {
-                    let lineId = r["RSI_LINE_ID"]
-                    let hasIds = lineId != nil && !(lineId is NSNull) && r["RSI_HEADER_ID"] != nil && !(r["RSI_HEADER_ID"] is NSNull)
-                    var l = DesmOutLine(id: hasIds ? Self.str(r, "RSI_LINE_ID") : "row\(i)")
-                    l.rsiNo = Self.str(r, "RSI_NO"); l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR")
-                    l.reqDate = Self.str(r, "REQUEST_DATE"); l.pkg = Self.str(r, "PACKAGE_NO"); l.plist = Self.str(r, "PACKING_LIST_NO")
-                    l.desc = Self.str(r, "DESCRIPTION"); l.code = Self.str(r, "MATERIAL_CODE"); l.pending = Self.str(r, "PENDING")
-                    l.project = Self.str(r, "PROJECT_NO")
-                    l.req = Self.num(r, "REQ_QTY"); l.avail = Self.num(r, "HANDOVER_AVAILABLE_QTY")
-                    l.headerId = r["RSI_HEADER_ID"] ?? NSNull(); l.lineId = lineId ?? NSNull()
-                    l.valid = hasIds
-                    out.append(l)
-                }
-                self.lines = out
-                let ids = Set(out.map { $0.id })
-                self.selected = self.selected.intersection(ids)
+            defer { self.loading = false; self.searched = true }
+            let list: [[String: Any]]
+            do { list = try await model.desmQueryAsync("/getDesmOutGoingCreationList.do", body: body) }
+            catch { self.error = error.localizedDescription; self.lines = []; return }
+            var out: [DesmOutLine] = []
+            for (i, r) in list.enumerated() {
+                let lineId = r["RSI_LINE_ID"]
+                let hasIds = lineId != nil && !(lineId is NSNull) && r["RSI_HEADER_ID"] != nil && !(r["RSI_HEADER_ID"] is NSNull)
+                var l = DesmOutLine(id: hasIds ? Self.str(r, "RSI_LINE_ID") : "row\(i)")
+                l.rsiNo = Self.str(r, "RSI_NO"); l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR")
+                l.reqDate = Self.str(r, "REQUEST_DATE"); l.pkg = Self.str(r, "PACKAGE_NO"); l.plist = Self.str(r, "PACKING_LIST_NO")
+                l.desc = Self.str(r, "DESCRIPTION"); l.code = Self.str(r, "MATERIAL_CODE"); l.pending = Self.str(r, "PENDING")
+                l.project = Self.str(r, "PROJECT_NO")
+                l.req = Self.num(r, "REQ_QTY"); l.avail = Self.num(r, "HANDOVER_AVAILABLE_QTY")
+                l.headerId = r["RSI_HEADER_ID"] ?? NSNull(); l.lineId = lineId ?? NSNull()
+                l.valid = hasIds
+                out.append(l)
             }
+            self.lines = out
+            let ids = Set(out.map { $0.id })
+            self.selected = self.selected.intersection(ids)
         }
     }
 

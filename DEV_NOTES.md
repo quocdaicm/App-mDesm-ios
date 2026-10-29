@@ -11,13 +11,14 @@ App KHÔNG có backend riêng và không gọi dịch vụ ngoài; mọi dữ li
 |---|---|
 | `DESMMobileApp.swift` | Điểm vào, hiện `BrowserView`. |
 | `Core/` | `BrowserModel.swift` (trạng thái, @AppStorage, tham chiếu WKWebView, `installUserScript`/`evaluateNow`), `LayoutMode.swift`. |
-| `Scripts/` | JS và CSS tiêm vào trang: `UserScript.swift` (`makeScript()` — toàn bộ JS giao diện), `NetRecorder.swift` (ghi API), `PageExport.swift` (đọc cấu trúc/HTML/script trang), `ScanActions.swift` (kết quả quét → JS), `MobileStyles.swift`, `Translations.swift`. |
+| `Scripts/` | JS và CSS tiêm vào trang: `DodoBubble.swift` (nút chat Dodo), `UserScript.swift` (`makeScript()` — toàn bộ JS giao diện), `NetRecorder.swift` (ghi API), `PageExport.swift` (đọc cấu trúc/HTML/script trang), `ScanActions.swift` (kết quả quét → JS), `MobileStyles.swift`, `Translations.swift`. |
 | `Networking/DesmAPI.swift` | `desmQueryAsync` (URLSession + cookie), `desmProjectNo()`, `desmQuery` (bản callback), đường lui `desmQueryViaWebView`. |
 | `Session/SessionReconnect.swift` | Thăm dò phiên, tự đăng nhập lại (`probeSession`, `openLogin`, `appBecameActive`). |
 | `UI/` | `BrowserView.swift` (màn chính), `DesmTabBar`, `DesmDialog`, `MoreSheet`, `ShareSheet`. |
 | `Settings/SettingsView.swift` | Màn Cài đặt. |
 | `Sheets/` | Các màn native mở từ "Thêm"/tab: `PackingHistory`, `DocSheet`, `DocDetail`, `Outgoing`, `WipCompletion`, `MrfReturn`, `Activity`, `EditLog`, `Notices`. |
 | `Vessel/` | Bản đồ tàu: `VesselData`, `VesselLoader`, `VesselMap`, `VesselSheet`. |
+| `Background/BackgroundRefresh.swift` | Kiểm tra nền + thông báo cục bộ (thông báo DESM mới, tàu sắp đến). |
 | `Tools/` | Công cụ tinh chỉnh: `NetLogStore`, `SnapStore`, `PageSnapshot`, `DesmFetch`, `DesmSource`, `WriteAudit`. |
 | `Scanner/PackageScanner.swift` | Quét Package No/QR bằng camera. |
 | `Web/WebView.swift` | `UIViewRepresentable` bọc WKWebView, `Coordinator` (điều hướng, alert/confirm thật, nhận message từ JS), `SessionStore` (lưu cookie phiên vào Keychain), `CredStore` (tài khoản tự điền, Keychain). |
@@ -241,4 +242,30 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - `BrowserView.swift` (8.207 dòng) đã tách thành ~30 file theo thư mục (bảng §2). Nội dung giữ nguyên; chỉ đổi `private`/`fileprivate` ở mức thành viên thành internal để các extension `BrowserModel` ở file khác dùng được. File project (`project.pbxproj`) đã khai báo nhóm thư mục tương ứng — thêm file mới phải thêm vào Xcode/pbxproj.
 - `desmQuery` giờ chạy bằng **URLSession**, không còn cần trang DESM đang mở: cookie lấy từ kho cookie của WebView, hoặc từ Keychain (`SessionStore.storedCookies()`) khi không có WebView. Hết phiên (HTTP 401 / bị chuyển về `login.do`) → `DesmAPIError.expired`. Lỗi khác → tự lùi về cách cũ (`desmQueryViaWebView`, fetch trong WebView). CHƯA kiểm chứng trên máy thật: máy chủ có chấp nhận request từ URLSession (header Referer/Origin đã gửi) hay không — nếu không, log sẽ thấy "phản hồi không phải JSON" rồi tự dùng đường lui.
 - Async/await: `desmQueryAsync`, `desmProjectNo()`, `fetchDocsAsync`, `fetchDocDetailAsync`, `fetchActivityAsync`, `fetchVesselsAsync`, `fetchShipInfoAsync`. Các hàm callback cũ (`fetchDocs`, `fetchDocDetail`, `fetchActivity`, `fetchVessels`, `fetchShipInfo`, `desmQuery`) vẫn còn như lớp bọc mỏng nên các View không phải sửa. Còn dạng callback: `Outgoing`, `WipCompletion`, `MrfReturn`, `EditLog`, `Notices`, các hàm `callAsyncJavaScript` (PackingHistory, DesmFetch, PageSnapshot…) — chuyển dần khi động tới.
-- Chưa làm: thông báo nền (`BGAppRefreshTask`), unit test `PkgParser`. Nền tảng cho thông báo nền đã sẵn: gọi `desmQueryAsync` không cần WebView (cần thêm đường lấy cookie thuần Keychain khi `webView == nil` — `desmCookies()` đã làm).
+- Đã chuyển thêm sang async: `Outgoing`/`WipCompletion`/`MrfReturn` (`search`), `EditLog`, `Notices` (`fetchNoticesAsync`). Còn dạng callback: các hàm `callAsyncJavaScript` (PackingHistory, DesmFetch, PageSnapshot, `downloadAttachment`...).
+- Chưa làm: unit test `PkgParser`.
+
+## Thông báo khi app đóng (2026-10-29) — `Background/BackgroundRefresh.swift`
+- `BGAppRefreshTask` (id `com.desm.mobile.refresh`, khai báo trong `Info.plist` cùng `UIBackgroundModes=fetch`; `project.pbxproj` đã trỏ `INFOPLIST_FILE`). Đăng ký ở `DESMMobileApp.init`, xin lịch khi app xuống nền (`BrowserView` onChange scenePhase) và sau mỗi lượt chạy nền; sớm nhất 30 phút/lần, iOS quyết định giờ thực tế (không đảm bảo). Cần thông báo đúng lúc → phải có backend đẩy tin.
+- Mỗi lượt: `fetchNoticesAsync` (báo thông báo DESM mới, lần đầu chỉ ghi mốc `desmNotifiedNotices`) và `fetchVesselsAsync` (báo tàu `arrivingSoon`, chống báo lặp bằng `desmNotifiedVessels` = invoice|ngày ETA). Cập nhật số badge. Hết phiên → bỏ qua lặng lẽ.
+- Công tắc: Cài đặt > Đăng nhập > "Thông báo khi app đóng" (`desmBgNotify`, mặc định bật); bật lên sẽ xin quyền thông báo. Cookie lấy từ Keychain nên cần bật "Ghi nhớ phiên đăng nhập" (`desmRememberLogin`).
+- Thử nhanh bằng Xcode: tạm dừng app, trong lldb: `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.desm.mobile.refresh"]`. CHƯA kiểm chứng trên máy thật.
+
+## Nút chat Dodo — trợ lý AI của web (2026-10-29) — `Scripts/DodoBubble.swift`
+- Web DESM có widget **Dodo** (`/resources/scripts/util/Dodo.js`, "PMS AI 두두"): gửi `POST /dodo/chat/stream.do` (form: `user_prompt`, `menu_context`, `session_id`, `mode` fast|slow), nhận SSE (token/section/choices/error/done); lịch sử: `sessions.do`, `history.do`, `delete.do`, `reset.do`. Có đọc ngữ cảnh màn hình qua `ScreenContext.snapshot()`.
+- Trong dump HTML (đã dựng) trang chỉ nạp `Dodo.js`, KHÔNG thấy lệnh `Dodo.init(...)`; vì vậy app tự gọi `Dodo.init({launcher:false,...})`, nếu trang đã có `.dodo-root` thì dùng lại.
+- `makeDodoScript()` cài thành `WKUserScript` thứ 4 (chỉ khung chính, document start) và chạy lại trong `evaluateNow()`. Idempotent: `window.__desmDodo`.
+- Bong bóng `#desm-dodo-btn` (ảnh gấu `/resources/img/bear-assistant.png`, kéo được, nhớ vị trí ở `localStorage['desmDodoPos']`); ẩn ở trang login và khi khung chat đang mở. CSS ép `.dodo-win` thành tấm gần toàn màn hình, theo `visualViewport` để né bàn phím; `.dodo-input` 16px chống iOS tự phóng to.
+- Công tắc: Cài đặt > "Nút chat Dodo" (`desmDodoBubble`, mặc định bật).
+- Va chạm đã xử lý: `viWalk` bỏ qua `.dodo-msgs` (không dịch câu trả lời AI); `NetRecorder` không `clone()` luồng `/dodo/chat/stream`.
+- CHƯA kiểm chứng (chưa chạy trên máy thật): tài khoản có quyền dùng `/dodo/chat/*` hay không (401/403 → hiện thông báo), SSE qua `fetch` stream trong WKWebView, vị trí bong bóng so với thanh tab native, `ScreenContext` trong khung chính có gom được nội dung iframe không.
+- Trả lời tiếng Việt: `DodoBubble.swift` bọc `fetch`, thêm "[Trả lời bằng tiếng Việt]" vào `user_prompt` gửi `/dodo/chat/stream` (khung chat vẫn hiện câu gốc; lịch sử tải từ máy chủ có thể hiện kèm dòng này). Công tắc: Cài đặt > "Dodo trả lời bằng tiếng Việt" (`desmDodoVi`, mặc định bật). Chưa kiểm chứng Dodo có tuân theo hay không.
+
+## Trang "Thêm" chia nhóm + cuộn được (2026-10-29)
+`UI/MoreSheet.swift`: `webItems` (MENU WEB DESM) và `toolItems` (CÔNG CỤ APP), vẽ bằng `group(_:_:)` trong `ScrollView`; khung mở ở 70% màn hình, kéo lên được toàn màn hình. Đã bỏ nút Quay lại / Tiến / Tải lại (vuốt mép màn hình vẫn quay lại/tiến). `model.goBack/goForward/reload` vẫn còn trong code.
+
+## Màn hình chính = Package (2026-10-29)
+`sessionDidLoad` (Session/SessionReconnect.swift): lần đầu vào `main.do` sau khi mở app hoặc sau đăng nhập lại (`pendingHomeTab`), gọi `openHomeTab` → `__desmOpenMenu('196', ...)` (tab Kiện hàng), thử lại tối đa ~12 giây vì menu trái nạp chậm. Công tắc: Cài đặt > "Mở màn Package khi vào app" (`desmOpenPackage`, mặc định bật). Nút "Về DESM" vẫn về trang chủ, không tự mở Package.
+
+## Bộ lọc mặc định thu gọn (2026-10-29)
+`addFilterBar` gọi `setCollapsed(true)` ngay khi dựng thanh lọc: mọi màn có bộ lọc mở ra ở dạng gọn (hàng tìm nhanh + nút Bộ lọc + Search). Bấm "Bộ lọc" để xổ ra; bấm Search thì thu lại như cũ.

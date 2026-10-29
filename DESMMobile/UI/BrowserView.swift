@@ -81,7 +81,7 @@ struct BrowserView: View {
         .ignoresSafeArea(.keyboard, edges: .bottom)   // bàn phím phủ lên footer, không ép WebView (tránh lưới báo "Too small space" làm mất focus ô nhập)
         .tint(.blue)
         .onChange(of: scenePhase) { phase in
-            if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date() }
+            if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date(); if phase == .background { BackgroundRefresh.schedule() } }
             else { model.appBecameActive(); model.refreshNoticeBadge() }
         }
         .onChange(of: model.inDesm) { inside in if inside { model.refreshNoticeBadge() } }
@@ -133,7 +133,7 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $showMore) {
             MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true }, onAudit: { showAudit = true })
-                .presentationDetents([.height(560)])
+                .presentationDetents([.fraction(0.7), .large])
                 .presentationDragIndicator(.visible)
                 .tint(Color.tabBlue)
         }

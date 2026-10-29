@@ -67,6 +67,13 @@ final class BrowserModel: ObservableObject {
     }
     @AppStorage("desmCustomCSS") var customCSS = ""
     @AppStorage("desmCustomDict") var customDict = ""
+    /// Nút bong bóng chat Dodo (trợ lý AI của DESM) — xem Scripts/DodoBubble.swift
+    @AppStorage("desmDodoBubble") var dodoBubble = true
+    /// Gắn thêm yêu cầu "trả lời bằng tiếng Việt" vào câu hỏi gửi Dodo
+    @AppStorage("desmDodoVi") var dodoVi = true
+    /// Vào app / đăng nhập xong thì tự mở màn Package (Kiện hàng) làm màn hình chính
+    @AppStorage("desmOpenPackage") var openPackageOnStart = true
+    var pendingHomeTab = true
     /// Dịch giao diện web DESM sang tiếng Việt (lớp dịch phía app, không đổi ngôn ngữ phía máy chủ)
     @Published var viLang: Bool {
         didSet { UserDefaults.standard.set(viLang, forKey: "desmViLang") }
@@ -182,11 +189,15 @@ final class BrowserModel: ObservableObject {
         controller.addUserScript(WKUserScript(source: BrowserModel.snapRecorderSource,
                                               injectionTime: .atDocumentEnd,
                                               forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: makeDodoScript(),
+                                              injectionTime: .atDocumentStart,
+                                              forMainFrameOnly: true))
     }
 
     /// Áp ngay lên trang đang mở.
     func evaluateNow() {
         webView?.evaluateJavaScript(makeScript(), completionHandler: nil)
+        webView?.evaluateJavaScript(makeDodoScript(), completionHandler: nil)
     }
 
     func applyStyles() {

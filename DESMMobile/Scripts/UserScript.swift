@@ -185,6 +185,7 @@ extension BrowserModel {
               }
               setTimeout(refresh, 120);
             }, false);
+            setCollapsed(true);   // mặc định gọn: chỉ hiện hàng tìm nhanh + nút Bộ lọc; bấm "Bộ lọc" để xổ ra
             refresh();
           }
           function buildForm(doc, t) {
@@ -2101,11 +2102,12 @@ extension BrowserModel {
             var doc = root.nodeType === 9 ? root : root.ownerDocument;
             var base = root.nodeType === 9 ? root.documentElement : root;
             if (!doc || !base || base.nodeType !== 1) return;
+            try { if (base.closest && base.closest('.dodo-msgs')) return; } catch (e) {}   // không dịch câu trả lời của Dodo
             viAttrs(base);
             var els = base.querySelectorAll('[placeholder],[title],[alt],input[type=button],input[type=submit],input[type=reset]');
             for (var i = 0; i < els.length; i++) viAttrs(els[i]);
             var tw = doc.createTreeWalker(base, 4, null), n;
-            while ((n = tw.nextNode())) viText(n);
+            while ((n = tw.nextNode())) { if (n.parentNode && n.parentNode.closest && n.parentNode.closest('.dodo-msgs')) continue; viText(n); }
           }
           function viPost(lang) {
             try { w.webkit.messageHandlers.desmLang.postMessage({ lang: lang }); } catch (e) {}
