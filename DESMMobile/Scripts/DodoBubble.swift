@@ -9,6 +9,7 @@ extension BrowserModel {
     func makeDodoScript() -> String {
         let on = dodoBubble ? "true" : "false"
         let vi = dodoVi ? "true" : "false"
+        let data = dodoData ? "true" : "false"
         let hosts = (try? JSONSerialization.data(withJSONObject: BrowserModel.allowedHosts, options: []))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         return #"""
@@ -17,6 +18,7 @@ extension BrowserModel {
           try { if (w !== w.top) return; } catch (e) { return; }
           w.__desmDodoOn = \#(on);
           w.__desmDodoVi = \#(vi);
+          w.__desmDodoData = \#(data);
           if (w.__desmDodo) { try { w.__desmDodo.sync(); } catch (e) {} return; }
           var host = (location.hostname || '').toLowerCase();
           var okHost = \#(hosts).some(function(s) { return host === s || host.endsWith('.' + s); });
@@ -165,15 +167,39 @@ extension BrowserModel {
               vv();
             } catch (e) {}
           }
-          // Gắn yêu cầu trả lời tiếng Việt vào câu hỏi gửi Dodo (khung chat vẫn hiện nguyên câu bạn gõ)
+          // Tìm dữ liệu kiện đang hiển thị (dạng thẻ) ở khung đang mở: cardView lưu vào window.__desmItems của khung đó
+          function findItems(doc, depth) {
+            try { var x = doc.defaultView.__desmItems; if (x && x.items && x.items.length) return x; } catch (e) {}
+            if (depth > 4) return null;
+            var fs = doc.querySelectorAll('iframe');
+            for (var i = 0; i < fs.length; i++) {
+              try {
+                if (fs[i].id === 'desmDetailFrame' || !fs[i].contentDocument || fs[i].getClientRects().length === 0) continue;
+                var r = findItems(fs[i].contentDocument, depth + 1); if (r) return r;
+              } catch (e) {}
+            }
+            return null;
+          }
+          function cut(v, n) { v = String(v == null ? '' : v).replace(/[\r\n|]+/g, ' ').trim(); return v.length > n ? v.slice(0, n) : v; }
+          function screenText() {
+            var x = findItems(document, 0); if (!x) return '';
+            var L = x.items.slice(0, 300);
+            var lines = ['[Dữ liệu đang hiển thị trên màn hình Package: ' + x.items.length + ' kiện' + (x.items.length > L.length ? ' (chỉ gửi ' + L.length + ' kiện đầu)' : '') + ']',
+              'Package No | Mô tả | Loại | Packing List | A/O | Vị trí | Xác nhận VL | Đang chọn'];
+            L.forEach(function(i) { lines.push([cut(i.no, 40), cut(i.desc, 60), cut(i.type, 20), cut(i.list, 30), cut(i.ao, 12), cut(i.loc, 40), i.ok ? 'Y' : 'N', i.sel ? 'Y' : ''].join(' | ')); });
+            return lines.join('\n');
+          }
+          // Gắn vào câu hỏi gửi Dodo: dữ liệu màn hình (nếu bật) + yêu cầu trả lời tiếng Việt (nếu bật). Khung chat vẫn hiện nguyên câu bạn gõ.
           try {
             var f0 = w.fetch;
             if (f0) w.fetch = function(inp, init) {
               try {
                 var u = typeof inp === 'string' ? inp : (inp && inp.url);
-                if (w.__desmDodoVi && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
-                  var q = init.body.get('user_prompt');
-                  if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0) init.body.set('user_prompt', q + '\n\n[Trả lời bằng tiếng Việt]');
+                if ((w.__desmDodoVi || w.__desmDodoData) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
+                  var q = init.body.get('user_prompt') || '', add = '';
+                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = screenText(); if (tx) add += '\n\n' + tx; }
+                  if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0 && w.__desmDodoVi) add += '\n\n[Trả lời bằng tiếng Việt]';
+                  if (add) init.body.set('user_prompt', q + add);
                 }
               } catch (e) {}
               return f0.apply(this, arguments);

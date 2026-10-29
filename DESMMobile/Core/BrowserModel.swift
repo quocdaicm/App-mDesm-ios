@@ -71,6 +71,8 @@ final class BrowserModel: ObservableObject {
     @AppStorage("desmDodoBubble") var dodoBubble = true
     /// Gắn thêm yêu cầu "trả lời bằng tiếng Việt" vào câu hỏi gửi Dodo
     @AppStorage("desmDodoVi") var dodoVi = true
+    /// Gửi kèm dữ liệu kiện đang hiển thị (màn Package) trong câu hỏi gửi Dodo
+    @AppStorage("desmDodoData") var dodoData = true
     /// Vào app / đăng nhập xong thì tự mở màn Package (Kiện hàng) làm màn hình chính
     @AppStorage("desmOpenPackage") var openPackageOnStart = true
     var pendingHomeTab = true

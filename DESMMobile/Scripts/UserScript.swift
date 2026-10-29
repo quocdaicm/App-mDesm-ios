@@ -182,6 +182,8 @@ extension BrowserModel {
               if (!b) return;
               if (b === bx.firstElementChild || /search/i.test(b.id || '')) {
                 setTimeout(function() { setCollapsed(true); refresh(); }, 200);
+                // Trang có thể dựng lại lưới sau khi tìm: áp lại dạng thẻ để không lộ khung bảng xanh
+                [700, 1600, 3500].forEach(function(ms) { setTimeout(function() { try { cardView(doc); } catch (e) {} }, ms); });
               }
               setTimeout(refresh, 120);
             }, false);
@@ -1316,9 +1318,10 @@ extension BrowserModel {
           function cardView(doc) {
             var win = doc.defaultView; if (!win || !win.TGGrids || !win.TGGrids.length) return;
             var G = null;
-            for (var gi = 0; gi < win.TGGrids.length; gi++) {
+            // Lấy lưới MỚI NHẤT còn gắn trong trang: sau khi bấm Search trang có thể dựng lại lưới, lưới cũ còn nằm trong TGGrids nhưng đã bị gỡ khỏi DOM
+            for (var gi = win.TGGrids.length - 1; gi >= 0; gi--) {
               var g = win.TGGrids[gi];
-              if (g && g.Cols && g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION && g.Rows) { G = g; break; }
+              if (g && g.Cols && g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION && g.Rows && g.MainTag && doc.documentElement.contains(g.MainTag)) { G = g; break; }
             }
             if (!G || !G.MainTag) return;
             // MainTag có thể là chính khung chứa lưới hoặc thẻ .GridMain bên trong: luôn lấy đúng khung chứa lưới
@@ -1380,6 +1383,7 @@ extension BrowserModel {
             host.classList.toggle('desm-grid-off', on);
             box.style.display = on ? '' : 'none';
             if (!on) {
+              try { win.__desmItems = null; } catch (e) {}
               if (tb) tb.classList.remove('desm-tb-nosel');
               if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
               return;
@@ -1412,6 +1416,7 @@ extension BrowserModel {
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
+            try { win.__desmItems = { t: Date.now(), items: items }; } catch (e) {}   // Dodo: dữ liệu đang hiển thị trên màn hình
             // Mặc định ẩn nút Xóa vị trí / Cập nhật vị trí; chỉ hiện khi đã tích chọn ít nhất một kiện
             if (tb) tb.classList.toggle('desm-tb-nosel', !items.some(function(i) { return i.sel; }));
             // Thanh nút đổi chiều cao (thu/mở) nên tính lại chiều cao vùng thẻ cho vừa màn hình
@@ -2490,12 +2495,16 @@ extension BrowserModel {
               f.addEventListener('load', function() { try { if (f.contentDocument) applyAll(f.contentDocument); } catch (e) {} });
               try { if (f.contentDocument && f.contentDocument.readyState !== 'loading') applyAll(f.contentDocument); } catch (e) {}
             };
-            var lastForm = 0;
+            var lastForm = 0, trail = 0;
             var scan = function() {
               try { credHook(document); } catch (e) {}
               if (w.__desmCfg.mode === 'mobile' && allowed(document)) {
                 var now = Date.now();
                 if (now - lastForm > 400) { lastForm = now; navHandlers(document); formify(document); fixMaps(document); try { colToggle(document); } catch (e) {} }
+                else if (!trail) {
+                  // Lần quét bị bỏ qua do giới hạn 400ms: hẹn quét bù, nếu không lưới nạp muộn sẽ lộ khung bảng xanh cho tới khi có thay đổi DOM khác
+                  trail = w.setTimeout(function() { trail = 0; try { schedule(); } catch (e) {} }, 450);
+                }
               }
               var fs = document.querySelectorAll('iframe,frame');
               for (var i = 0; i < fs.length; i++) watch(fs[i]);
@@ -2510,6 +2519,7 @@ extension BrowserModel {
             } catch (e) {}
             document.addEventListener('DOMContentLoaded', function() {
               scan(); applyAll(document);
+              [1000, 2500, 5000].forEach(function(ms) { w.setTimeout(function() { try { schedule(); } catch (e) {} }, ms); });
               if (document.head) {
                 try { new MutationObserver(function() { setViewport(document); })
                   .observe(document.head, { childList: true }); } catch (e) {}

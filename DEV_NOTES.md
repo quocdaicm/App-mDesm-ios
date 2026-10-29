@@ -269,3 +269,10 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 
 ## Bộ lọc mặc định thu gọn (2026-10-29)
 `addFilterBar` gọi `setCollapsed(true)` ngay khi dựng thanh lọc: mọi màn có bộ lọc mở ra ở dạng gọn (hàng tìm nhanh + nút Bộ lọc + Search). Bấm "Bộ lọc" để xổ ra; bấm Search thì thu lại như cũ.
+
+## Khung bảng xanh lộ ra sau khi tìm (2026-10-29)
+Giả thuyết (chưa tái hiện trên máy): sau Search trang dựng lại lưới TreeGrid, `cardView` vẫn bám lưới cũ trong `TGGrids` nên lưới mới không được ẩn. Sửa: `cardView` duyệt `TGGrids` từ cuối và chỉ nhận lưới còn gắn trong DOM; sau khi bấm Search gọi lại `cardView` ở 0,7s / 1,6s / 3,5s.
+- Nguyên nhân khả dĩ hơn của khung bảng xanh lúc mới vào (người dùng: bấm qua lại nút Bộ lọc thì mất): `scan` bỏ qua lần quét nếu cách lần trước <400ms và không có lần quét bù, nên lưới nạp muộn không được chuyển sang thẻ cho tới khi có thay đổi DOM khác. Đã thêm quét bù (trailing) 450ms và quét lại ở 1s/2,5s/5s sau DOMContentLoaded.
+
+## Dodo đọc dữ liệu màn hình (2026-10-29)
+Dodo trả lời "không có dữ liệu bảng" dù màn Package đang có 17 kiện (`ScreenContext.snapshot()` của web không lấy được lưới trong app; nguyên nhân CHƯA xác minh — nghi: khung ẩn `desmDetailFrame` được xếp ưu tiên, hoặc lưới bị dời ra ngoài màn hình). Cách vòng: `cardView` lưu `window.__desmItems` (danh sách kiện đang hiển thị); `DodoBubble.swift` (`screenText`) nối bảng văn bản tối đa 300 kiện vào `user_prompt` gửi `/dodo/chat/stream`. Công tắc: Cài đặt > "Gửi dữ liệu kiện đang hiển thị cho Dodo" (`desmDodoData`, mặc định bật). Mới chỉ cho màn Package dạng thẻ; RSI/MRR/MRF... chưa có.

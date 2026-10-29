@@ -130,6 +130,10 @@ struct SettingsView: View {
                 get: { model.dodoBubble },
                 set: { model.dodoBubble = $0; model.applyStyles() }
             ))
+            Toggle("Gửi dữ liệu kiện đang hiển thị cho Dodo", isOn: Binding(
+                get: { model.dodoData },
+                set: { model.dodoData = $0; model.applyStyles() }
+            ))
             Toggle("Dodo trả lời bằng tiếng Việt", isOn: Binding(
                 get: { model.dodoVi },
                 set: { model.dodoVi = $0; model.applyStyles() }
