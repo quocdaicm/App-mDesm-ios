@@ -152,6 +152,11 @@ struct SettingsView: View {
             NavigationLink("AI riêng: nhà cung cấp, key, model") { AIProviderListView() }
             if model.aiEngine == "ai" {
                 Toggle("Cho AI tự tra dữ liệu DESM (chỉ đọc)", isOn: $model.aiTools)
+                Toggle("Gửi sẵn toàn bộ dữ liệu DESM cho AI", isOn: $model.aiAll)
+                if model.aiAll {
+                    Text("Mỗi lần mở chat, app tải danh sách kiện, hạng mục từng kiện, RSI, MRF, tàu, thông báo (cắt theo \"Lượng dữ liệu gửi\") và gửi tới nhà cung cấp AI bạn chọn. Chỉ bật khi công ty cho phép.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Toggle("Gửi kèm dữ liệu trang đang mở", isOn: $model.aiData)
                 if model.aiData {
                     Picker("Lượng dữ liệu gửi", selection: $model.aiLimit) {

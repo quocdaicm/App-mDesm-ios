@@ -105,6 +105,61 @@ enum DesmAITools {
         return out
     }
 
+    /// "Ảnh chụp" dữ liệu DESM để gửi sẵn cho AI: kiện (mọi kiện của dự án), hạng mục chi tiết từng kiện (tối đa 40 kiện),
+    /// RSI, MRF, tàu, thông báo. Chỉ ĐỌC. Cắt theo `budget` ký tự; phần nào không tải được thì bỏ qua và ghi chú.
+    @MainActor
+    static func snapshotAll(model: BrowserModel, budget: Int, status: @escaping (String) -> Void) async -> String {
+        var out: [String] = ["[DỮ LIỆU DESM TẢI SẴN — chỉ đọc; mỗi dòng JSON là một bản ghi]"]
+        var used = out[0].count
+        var cut = false
+        let deadline = Date().addingTimeInterval(30)   // tối đa 30 giây cho cả ảnh chụp
+        func late() -> Bool { Date() > deadline || Task.isCancelled }
+        func add(_ title: String, _ body: String) {
+            let s = "\n=== \(title) ===\n" + body
+            if used + s.count > budget { cut = true; return }
+            out.append(s); used += s.count
+        }
+        func run(_ endpoint: String, _ params: [String: String], _ rows: Int) async -> String {
+            let pj = (try? JSONSerialization.data(withJSONObject: params)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            return await query(["endpoint": endpoint, "params_json": pj, "max_rows": rows], model: model)
+        }
+
+        status("Đang tải danh sách kiện…")
+        let pk = await run("/getIdsmOsSummaryList.do", ["MRR_VISUAL_CHECK": "All"], 500)
+        add("KIỆN HÀNG (/getIdsmOsSummaryList.do)", pk)
+        let nos = (NSOrderedSet(array: matches(pk, #""PACKAGE_NO":"([^"]+)""#)).array as? [String]) ?? []
+
+        let others: [(String, String, [String: String])] = [
+            ("RSI (/getDesmRsiViewList.do)", "/getDesmRsiViewList.do", [:]),
+            ("MRF (/getMrfSummaryList.do)", "/getMrfSummaryList.do", [:]),
+            ("TÀU (/vessel/getVesselFinderList.do)", "/vessel/getVesselFinderList.do", [:]),
+            ("THÔNG BÁO (/getNotice.do)", "/getNotice.do", [:]),
+        ]
+        for (t, p, prm) in others {
+            if used >= budget || late() { cut = true; break }
+            status("Đang tải \(t.components(separatedBy: " (")[0])…")
+            add(t, await run(p, prm, 300))
+        }
+        var done = 0
+        for no in nos.prefix(25) {
+            if used >= budget || late() { cut = true; break }
+            status("Đang tải hạng mục kiện \(done + 1)/\(min(nos.count, 25))…")
+            add("HẠNG MỤC CỦA KIỆN \(no) (/getIdsmOsDetailList.do)", await run("/getIdsmOsDetailList.do", ["PACKAGE_NO": no, "QTY_TYPE": "rsi"], 200))
+            done += 1
+        }
+        if nos.count > 25 { out.append("\n[Chỉ tải hạng mục của 25/\(nos.count) kiện đầu; các kiện còn lại dùng công cụ desm_query nếu được bật.]") }
+        if cut { out.append("\n[ĐÃ CẮT vì vượt giới hạn dữ liệu gửi AI; có thể thiếu một số mục.]") }
+        return out.joined(separator: "\n")
+    }
+
+    private static func matches(_ s: String, _ pattern: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let ns = s as NSString
+        return re.matches(in: s, range: NSRange(location: 0, length: ns.length)).compactMap {
+            $0.numberOfRanges > 1 ? ns.substring(with: $0.range(at: 1)) : nil
+        }
+    }
+
     @MainActor
     private static func query(_ args: [String: Any], model: BrowserModel) async -> String {
         guard var path = args["endpoint"] as? String else { return "Thiếu tham số endpoint." }

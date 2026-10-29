@@ -86,14 +86,20 @@ final class BrowserModel: ObservableObject {
     /// Đọc cả trang đang mở (mọi khung, toàn bộ dòng lưới đã tải, ô lọc, văn bản) để gửi cho AI riêng.
     /// Cho AI riêng tự tra dữ liệu DESM qua công cụ chỉ đọc (kiện, hạng mục chi tiết, RSI, MRF, WIP, tàu, thông báo…) — mặc định TẮT
     @AppStorage("desmAITools") var aiTools = false
+    /// Gửi sẵn "ảnh chụp" dữ liệu DESM (kiện + hạng mục từng kiện, RSI, MRF, tàu, thông báo) cho AI mỗi khi chat — mặc định TẮT
+    @AppStorage("desmAIAll") var aiAll = false
 
     @MainActor func fetchScreenTextForAI(limit: Int? = nil) async -> String {
         let lim = limit ?? aiLimit
         guard let wv = webView else { return "" }
+        // Có hạn chờ 5 giây: nếu trang bận/không phản hồi thì bỏ qua, tránh treo khung chat AI
         return await withCheckedContinuation { cont in
+            var done = false
+            func finish(_ s: String) { if done { return }; done = true; cont.resume(returning: s) }
             wv.evaluateJavaScript("(window.__desmDodo && window.__desmDodo.pageText) ? window.__desmDodo.pageText(\(lim)) : ''") { r, _ in
-                cont.resume(returning: (r as? String) ?? "")
+                DispatchQueue.main.async { finish((r as? String) ?? "") }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finish("") }
         }
     }
     /// Vào app / đăng nhập xong thì tự mở màn Package (Kiện hàng) làm màn hình chính

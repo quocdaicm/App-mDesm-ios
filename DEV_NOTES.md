@@ -302,3 +302,23 @@ Dodo trả lời "không có dữ liệu bảng" dù màn Package đang có 17 k
 
 ## Dodo luôn Slow (2026-10-29)
 - `Dodo.js` bản này đặt `.dodo-model{display:none}` nên người dùng không chọn được Fast/Slow. Thêm công tắc Cài đặt > "Dodo luôn dùng chế độ Slow (chính xác)" (`desmDodoSlow`, mặc định TẮT từ lượt sau: nghi ép slow gây lỗi `[오류] ... (status 422)` từ AI service của Dodo — chưa xác định nguyên nhân): wrapper `fetch` trong `DodoBubble.swift` ghi đè `mode=slow` trong form gửi `/dodo/chat/stream`. CHƯA kiểm chứng máy chủ có trả lời khác đi ở Slow hay không.
+
+## Xác nhận API thật từ nhật ký (2026-10-29)
+- Nhật ký API người dùng gửi cho thấy: `POST /getIdsmOsSummaryList.do` với `PACKAGE_LIST_NO=0009` trả 17 dòng (mỗi dòng = 1 kiện, `PACKAGE_NO` dạng `OM4-DE-IS-0009-001`, `PACKAGE_LIST_NO` = `OM4-DE-IS-0009`, có `TOT_QTY`, `STORAGE_LOCATION`...). `POST /getIdsmOsDetailList.do` với `PACKAGE_NO=<đủ mã kiện>&QTY_TYPE=rsi&PAGE_NUM=1&PAGE_CNT=1000` trả `results.list`. Khoá tham số khớp `DesmAITools.catalog`; `desmQueryAsync` đã đọc cả `results` dạng mảng lẫn `results.list`.
+- `AIChatView` thêm ghi chú vào system prompt (khi `aiTools` bật) về cách tra lô hàng/kiện/hạng mục.
+- Ảnh chụp cho thấy AI riêng (Gemini) chỉ trả lời từ dữ liệu màn hình vì công tắc "Cho AI tự tra dữ liệu DESM" (`desmAITools`) đang TẮT (mặc định tắt). Dodo gốc chạy ở server nên app không mở rộng được phạm vi dữ liệu của nó.
+
+## Gửi sẵn toàn bộ dữ liệu DESM cho AI (2026-10-29)
+- Công tắc: Cài đặt > Trợ lý Dodo > "Gửi sẵn toàn bộ dữ liệu DESM cho AI" (`desmAIAll`, mặc định TẮT; chỉ hiện khi trợ lý = AI riêng). `DesmAITools.snapshotAll` tải: mọi kiện (`/getIdsmOsSummaryList.do`, MRR_VISUAL_CHECK=All), RSI, MRF, tàu, thông báo, rồi hạng mục chi tiết của tối đa 40 kiện đầu (`/getIdsmOsDetailList.do`, QTY_TYPE=rsi). Mỗi API cắt ~24.000 ký tự (dùng lại `query`); tổng cắt theo `max(aiLimit, 40000)`; kết quả cache 5 phút trong `AIChatSession.snapshot`, gắn vào system prompt.
+- Chỉ đọc. Dữ liệu công ty đi tới nhà AI ngoài → chỉ bật khi được phép. CHƯA biên dịch/kiểm chứng: API RSI/MRF/thông báo có chấp nhận khoá trống không (lỗi từng mục chỉ ghi vào phần đó, không làm hỏng cả ảnh chụp).
+
+## Chống treo khung chat AI riêng (2026-10-29)
+Người dùng báo hỏi vài câu thì AI riêng đứng/treo. Chưa tái hiện được; các điểm có thể treo vô hạn đã được chặn:
+- `fetchScreenTextForAI`: thêm hạn chờ 5 giây (trước đây `evaluateJavaScript` không trả về là chờ mãi, `sending` kẹt true).
+- `AIChatView.send()`: giữ `job: Task`, nút gửi thành nút DỪNG khi đang trả lời; chốt chặn tự huỷ sau 150 giây; huỷ/quá hạn hiện thông báo thay vì treo.
+- `snapshotAll`: tối đa 30 giây, hạng mục chi tiết tối đa 25 kiện (trước 40), dừng khi bị huỷ.
+- Nếu vẫn treo: ghi lại lúc treo đang hiện dòng trạng thái nào ("Đang tải dữ liệu DESM…", "Đang trả lời…") và công tắc nào đang bật.
+
+## Khung chat AI riêng giao diện giống Dodo AI (2026-10-29)
+- `AI/AIChatView.swift` vẽ lại, không còn `NavigationStack`/toolbar: đầu khung gradient #4e73df→#224abe + vòng tròn mờ góc phải + avatar gấu (`DodoAvatar` tải `/resources/img/bear-assistant.png` từ web DESM bằng `AsyncImage`, lỗi thì hiện biểu tượng), tiêu đề "Trợ lý AI" + dòng nhà/model (chạm để đổi AI), nút xoá hội thoại và nút đóng trắng bo góc; bong bóng người dùng gradient bo (18,18,4,18), bong bóng AI trắng viền #e8eaf5 bo (4,18,18,18) kèm avatar 28pt; ô nhập bo 22 nền #f1f2f9, nút gửi tròn gradient 44pt. Màu/bo góc lấy từ `Dodo.js` (`enum AIStyle`, `CornerShape`).
+- CHƯA biên dịch/kiểm chứng trên máy thật.
