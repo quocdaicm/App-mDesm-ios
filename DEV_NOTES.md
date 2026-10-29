@@ -19,6 +19,7 @@ App KHÔNG có backend riêng và không gọi dịch vụ ngoài; mọi dữ li
 | `Sheets/` | Các màn native mở từ "Thêm"/tab: `PackingHistory`, `DocSheet`, `DocDetail`, `Outgoing`, `WipCompletion`, `MrfReturn`, `Activity`, `EditLog`, `Notices`. |
 | `Vessel/` | Bản đồ tàu: `VesselData`, `VesselLoader`, `VesselMap`, `VesselSheet`. |
 | `Background/BackgroundRefresh.swift` | Kiểm tra nền + thông báo cục bộ (thông báo DESM mới, tàu sắp đến). |
+| `AI/` | "AI riêng" (chuyển từ app LiveTranslate): `AIProviders` (8 nhà, key trong Keychain `DESMMobile.AI`, thứ tự ưu tiên), `AIClient` (Gemini/Claude/OpenAI-compatible, `listModels`, `pickWorkingModel`, `run` có chuyển nhà khi lỗi), `AISettingsView` (nhập key, dò model, tự chọn model), `AIChatView` (khung chat native + đổi nhanh nhà/model). |
 | `Tools/` | Công cụ tinh chỉnh: `NetLogStore`, `SnapStore`, `PageSnapshot`, `DesmFetch`, `DesmSource`, `WriteAudit`. |
 | `Scanner/PackageScanner.swift` | Quét Package No/QR bằng camera. |
 | `Web/WebView.swift` | `UIViewRepresentable` bọc WKWebView, `Coordinator` (điều hướng, alert/confirm thật, nhận message từ JS), `SessionStore` (lưu cookie phiên vào Keychain), `CredStore` (tài khoản tự điền, Keychain). |
@@ -276,3 +277,28 @@ Giả thuyết (chưa tái hiện trên máy): sau Search trang dựng lại lư
 
 ## Dodo đọc dữ liệu màn hình (2026-10-29)
 Dodo trả lời "không có dữ liệu bảng" dù màn Package đang có 17 kiện (`ScreenContext.snapshot()` của web không lấy được lưới trong app; nguyên nhân CHƯA xác minh — nghi: khung ẩn `desmDetailFrame` được xếp ưu tiên, hoặc lưới bị dời ra ngoài màn hình). Cách vòng: `cardView` lưu `window.__desmItems` (danh sách kiện đang hiển thị); `DodoBubble.swift` (`screenText`) nối bảng văn bản tối đa 300 kiện vào `user_prompt` gửi `/dodo/chat/stream`. Công tắc: Cài đặt > "Gửi dữ liệu kiện đang hiển thị cho Dodo" (`desmDodoData`, mặc định bật). Mới chỉ cho màn Package dạng thẻ; RSI/MRR/MRF... chưa có.
+
+
+## AI riêng — thêm lựa chọn AI cho bong bóng Dodo (2026-10-29) — thư mục `AI/`
+- Dodo là widget server của web DESM nên không đổi model được. Cách làm: Cài đặt > Trợ lý Dodo > "Chạm bong bóng mở" = Dodo (mặc định) hoặc AI riêng (`desmAIEngine`). Khi chọn AI riêng, JS trong `DodoBubble.swift` (`w.__desmDodoEngine === 'ai'`) gửi message `desmAI` → `WebView.swift` đặt `model.showAIChat = true` → `BrowserView` mở `AIChatView`.
+- Nhà hỗ trợ: Gemini, Groq, Claude, OpenAI, DeepSeek, Mistral, OpenRouter, Tùy chỉnh (OpenAI-compatible, ví dụ Ollama/LM Studio). Dò danh sách model qua `/models` của từng nhà, lọc bỏ model không phải chat; "Tự chọn model dùng được" thử tối đa 8 model (ưu tiên model nhanh) và lấy cái chạy được đầu tiên.
+- Đọc cả trang: `desmAIData` (mặc định TẮT) + `desmAILimit` (12000/40000/120000 ký tự). Bật thì `BrowserModel.fetchScreenTextForAI()` gọi `window.__desmDodo.pageText(limit)` (trong `DodoBubble.swift`): duyệt khung chính + iframe đang hiện (bỏ `desmDetailFrame` ẩn), mỗi lưới TreeGrid gắn trong DOM → tiêu đề cột + mọi dòng `Kind === 'Data'` đã tải (kể cả cột đang bị `compactGrid` ẩn, trừ `Panel`/`Select`), ô nhập/chọn đang có giá trị, rồi văn bản trang (ít nếu đã có lưới). Cắt theo giới hạn và ghi chú đã cắt. Gắn vào system prompt mỗi lượt gửi (không lưu lịch sử). Lưới phân trang chỉ có các trang đã tải. CHƯA kiểm chứng `G.Rows` lặp được như dự kiến trên web thật.
+- Hội thoại giữ trong bộ nhớ (`AIChatSession.shared`), mất khi tắt app. Chưa có streaming (trả lời hiện một lần).
+- CHƯA biên dịch/kiểm chứng trên máy thật (viết trên môi trường không có Xcode). Cần build thử: các API dùng đều ≥ iOS 16 (`onChange` bản 1 tham số, `TextField(axis:)`).
+
+## AI tự tra dữ liệu DESM — function calling chỉ đọc (2026-10-29) — `AI/AIAgent.swift`, `AI/DesmAITools.swift`
+- Công tắc: Cài đặt > Trợ lý Dodo > "Cho AI tự tra dữ liệu DESM (chỉ đọc)" (`desmAITools`, mặc định TẮT; chỉ hiện khi trợ lý = AI riêng). Độc lập với "Gửi kèm dữ liệu trang đang mở" (`desmAIData`).
+- `AIClient.runAgent` chạy vòng tối đa 6 lượt: AI gọi công cụ → `DesmAITools.run` (@MainActor) → trả kết quả. Có bản cho 3 kiểu: OpenAI-compatible (`tool_calls`/`role:tool`), Claude (`tool_use`/`tool_result`), Gemini (`functionCall`/`functionResponse`, giữ nguyên `parts` để không mất thoughtSignature). Lượt cuối bỏ `tools` để buộc trả lời. Nhà/model báo 400/404/422 (không hỗ trợ công cụ) → lùi về hỏi đáp thường + ghi chú.
+- Công cụ: `desm_list_endpoints`, `desm_query(endpoint, params_json, max_rows)`, `desm_recorded_endpoints` (đọc `NetLogStore`, cần bật Ghi API ở Nâng cao), `desm_read_open_page` (dùng `pageText`). `params_json` là CHUỖI JSON (Gemini không nhận object tự do).
+- Danh mục `DesmAITools.catalog` lấy khoá tham số từ các màn native (Activity/DocSheet/EditLog/Outgoing/MrfReturn/WipCompletion/Vessel/PackingHistory/Notices): package `/getIdsmOsSummaryList.do`, hạng mục chi tiết `/getIdsmOsDetailList.do`, RSI view/outgoing, MRF summary/return, edit log, creation lists, WIP, tàu, shipping status, home summary, notice. `desm_query` cũng nhận API ngoài danh mục nếu tên khớp `^/.../(get|select|search|list|find|view|query)*.do` và không chứa từ ghi (save/delete/update/...). KHÔNG có công cụ ghi.
+- Kết quả mỗi lần gọi cắt ~24.000 ký tự / tối đa 500 dòng, bỏ trường rỗng, giá trị ≤100 ký tự, và báo "ĐÃ CẮT" để AI lọc hẹp hơn.
+- Chưa làm: `/getDesmMrrInfoList.do` (kết quả dạng object headerList/lineList, `desmQueryAsync` chỉ đọc mảng), file đính kèm, trang không qua API (chỉ có trong lưới trên trang → dùng `desm_read_open_page`).
+- CHƯA biên dịch/kiểm chứng trên máy thật: định dạng tham số một số API (khoá để trống có được không), model free của Groq/OpenRouter có hỗ trợ công cụ không.
+
+## Dodo đọc cả trang + vá nhỏ (2026-10-29, lượt tiếp theo)
+- `DodoBubble.swift`: khi bật "Gửi dữ liệu kiện đang hiển thị cho Dodo" (`desmDodoData`) mà màn không phải Package dạng thẻ (`screenText()` rỗng) thì dùng `pageText(20000)` (mọi lưới TreeGrid đã tải + ô lọc + văn bản trang) nối vào `user_prompt` gửi `/dodo/chat/stream` — dữ liệu chỉ tới server DESM. JS đã `node --check`; CHƯA thử trên web thật (đặc biệt `G.Rows` lặp được hay không).
+- `AIChatView.send()`: `Task { @MainActor in ... }` để cập nhật @State/`session.messages` đúng luồng chính.
+- Vẫn CHƯA build Xcode (môi trường không có). Việc kế tiếp: build bằng GitHub Actions, gửi log lỗi để sửa.
+
+## Dodo luôn Slow (2026-10-29)
+- `Dodo.js` bản này đặt `.dodo-model{display:none}` nên người dùng không chọn được Fast/Slow. Thêm công tắc Cài đặt > "Dodo luôn dùng chế độ Slow (chính xác)" (`desmDodoSlow`, mặc định bật): wrapper `fetch` trong `DodoBubble.swift` ghi đè `mode=slow` trong form gửi `/dodo/chat/stream`. CHƯA kiểm chứng máy chủ có trả lời khác đi ở Slow hay không.

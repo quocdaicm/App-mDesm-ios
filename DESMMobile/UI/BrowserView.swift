@@ -192,6 +192,10 @@ struct BrowserView: View {
             SettingsView(model: model)
                 .desmSheet()
         }
+        .sheet(isPresented: $model.showAIChat) {
+            AIChatView(model: model)
+                .desmSheet()
+        }
         .sheet(item: $model.shotItem) { item in
             ShareSheet(url: item.url)
         }

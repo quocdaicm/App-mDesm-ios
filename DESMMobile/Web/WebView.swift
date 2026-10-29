@@ -186,6 +186,7 @@ struct WebView: UIViewRepresentable {
         content.add(context.coordinator, name: "desmNet")
         content.add(context.coordinator, name: "desmSnap")
         content.add(context.coordinator, name: "desmAudit")
+        content.add(context.coordinator, name: "desmAI")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -214,6 +215,7 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmNet")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmSnap")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAudit")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAI")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -302,6 +304,13 @@ struct WebView: UIViewRepresentable {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
                 DispatchQueue.main.async { if !self.model.reconnecting { self.model.reconnectSession(reason: "page") } }
+                return
+            }
+            if message.name == "desmAI" {
+                // Chạm bong bóng khi trợ lý = "AI riêng" → mở khung chat native
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
+                DispatchQueue.main.async { self.model.showAIChat = true }
                 return
             }
             if message.name == "desmLang" {

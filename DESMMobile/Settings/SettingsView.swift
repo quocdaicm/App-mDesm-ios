@@ -138,10 +138,33 @@ struct SettingsView: View {
                 get: { model.dodoVi },
                 set: { model.dodoVi = $0; model.applyStyles() }
             ))
+            Toggle("Dodo luôn dùng chế độ Slow (chính xác)", isOn: Binding(
+                get: { model.dodoSlow },
+                set: { model.dodoSlow = $0; model.applyStyles() }
+            ))
+            Picker("Chạm bong bóng mở", selection: Binding(
+                get: { model.aiEngine },
+                set: { model.aiEngine = $0; model.applyStyles() }
+            )) {
+                Text("Dodo (web DESM)").tag("dodo")
+                Text("AI riêng (API key)").tag("ai")
+            }
+            NavigationLink("AI riêng: nhà cung cấp, key, model") { AIProviderListView() }
+            if model.aiEngine == "ai" {
+                Toggle("Cho AI tự tra dữ liệu DESM (chỉ đọc)", isOn: $model.aiTools)
+                Toggle("Gửi kèm dữ liệu trang đang mở", isOn: $model.aiData)
+                if model.aiData {
+                    Picker("Lượng dữ liệu gửi", selection: $model.aiLimit) {
+                        Text("Gọn (~12 nghìn ký tự)").tag(12000)
+                        Text("Vừa (~40 nghìn)").tag(40000)
+                        Text("Tối đa (~120 nghìn)").tag(120000)
+                    }
+                }
+            }
         } header: {
             Text("Trợ lý Dodo")
         } footer: {
-            Text("Hiện nút bong bóng trên trang DESM; chạm để mở khung chat với Dodo — trợ lý AI của web DESM, dùng chung tài khoản và lịch sử hội thoại với bản web. Kéo bong bóng để đổi vị trí.")
+            Text("Hiện nút bong bóng trên trang DESM; chạm để mở khung chat với Dodo — trợ lý AI của web DESM, dùng chung tài khoản và lịch sử hội thoại với bản web. Kéo bong bóng để đổi vị trí. \"AI riêng\" dùng API key của bạn (Gemini, Groq, Claude, OpenAI, DeepSeek, Mistral, OpenRouter, tùy chỉnh), có dò và tự chọn model. Lưu ý: câu hỏi và dữ liệu gửi kèm sẽ đi tới nhà cung cấp bạn chọn, không qua máy chủ DESM — chỉ bật cho AI đọc dữ liệu khi công ty cho phép. \"Tự tra dữ liệu DESM\": AI tự gọi các API đọc của DESM (kiện, hạng mục chi tiết, RSI, MRF, WIP, tàu, thông báo…) kể cả màn chưa mở, bằng phiên đăng nhập của bạn; không có công cụ ghi/sửa/xoá; cần model hỗ trợ gọi công cụ (Gemini, Claude, GPT, DeepSeek-chat…). AI đọc được những gì đã tải trên trang đang mở (mọi khung, toàn bộ dòng lưới đã tải, cả cột đang ẩn); lưới nhiều trang thì chỉ có các trang đã tải. Dữ liệu quá dài sẽ bị cắt theo mức đã chọn.")
         }
     }
 

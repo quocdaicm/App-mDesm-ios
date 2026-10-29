@@ -1,0 +1,51 @@
+# BÀN GIAO CHO AI KHÁC — DESM Mobile: thêm "AI riêng" cho bong bóng Dodo
+
+Người dùng nói tiếng Việt, làm app iOS (SwiftUI, iOS 16+), build bằng GitHub Actions (IPA không ký), KHÔNG có Xcode nên mọi code dưới đây **CHƯA được biên dịch**. Đọc thêm `DEV_NOTES.md` (cuối file có 3 mục AI mới).
+
+## 1. Yêu cầu của người dùng (theo thứ tự)
+1. Lấy toàn bộ phần AI trong app dịch **LiveTranslate** (nhiều nhà AI, dò model, tự chọn model dùng được) ghép vào **Dodo AI** của DESM để có nhiều lựa chọn AI.
+2. AI phải đọc được dữ liệu DESM để trả lời; rồi: "đọc được cả trang", rồi "đọc tất cả web DESM kể cả hạng mục chi tiết và các mục sâu, đang mở hoặc chưa mở".
+3. Hỏi Dodo gốc có làm được như vậy không → đã tải `Dodo.js` để phân tích.
+
+## 2. Đã làm (trong DESM_Mobile_iOS.zip)
+Thư mục mới `DESMMobile/AI/` (đã thêm vào `project.pbxproj`, nhóm "AI"):
+- `AIProviders.swift` — 8 nhà: Gemini, Groq, Claude, OpenAI, DeepSeek, Mistral, OpenRouter, Tùy chỉnh (OpenAI-compatible). Key trong Keychain (`DESMMobile.AI`), model/thứ tự ưu tiên trong UserDefaults.
+- `AIClient.swift` — gọi 3 kiểu API, `listModels`, `pickWorkingModel` (thử tối đa 8 model), `run` (lỗi thì chuyển nhà kế tiếp).
+- `AIAgent.swift` — function calling (tối đa 6 vòng) cho OpenAI/Claude/Gemini; model không hỗ trợ công cụ (HTTP 400/404/422) thì lùi về hỏi đáp thường.
+- `DesmAITools.swift` — công cụ CHỈ ĐỌC: `desm_list_endpoints`, `desm_query(endpoint, params_json, max_rows)`, `desm_recorded_endpoints` (đọc `NetLogStore`), `desm_read_open_page`. Danh mục API lấy từ các màn native (package `/getIdsmOsSummaryList.do`, hạng mục chi tiết `/getIdsmOsDetailList.do`, RSI, MRF, WIP, edit log, tàu, notice, home summary). Chặn API có từ ghi (save/delete/update…). Cắt kết quả ~24.000 ký tự/500 dòng.
+- `AISettingsView.swift` — danh sách nhà, nhập key, dò model, tự chọn model, kéo đổi thứ tự.
+- `AIChatView.swift` — khung chat native, đổi nhanh nhà/model, hội thoại giữ trong bộ nhớ (`AIChatSession.shared`), chưa streaming.
+
+Sửa file có sẵn (nhỏ):
+- `Core/BrowserModel.swift`: `aiEngine` ("dodo"|"ai"), `aiData`, `aiLimit` (12000/40000/120000), `aiTools`, `showAIChat`, `fetchScreenTextForAI(limit:)`.
+- `Scripts/DodoBubble.swift`: `w.__desmDodoEngine`; khi = 'ai' chạm bong bóng gửi message `desmAI`; thêm `pageText(limit)` (đọc mọi khung/iframe đang hiện, toàn bộ dòng TreeGrid đã tải kể cả cột ẩn, ô nhập, văn bản) và export `screenText`, `pageText` trong `w.__desmDodo`.
+- `Web/WebView.swift`: đăng ký/gỡ/nhận handler `desmAI` → `model.showAIChat = true`.
+- `UI/BrowserView.swift`: sheet `AIChatView`.
+- `Settings/SettingsView.swift` (mục Trợ lý Dodo): Picker "Chạm bong bóng mở" (Dodo/AI riêng), link tới `AIProviderListView`, 2 toggle "Cho AI tự tra dữ liệu DESM (chỉ đọc)" (`desmAITools`) và "Gửi kèm dữ liệu trang đang mở" (`desmAIData`), Picker lượng dữ liệu. Cả hai toggle **mặc định TẮT** (dữ liệu công ty đi tới nhà AI ngoài).
+
+## 3. Phát hiện từ `Dodo.js` (người dùng đã tải)
+- Dodo là widget server: `POST /dodo/chat/stream.do` (form): `user_prompt`, `menu_context` (JSON mảng: thông tin menu + `module:'ps'` + `screen_context` từ `ScreenContext.snapshot()`), `session_id`, `mode` = `fast|slow`, `ui_selection`. Phản hồi SSE: `token`, `section`, `status`, `final_state`, `choices`, `error`, `done`. Còn `sessions.do`, `history.do`, `delete.do`, `reset.do`.
+- Server có bước **`call_api`** ("đang truy vấn dữ liệu") → Dodo tự gọi API ở server, có thể trả lời cả mục chưa mở. Phạm vi thật chưa biết.
+- Chọn **Slow** (chính xác) thay vì Fast cho câu hỏi dữ liệu. App không đổi được model của Dodo.
+- Lỗi cũ trong DEV_NOTES: Dodo trả lời "không có dữ liệu bảng" dù màn có 17 kiện (`ScreenContext.snapshot()` không lấy được lưới trong app). App đang vòng bằng cách nối bảng kiện (màn Package dạng thẻ, ≤300 kiện) vào `user_prompt` qua bọc `fetch`.
+
+## 4. CHƯA kiểm chứng / rủi ro biên dịch
+- Chưa build lần nào. Chỗ dễ lỗi: `AIChatView.send()` (chuỗi nhiều dòng `"""` có `\` nối dòng, tuple `(text, by)`), closure `status`/`exec` của `runAgent`, `Task { @MainActor in }` trong View, `onChange` bản 1 tham số (iOS 16), `TextField(axis:)`.
+- Chưa biết: API nào chấp nhận khoá tham số để trống; model free (Groq/OpenRouter) có hỗ trợ công cụ không; `G.Rows` của TreeGrid lặp được như dự kiến (`pageText`); chạm bong bóng khi chọn AI riêng có mở đúng khung.
+- `/getDesmMrrInfoList.do` chưa hỗ trợ (kết quả dạng object, `desmQueryAsync` chỉ đọc mảng). File đính kèm chưa đọc.
+- AI chỉ tra được API trong danh mục hoặc đã được ghi (cần bật "Ghi lại các request API" ở Nâng cao rồi duyệt các màn).
+
+## 5. Việc nên làm tiếp (theo ưu tiên)
+1. Build bằng GitHub Actions, sửa lỗi biên dịch.
+2. Người dùng thử Dodo ở chế độ **Slow** với 3 câu (hạng mục của một kiện chưa mở; một RSI cụ thể; màn đang mở) để quyết định còn cần AI riêng cho câu hỏi dữ liệu không.
+3. ✅ ĐÃ LÀM (chưa kiểm chứng) — Cho Dodo đọc cả trang: nối `pageText()` vào `user_prompt` ở `DodoBubble.swift` cho mọi màn (dữ liệu chỉ tới server DESM).
+4. (Lớn, chỉ khi có nhật ký API thật của một lần hỏi Dodo) Đưa Dodo vào chung khung `AIChatView` bằng cách parse SSE ở trên.
+5. Thêm streaming, lưu hội thoại, hỗ trợ `getDesmMrrInfoList` nếu cần.
+
+## 6. Lưu ý với người dùng
+- Trả lời bằng tiếng Việt, ngắn gọn. Luôn nói rõ chưa build/chưa kiểm chứng.
+- Bật AI riêng = câu hỏi và dữ liệu DESM đi tới nhà cung cấp AI do người dùng chọn; chỉ bật khi công ty cho phép. Không thêm công cụ ghi/sửa/xoá.
+- Cảnh báo khi tải thử Dodo: đừng gọi `reset.do`/`delete.do` (xoá lịch sử chat).
+
+## 7. Cập nhật lượt sau (2026-10-29)
+- Đã làm mục 5.3 (fallback `pageText(20000)` trong wrapper `fetch` của DodoBubble.swift) và vá `Task { @MainActor in }` trong `AIChatView.send()`. Mục 5.1 (build) vẫn chờ người dùng chạy GitHub Actions và gửi log lỗi.

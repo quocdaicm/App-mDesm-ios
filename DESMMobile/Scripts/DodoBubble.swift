@@ -9,7 +9,9 @@ extension BrowserModel {
     func makeDodoScript() -> String {
         let on = dodoBubble ? "true" : "false"
         let vi = dodoVi ? "true" : "false"
+        let slow = dodoSlow ? "true" : "false"
         let data = dodoData ? "true" : "false"
+        let engine = aiEngine == "ai" ? "ai" : "dodo"
         let hosts = (try? JSONSerialization.data(withJSONObject: BrowserModel.allowedHosts, options: []))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         return #"""
@@ -18,7 +20,9 @@ extension BrowserModel {
           try { if (w !== w.top) return; } catch (e) { return; }
           w.__desmDodoOn = \#(on);
           w.__desmDodoVi = \#(vi);
+          w.__desmDodoSlow = \#(slow);
           w.__desmDodoData = \#(data);
+          w.__desmDodoEngine = '\#(engine)';
           if (w.__desmDodo) { try { w.__desmDodo.sync(); } catch (e) {} return; }
           var host = (location.hostname || '').toLowerCase();
           var okHost = \#(hosts).some(function(s) { return host === s || host.endsWith('.' + s); });
@@ -113,6 +117,10 @@ extension BrowserModel {
             (document.head || document.documentElement).appendChild(s);
           }
           function openChat() {
+            if (w.__desmDodoEngine === 'ai') {
+              try { w.webkit.messageHandlers.desmAI.postMessage({}); } catch (e) { toast('Không mở được khung AI.'); }
+              return;
+            }
             ensure(function() { try { w.Dodo.open(); } catch (e) {} sync(); });
           }
           function mount() {
@@ -189,15 +197,96 @@ extension BrowserModel {
             L.forEach(function(i) { lines.push([cut(i.no, 40), cut(i.desc, 60), cut(i.type, 20), cut(i.list, 30), cut(i.ao, 12), cut(i.loc, 40), i.ok ? 'Y' : 'N', i.sel ? 'Y' : ''].join(' | ')); });
             return lines.join('\n');
           }
+          // Đọc CẢ TRANG cho AI riêng: mọi khung đang hiện (kể cả iframe), toàn bộ dòng của các lưới TreeGrid đã tải (kể cả cột đang ẩn), ô nhập đang có giá trị, rồi văn bản trang. Cắt theo giới hạn ký tự.
+          function pageText(limit) {
+            limit = limit || 40000;
+            var out = [], used = 0, cut0 = false;
+            function push(s) { if (used >= limit) { cut0 = true; return false; } if (used + s.length > limit) { s = s.slice(0, limit - used); cut0 = true; } out.push(s); used += s.length + 1; return true; }
+            function clean(v, n) { v = String(v == null ? '' : v).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/[\r\n|]+/g, ' ').replace(/\s+/g, ' ').trim(); return v.length > n ? v.slice(0, n) : v; }
+            function gtext(G, row, c) {
+              var t = '';
+              try { if (G.GetString) t = G.GetString(row, c); } catch (e) {}
+              if (!t) { try { t = G.GetValue ? G.GetValue(row, c) : row[c]; } catch (e) {} }
+              return clean(t, 80);
+            }
+            function grids(win, tag) {
+              var n = 0;
+              try {
+                for (var i = 0; win.TGGrids && i < win.TGGrids.length; i++) {
+                  var G = win.TGGrids[i];
+                  if (!G || !G.Cols || !G.Rows || !G.Rows.Header || !G.MainTag || G.__desmFail) continue;
+                  try { if (!G.MainTag.isConnected) continue; } catch (e) {}
+                  var cols = [], heads = [];
+                  for (var c in G.Cols) { var h = gtext(G, G.Rows.Header, c); if (h && c !== 'Panel' && c !== 'Select') { cols.push(c); heads.push(h); } }
+                  if (!cols.length) continue;
+                  var rows = [];
+                  for (var id in G.Rows) { var r = G.Rows[id]; if (r && r.Kind === 'Data') rows.push(r); }
+                  n++;
+                  if (!push('[' + tag + ' — Lưới ' + n + ': ' + rows.length + ' dòng đã tải]')) return n;
+                  if (!push(heads.join(' | '))) return n;
+                  for (var k = 0; k < rows.length; k++) {
+                    var cells = []; for (var j = 0; j < cols.length; j++) cells.push(gtext(G, rows[k], cols[j]));
+                    if (!push(cells.join(' | '))) return n;
+                  }
+                }
+              } catch (e) {}
+              return n;
+            }
+            function fields(doc, tag) {
+              var res = [];
+              try {
+                var els = doc.querySelectorAll('input,select,textarea');
+                for (var i = 0; i < els.length && res.length < 60; i++) {
+                  var el = els[i], ty = (el.type || '').toLowerCase();
+                  if (ty === 'password' || ty === 'hidden' || ty === 'button' || ty === 'submit' || ty === 'file' || ty === 'checkbox' || ty === 'radio') continue;
+                  if (!el.getClientRects || el.getClientRects().length === 0) continue;
+                  var v = el.tagName === 'SELECT' ? (el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : '') : el.value;
+                  v = clean(v, 80); if (!v) continue;
+                  var lb = ''; try { if (el.id) { var l = doc.querySelector('label[for="' + el.id + '"]'); if (l) lb = l.textContent; } } catch (e) {}
+                  res.push(clean(lb || el.placeholder || el.getAttribute('title') || el.name || el.id || '?', 40) + '=' + v);
+                }
+              } catch (e) {}
+              if (res.length) push('[' + tag + ' — Ô lọc/nhập đang có giá trị] ' + res.join(' ; '));
+            }
+            var frames = [];
+            function collect(doc, depth, tag) {
+              frames.push({ doc: doc, tag: tag });
+              if (depth > 4) return;
+              var fs = doc.querySelectorAll('iframe,frame');
+              for (var i = 0; i < fs.length; i++) {
+                try {
+                  if (fs[i].id === 'desmDetailFrame' || !fs[i].contentDocument || fs[i].getClientRects().length === 0) continue;
+                  collect(fs[i].contentDocument, depth + 1, 'Khung ' + (fs[i].id || fs[i].name || (i + 1)));
+                } catch (e) {}
+              }
+            }
+            collect(document, 0, 'Trang chính');
+            push('[Nội dung trang DESM đang mở: ' + clean(document.title, 80) + ' — ' + location.pathname + ']');
+            var gridCount = 0;
+            frames.forEach(function(f) { try { fields(f.doc, f.tag); gridCount += grids(f.doc.defaultView, f.tag); } catch (e) {} });
+            // Văn bản trang (tiêu đề, nhãn, thông báo...). Nếu đã có lưới thì chỉ lấy ít để dành chỗ cho dữ liệu.
+            var budget = gridCount ? Math.min(4000, Math.max(0, limit - used)) : Math.max(0, limit - used);
+            frames.forEach(function(f) {
+              try {
+                if (budget <= 0) return;
+                var b = f.doc.body; if (!b) return;
+                var t = clean(b.innerText || '', budget); if (!t) return;
+                push('[' + f.tag + ' — Văn bản] ' + t); budget -= t.length;
+              } catch (e) {}
+            });
+            if (cut0) out.push('[Đã cắt bớt vì vượt giới hạn dữ liệu gửi AI; có thể còn dòng chưa gửi hoặc chưa tải hết trên trang]');
+            return out.join('\n');
+          }
           // Gắn vào câu hỏi gửi Dodo: dữ liệu màn hình (nếu bật) + yêu cầu trả lời tiếng Việt (nếu bật). Khung chat vẫn hiện nguyên câu bạn gõ.
           try {
             var f0 = w.fetch;
             if (f0) w.fetch = function(inp, init) {
               try {
                 var u = typeof inp === 'string' ? inp : (inp && inp.url);
-                if ((w.__desmDodoVi || w.__desmDodoData) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
+                if ((w.__desmDodoVi || w.__desmDodoData || w.__desmDodoSlow) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
                   var q = init.body.get('user_prompt') || '', add = '';
-                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = screenText(); if (tx) add += '\n\n' + tx; }
+                  if (w.__desmDodoSlow) init.body.set('mode', 'slow');
+                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = screenText(); if (!tx) { try { tx = pageText(20000); } catch (e2) { tx = ''; } } if (tx) add += '\n\n' + tx; }
                   if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0 && w.__desmDodoVi) add += '\n\n[Trả lời bằng tiếng Việt]';
                   if (add) init.body.set('user_prompt', q + add);
                 }
@@ -205,7 +294,7 @@ extension BrowserModel {
               return f0.apply(this, arguments);
             };
           } catch (e) {}
-          w.__desmDodo = { sync: sync, open: openChat };
+          w.__desmDodo = { sync: sync, open: openChat, screenText: screenText, pageText: pageText };
           try { w.addEventListener('resize', function() { place(); vv(); }); } catch (e) {}
           try { if (w.visualViewport) { w.visualViewport.addEventListener('resize', vv); w.visualViewport.addEventListener('scroll', vv); } } catch (e) {}
           try { w.setInterval(sync, 400); } catch (e) {}
