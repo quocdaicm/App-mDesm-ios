@@ -12,6 +12,7 @@ import PhotosUI
 import WebKit
 import MapKit
 import CoreLocation
+import UserNotifications
 
 enum LayoutMode: String, CaseIterable, Identifiable {
     case mobile, fit, off
@@ -80,6 +81,8 @@ final class BrowserModel: ObservableObject {
     var backgroundedAt: Date?         // lúc app xuống nền
     /// Đang ở trong DESM (không phải trang đăng nhập): dùng để hiện nút quét camera
     @Published var inDesm = false
+    /// Số thông báo DESM chưa mở (hiện chấm đỏ trên nút "Thêm" và số trên icon app).
+    @Published var unreadNotices = 0
 
     /// Gọi sau mỗi lần tải xong trang: vừa vào được DESM (không phải trang đăng nhập) thì tự ẩn thanh; rời DESM thì hiện lại.
     func updateBars(for url: URL?) {
@@ -2978,6 +2981,7 @@ struct BrowserView: View {
     @State private var showActivity = false
     @State private var showEditLog = false
     @State private var showVessel = false
+    @State private var showNotice = false
     @State private var showFetcher = false
     @State private var showSource = false
     @State private var docKind: DesmDocKind? = nil
@@ -3012,6 +3016,7 @@ struct BrowserView: View {
             if model.inDesm {
                 DesmTabBar(selected: $selectedTab,
                            onScan: { showScanChoice = true },
+                           moreBadge: model.unreadNotices,
                            onSelect: { tab in
                                if tab == .more { showMore = true }
                                else if tab == .outbound { showOutgoing = true }
@@ -3035,8 +3040,10 @@ struct BrowserView: View {
         .tint(.blue)
         .onChange(of: scenePhase) { phase in
             if phase != .active { model.saveSession(); model.backgroundedAt = model.backgroundedAt ?? Date() }
-            else { model.appBecameActive() }
+            else { model.appBecameActive(); model.refreshNoticeBadge() }
         }
+        .onChange(of: model.inDesm) { inside in if inside { model.refreshNoticeBadge() } }
+        .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in model.refreshNoticeBadge() }
         .desmDialog(model.dialogQueue.first, finish: { model.finishDialog() })
         .desmAlert(isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -3083,7 +3090,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onFetch: { showFetcher = true }, onSource: { showSource = true })
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true })
                 .presentationDetents([.height(560)])
                 .presentationDragIndicator(.visible)
                 .tint(Color.tabBlue)
@@ -3111,6 +3118,9 @@ struct BrowserView: View {
         .sheet(isPresented: $showActivity) {
             DesmActivitySheet(model: model, onClose: { showActivity = false })
                 .desmSheet()
+        }
+        .sheet(isPresented: $showNotice) {
+            DesmNoticeSheet(model: model, onClose: { showNotice = false })
         }
         .sheet(isPresented: $showVessel) {
             DesmVesselSheet(model: model, onClose: { showVessel = false })
@@ -3307,6 +3317,7 @@ private struct TabWave: Shape {
 struct DesmTabBar: View {
     @Binding var selected: DesmTab
     var onScan: () -> Void
+    var moreBadge = 0
     var onSelect: (DesmTab) -> Void
 
     /// Nút camera cố định ở giữa thanh: Kiện hàng, Nhập kho, [camera], Xuất kho, Thêm
@@ -3337,6 +3348,16 @@ struct DesmTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 21, weight: on ? .semibold : .regular))
+                            .overlay(alignment: .topTrailing) {
+                                if tab == .more && moreBadge > 0 {
+                                    Text(moreBadge > 9 ? "9+" : "\(moreBadge)")
+                                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                        .padding(.horizontal, 4).frame(minWidth: 16, minHeight: 16)
+                                        .background(Color.red, in: Capsule())
+                                        .overlay(Capsule().stroke(Color.white, lineWidth: 1.5))
+                                        .offset(x: 10, y: -7)
+                                }
+                            }
                         Text(tab.title)
                             .font(.system(size: 11, weight: on ? .bold : .medium))
                             .lineLimit(1).minimumScaleFactor(0.8)
@@ -3490,6 +3511,7 @@ struct MoreSheet: View {
     var onActivity: () -> Void = {}
     var onEditLog: () -> Void = {}
     var onVessel: () -> Void = {}
+    var onNotice: () -> Void = {}
     var onFetch: () -> Void = {}
     var onSource: () -> Void = {}
 
@@ -3516,6 +3538,7 @@ struct MoreSheet: View {
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
             Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },
             Item(symbol: "clock.arrow.2.circlepath", title: "Tra Edit Log", enabled: model.inDesm) { onEditLog() },
+            Item(symbol: "megaphone.fill", title: "Thông báo", enabled: model.inDesm) { onNotice() },
             Item(symbol: "ferry.fill", title: "Bản đồ tàu", enabled: model.inDesm) { onVessel() },
             Item(symbol: "chevron.left.forwardslash.chevron.right", title: "Mã nguồn trang này", enabled: model.inDesm) { onSource() },
             Item(symbol: "square.and.arrow.down.on.square", title: "Tải file / API cho AI", enabled: model.inDesm) { onFetch() },
@@ -6800,6 +6823,30 @@ struct DesmVessel: Identifiable, Hashable {
     var invoice = "", vessel = "", mfr = "", pol = "", pod = "", etd = "", eta = "", item = ""
     var departed = false, arrived = false
     var lat: Double? = nil, lon: Double? = nil
+    var pl = "", imo = "", project = ""
+    var atd: Date? = nil, etdD: Date? = nil, eta2: Date? = nil, ata: Date? = nil   // mốc thời gian chính xác từ API (epoch ms)
+    var tStart: Date? { atd ?? etdD ?? DesmRoutes.parseDate(etd) }
+    var tEnd: Date? { ata ?? eta2 ?? DesmRoutes.parseDate(eta) }
+    /// Sắp đến: chưa đến và ETA trong 7 ngày tới (cùng quy tắc tô dòng của trang web DESM).
+    var arrivingSoon: Bool {
+        guard !arrived, let e = tEnd else { return false }
+        let d = e.timeIntervalSinceNow / 86400
+        return d >= 0 && d < 7
+    }
+}
+
+/// Một mốc trong tiến trình vận chuyển (từ /selectDesmShippingStatusList.do).
+struct DesmShipMilestone: Identifiable {
+    let id: String
+    var title: String
+    var date: Date?
+    var done: Bool          // đã xảy ra (có ngày thật và ngày đã qua)
+    var planned: Bool       // ngày còn là dự kiến
+}
+struct DesmShipInfo {
+    var status = "", bl = "", line = "", mode = "", vessel = ""
+    var volume = 0.0, grossKg = 0.0
+    var milestones: [DesmShipMilestone] = []
 }
 
 enum DesmPorts {
@@ -6817,6 +6864,79 @@ enum DesmPorts {
         "shanghai": .init(latitude: 31.2304, longitude: 121.4737),
         "singapore": .init(latitude: 1.2644, longitude: 103.8222),
     ]
+}
+
+/// Tuyến biển/sông gần đúng: danh sách điểm mốc đi qua giữa cảng đi và cảng đến (không phải dữ liệu AIS, không dùng cho hàng hải).
+/// Khoá = "<cảng đi>|<cảng đến>" đã qua DesmPorts.key; tuyến chiều ngược lại được suy ra bằng cách đảo thứ tự.
+/// Muốn thêm tuyến mới: thêm một dòng vào `via` (vĩ độ, kinh độ), chọn điểm nằm trên mặt nước.
+enum DesmRoutes {
+    private static func c(_ la: Double, _ lo: Double) -> CLLocationCoordinate2D { .init(latitude: la, longitude: lo) }
+
+    // Biển Đông ven bờ Việt Nam, từ vịnh Bắc Bộ xuống cửa sông Hậu / Vũng Tàu.
+    private static let tonkinToSouth: [CLLocationCoordinate2D] = [
+        c(20.60, 107.05), c(18.70, 106.90), c(16.30, 108.90), c(13.60, 109.55), c(11.40, 109.50), c(10.00, 108.30),
+    ]
+    private static let toDinhAn: [CLLocationCoordinate2D] = [
+        c(9.30, 107.00), c(9.48, 106.55), // cửa Định An (sông Hậu)
+        c(9.62, 106.28), c(9.80, 106.05), c(9.95, 105.88), c(10.04, 105.76),
+    ]
+    // Busan -> eo Đài Loan -> nam đảo Hải Nam -> ven bờ Việt Nam.
+    private static let busanToVietnam: [CLLocationCoordinate2D] = [
+        c(34.40, 129.30), c(32.80, 128.40), c(29.00, 125.80), c(25.30, 121.60), c(24.00, 119.60),
+        c(22.00, 116.80), c(19.50, 113.80), c(17.60, 111.40), c(14.80, 110.30), c(11.40, 109.50), c(9.90, 108.20),
+    ]
+    // Vũng Tàu -> sông Lòng Tàu -> Cát Lái.
+    private static let toCatLai: [CLLocationCoordinate2D] = [
+        c(10.30, 107.12), c(10.40, 107.02), c(10.55, 106.93), c(10.66, 106.79),
+    ]
+
+    static let via: [String: [CLLocationCoordinate2D]] = [
+        "haiphong|om4jetty": tonkinToSouth + toDinhAn,
+        "haiphong|hochiminh": tonkinToSouth + toCatLai,
+        "haiphong|catlai": tonkinToSouth + toCatLai,
+        "busan|hochiminh": busanToVietnam + toCatLai,
+        "busan|catlai": busanToVietnam + toCatLai,
+        "busan|om4jetty": busanToVietnam + [c(9.30, 107.00)] + toDinhAn,
+    ]
+
+    /// Đường đi từ cảng đi đến cảng đến. Không có tuyến khai báo thì chỉ là đoạn thẳng (known = false).
+    static func path(pol: String, pod: String, a: CLLocationCoordinate2D, b: CLLocationCoordinate2D) -> (pts: [CLLocationCoordinate2D], known: Bool) {
+        let kp = DesmPorts.key(pol), kd = DesmPorts.key(pod)
+        if let v = via[kp + "|" + kd] { return ([a] + v + [b], true) }
+        if let v = via[kd + "|" + kp] { return ([a] + v.reversed() + [b], true) }
+        return ([a, b], false)
+    }
+
+    static func parseDate(_ s: String) -> Date? {
+        let t = s.trimmingCharacters(in: CharacterSet(charactersIn: "() ")).prefix(10)
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh")
+        for fmt in ["yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "dd-MM-yyyy"] {
+            f.dateFormat = fmt
+            if let d = f.date(from: String(t)) { return d }
+        }
+        return nil
+    }
+
+    /// Vị trí ước tính của tàu đang đi: tỉ lệ thời gian (ATD -> ETA) áp lên độ dài tuyến. nil nếu thiếu ngày hoặc tàu chưa đi / đã đến.
+    static func estimate(_ v: DesmVessel, along pts: [CLLocationCoordinate2D], now: Date = Date()) -> (CLLocationCoordinate2D, Double, Bool, Int)? {
+        guard v.departed, !v.arrived, pts.count >= 2, let t0 = v.tStart, let t1 = v.tEnd, t1 > t0 else { return nil }
+        let f = min(0.97, max(0.03, now.timeIntervalSince(t0) / t1.timeIntervalSince(t0)))
+        var seg: [Double] = []
+        for i in 1..<pts.count { seg.append(MKMapPoint(pts[i - 1]).distance(to: MKMapPoint(pts[i]))) }
+        let total = seg.reduce(0, +)
+        guard total > 0 else { return nil }
+        var want = total * f
+        for i in 0..<seg.count {
+            if want <= seg[i] || i == seg.count - 1 {
+                let u = seg[i] > 0 ? min(1, want / seg[i]) : 0
+                return (.init(latitude: pts[i].latitude + (pts[i + 1].latitude - pts[i].latitude) * u,
+                              longitude: pts[i].longitude + (pts[i + 1].longitude - pts[i].longitude) * u), f,
+                        pts[i + 1].longitude >= pts[i].longitude, i)
+            }
+            want -= seg[i]
+        }
+        return nil
+    }
 }
 
 extension BrowserModel {
@@ -6848,6 +6968,11 @@ extension BrowserModel {
                     v.etd = etd.trimmingCharacters(in: CharacterSet(charactersIn: "()"))
                     v.eta = eta.trimmingCharacters(in: CharacterSet(charactersIn: "()"))
                     v.lat = d(r, "LATITUDE"); v.lon = d(r, "LONGITUDE")
+                    v.pl = s(r, "PL_NO"); v.imo = s(r, "IMO"); v.project = s(r, "PROJECT_NO")
+                    func ms(_ k: String) -> Date? { d(r, k).map { Date(timeIntervalSince1970: $0 / 1000) } }
+                    v.atd = ms("ATD"); v.etdD = ms("ETD"); v.eta2 = ms("ETA"); v.ata = ms("ATA")
+                    if v.atd != nil { v.departed = true }
+                    if v.ata != nil { v.arrived = true }
                     out.append(v)
                 }
                 done(out, "")
@@ -6856,18 +6981,234 @@ extension BrowserModel {
     }
 }
 
+extension BrowserModel {
+    /// Tiến trình vận chuyển của một chuyến: /selectDesmShippingStatusList.do (body như trang Shipping Status của DESM).
+    /// Mã Invoice ở danh sách tàu (INV_NO) và ở Shipping Status (INVOICE_NO) có thể khác dạng, nên ghép theo INVOICE_NO hoặc tên tàu.
+    func fetchShipInfo(_ v: DesmVessel, done: @escaping (DesmShipInfo?, String) -> Void) {
+        func enc(_ x: String) -> String { x.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? x }
+        // lần 1: theo mã Invoice đầy đủ; lần 2: theo nhóm số (vd "0002") mà web dùng làm VOYAGE/INVOICE tìm kiếm
+        var tries = [v.invoice]
+        if let g = v.invoice.split(separator: "-").first(where: { $0.count >= 3 && $0.allSatisfy { $0.isNumber } }) { tries.append(String(g)) }
+        func norm(_ x: String) -> String { x.lowercased().filter { $0.isLetter || $0.isNumber } }
+        func step(_ i: Int) {
+            guard i < tries.count else { done(nil, "Chưa có dữ liệu tiến trình cho chuyến này."); return }
+            desmQuery("/selectDesmShippingStatusList.do", body: "PROJECT_NO=\(enc(v.project))&VOYAGE_NO=&INVOICE_NO=\(enc(tries[i]))&SHIPPING_STATUS=&DATA_CREATED_YN=") { rows, err in
+                guard let rows = rows else { done(nil, err); return }
+                func str(_ r: [String: Any], _ k: String) -> String { (r[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+                let hit = rows.first { norm(str($0, "INVOICE_NO")) == norm(v.invoice) }
+                    ?? rows.first { !v.vessel.isEmpty && norm(str($0, "VESSEL_NAME")) == norm(v.vessel) }
+                guard let r = hit else { step(i + 1); return }
+                func dt(_ k: String) -> Date? { (r[k] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) } }
+                var info = DesmShipInfo()
+                info.status = str(r, "SHIPPING_STATUS"); info.bl = str(r, "BL_NO"); info.line = str(r, "SHIPPING_LINE")
+                info.mode = str(r, "SHIPPING_MODE"); info.vessel = str(r, "VESSEL_NAME")
+                info.volume = (r["VOLUME"] as? NSNumber)?.doubleValue ?? 0; info.grossKg = (r["GROSS_WEIGHT"] as? NSNumber)?.doubleValue ?? 0
+                let now = Date()
+                func ms(_ id: String, _ title: String, actual: String?, plan: String?) -> DesmShipMilestone {
+                    if let a = actual, let d = dt(a) { return .init(id: id, title: title, date: d, done: d <= now, planned: false) }
+                    if let pl = plan, let d = dt(pl) { return .init(id: id, title: title, date: d, done: false, planned: true) }
+                    return .init(id: id, title: title, date: nil, done: false, planned: false)
+                }
+                info.milestones = [
+                    ms("rdy", "Hàng sẵn sàng", actual: "CARGO_READY_DATE", plan: nil),
+                    ms("dep", "Khởi hành", actual: "ATD", plan: "ETD"),
+                    ms("arr", "Đến cảng", actual: "ATA", plan: "ETA"),
+                    ms("dis", "Dỡ hàng tại cảng", actual: "DISCHARGING_AT_PORT", plan: nil),
+                    ms("out", "Kéo ra khỏi cảng", actual: "PULLING_OUT_FROM_PORT", plan: nil),
+                    ms("site", "Đến công trường", actual: "ON_SITE", plan: nil),
+                ]
+                done(info, "")
+            }
+        }
+        step(0)
+    }
+}
+
 final class DesmVesselPin: MKPointAnnotation {
     enum Kind { case pol, pod, ship }
     var kind = Kind.pol
     var vesselId = ""
+    var estimated = false
+    var eastbound = true   // hướng chạy sang phải/trái màn hình, để lật con tàu
+}
+
+/// Mốc cảng đi / cảng đến: huy hiệu tròn có viền trắng + bóng, vòng sóng lan ra, nhãn tên cảng; rơi xuống kiểu lò xo khi hiện.
+/// Cảng đến (xanh dương) nổi bật hơn: hai vòng sóng liên tục. Cảng đi (xám xanh): một vòng mờ chậm.
+final class DesmPortView: MKAnnotationView {
+    private static let W: CGFloat = 124, H: CGFloat = 72, cy: CGFloat = 30
+    private let badge = UIView(), icon = UIImageView(), label = UILabel(), pill = UIView()
+    private let rings = [CAShapeLayer(), CAShapeLayer()]
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        let W = Self.W, H = Self.H, cy = Self.cy
+        frame = CGRect(x: 0, y: 0, width: W, height: H)
+        centerOffset = CGPoint(x: 0, y: H / 2 - cy)   // tâm huy hiệu trùng toạ độ cảng
+        canShowCallout = true
+        for r in rings {
+            r.frame = CGRect(x: 0, y: 0, width: W, height: H)
+            r.path = UIBezierPath(ovalIn: CGRect(x: W / 2 - 30, y: cy - 30, width: 60, height: 60)).cgPath
+            r.fillColor = UIColor.clear.cgColor; r.lineWidth = 2
+            layer.addSublayer(r)
+        }
+        badge.frame = CGRect(x: W / 2 - 18, y: cy - 18, width: 36, height: 36)
+        badge.layer.cornerRadius = 18
+        badge.layer.borderWidth = 3; badge.layer.borderColor = UIColor.white.cgColor
+        badge.layer.shadowColor = UIColor.black.cgColor; badge.layer.shadowOpacity = 0.3
+        badge.layer.shadowRadius = 4; badge.layer.shadowOffset = CGSize(width: 0, height: 2)
+        addSubview(badge)
+        icon.frame = badge.bounds; icon.contentMode = .center; icon.tintColor = .white
+        badge.addSubview(icon)
+        pill.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.92)
+        pill.layer.cornerRadius = 9
+        pill.layer.shadowColor = UIColor.black.cgColor; pill.layer.shadowOpacity = 0.2
+        pill.layer.shadowRadius = 2; pill.layer.shadowOffset = CGSize(width: 0, height: 1)
+        label.font = .systemFont(ofSize: 11, weight: .bold); label.textAlignment = .center
+        label.adjustsFontSizeToFitWidth = true; label.minimumScaleFactor = 0.7
+        pill.addSubview(label); addSubview(pill)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ a: DesmVesselPin) {
+        let isPod = a.kind == .pod
+        let col = isPod ? UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1) : UIColor(red: 0.42, green: 0.47, blue: 0.56, alpha: 1)
+        badge.backgroundColor = col
+        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
+        icon.image = UIImage(systemName: isPod ? "mappin.and.ellipse" : "arrow.up.right", withConfiguration: cfg)
+        label.text = a.title ?? ""; label.textColor = col
+        let w = min(116, max(36, label.intrinsicContentSize.width + 14))
+        pill.frame = CGRect(x: (Self.W - w) / 2, y: Self.cy + 24, width: w, height: 18)
+        label.frame = pill.bounds.insetBy(dx: 5, dy: 0)
+        for (i, r) in rings.enumerated() {
+            r.strokeColor = col.cgColor; r.removeAllAnimations()
+            if !isPod && i == 1 { r.isHidden = true; continue }
+            r.isHidden = false
+            let g = CAAnimationGroup(); g.duration = isPod ? 2.0 : 3.2; g.repeatCount = .infinity
+            g.beginTime = CACurrentMediaTime() + (i == 0 ? 0 : 1.0)
+            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.4; sc.toValue = isPod ? 1.3 : 0.9
+            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = isPod ? 0.8 : 0.4; op.toValue = 0
+            g.animations = [sc, op]; g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            r.add(g, forKey: "ripple")
+        }
+        // rơi xuống kiểu lò xo
+        badge.layer.removeAllAnimations()
+        let drop = CASpringAnimation(keyPath: "transform.scale"); drop.fromValue = 0.1; drop.toValue = 1
+        drop.damping = 8; drop.initialVelocity = 6; drop.duration = drop.settlingDuration
+        badge.layer.add(drop, forKey: "drop")
+        pill.alpha = 0
+        UIView.animate(withDuration: 0.35, delay: 0.15, options: []) { self.pill.alpha = 1 }
+        if isPod {   // nhịp "thở" nhẹ để thu hút mắt
+            let br = CABasicAnimation(keyPath: "transform.scale"); br.fromValue = 1; br.toValue = 1.08
+            br.beginTime = CACurrentMediaTime() + 0.9; br.duration = 0.8; br.autoreverses = true; br.repeatCount = .infinity
+            br.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            badge.layer.add(br, forKey: "breathe")
+        }
+    }
+}
+
+/// Con tàu có hiệu ứng: vòng sóng lan ra, thân tàu nhấp nhô theo sóng, vệt nước phía sau.
+final class DesmShipView: MKAnnotationView {
+    private let ring = CAShapeLayer(), ring2 = CAShapeLayer()
+    private let hull = UIImageView(), wake = UIView()
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        frame = CGRect(x: 0, y: 0, width: 56, height: 56)
+        centerOffset = .zero
+        canShowCallout = true
+        for (l, _) in [(ring, 0), (ring2, 1)] {
+            l.path = UIBezierPath(ovalIn: CGRect(x: 8, y: 8, width: 40, height: 40)).cgPath
+            l.frame = bounds
+            l.fillColor = UIColor.clear.cgColor
+            l.lineWidth = 2
+            layer.addSublayer(l)
+        }
+        wake.frame = CGRect(x: 0, y: 36, width: 56, height: 3)
+        wake.backgroundColor = UIColor.white.withAlphaComponent(0.7); wake.layer.cornerRadius = 1.5
+        addSubview(wake)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .bold)
+        hull.image = UIImage(systemName: "ferry.fill", withConfiguration: cfg)
+        hull.contentMode = .center
+        hull.frame = CGRect(x: 8, y: 6, width: 40, height: 40)
+        hull.layer.shadowColor = UIColor.black.cgColor; hull.layer.shadowOpacity = 0.35
+        hull.layer.shadowRadius = 3; hull.layer.shadowOffset = CGSize(width: 0, height: 2)
+        addSubview(hull)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ a: DesmVesselPin) {
+        let col: UIColor = a.estimated ? .systemOrange : .systemGreen
+        hull.tintColor = col
+        ring.strokeColor = col.cgColor; ring2.strokeColor = col.cgColor
+        hull.transform = a.eastbound ? .identity : CGAffineTransform(scaleX: -1, y: 1)
+        wake.frame.origin.x = a.eastbound ? -14 : 14
+        startAnimating()
+    }
+
+    func startAnimating() {
+        func pulse(_ l: CAShapeLayer, delay: CFTimeInterval) {
+            l.removeAllAnimations()
+            let g = CAAnimationGroup(); g.duration = 2.2; g.repeatCount = .infinity; g.beginTime = CACurrentMediaTime() + delay
+            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.55; sc.toValue = 1.25
+            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = 0.8; op.toValue = 0.0
+            g.animations = [sc, op]; g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            l.add(g, forKey: "pulse")
+        }
+        pulse(ring, delay: 0); pulse(ring2, delay: 1.1)
+        hull.layer.removeAllAnimations()
+        let bob = CABasicAnimation(keyPath: "transform.translation.y"); bob.fromValue = -2; bob.toValue = 2
+        bob.duration = 0.9; bob.autoreverses = true; bob.repeatCount = .infinity
+        bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        hull.layer.add(bob, forKey: "bob")
+        let roll = CABasicAnimation(keyPath: "transform.rotation.z"); roll.fromValue = -0.05; roll.toValue = 0.05
+        roll.duration = 1.3; roll.autoreverses = true; roll.repeatCount = .infinity
+        roll.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        hull.layer.add(roll, forKey: "roll")
+        wake.layer.removeAllAnimations()
+        let w = CABasicAnimation(keyPath: "opacity"); w.fromValue = 0.2; w.toValue = 0.8
+        w.duration = 0.6; w.autoreverses = true; w.repeatCount = .infinity
+        wake.layer.add(w, forKey: "wake")
+    }
+    override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { startAnimating() } }
 }
 
 struct DesmVesselMap: UIViewRepresentable {
     var vessels: [DesmVessel]
     var ports: [String: CLLocationCoordinate2D]
     var selected: String?
+    var tick = 0   // tăng định kỳ để tàu ước tính trượt dần dọc tuyến
 
     func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Vẽ tuyến của một chuyến: nếu tàu có vị trí ước tính thì chia "đã đi" (liền, xanh) / "còn lại" (chấm, xám).
+    static func addRoute(_ m: MKMapView, _ v: DesmVessel, _ r: (pts: [CLLocationCoordinate2D], known: Bool), tag: String) {
+        if v.lat == nil, let (c, _, _, i) = DesmRoutes.estimate(v, along: r.pts) {
+            var done = Array(r.pts[0...i]) + [c], rest = [c] + Array(r.pts[(i + 1)...])
+            let l1 = MKPolyline(coordinates: &done, count: done.count); l1.title = "done" + tag
+            let l2 = MKPolyline(coordinates: &rest, count: rest.count); l2.title = tag
+            m.addOverlay(l2); m.addOverlay(l1)
+        } else {
+            var cs = r.pts
+            let line: MKPolyline = r.known ? MKPolyline(coordinates: &cs, count: cs.count) : MKGeodesicPolyline(coordinates: &cs, count: cs.count)
+            line.title = tag
+            m.addOverlay(line)
+        }
+    }
+
+    /// Chỉ cập nhật phần phụ thuộc thời gian: vị trí tàu ước tính (trượt mượt) và ranh giới đã đi / còn lại.
+    private func refreshLive(_ m: MKMapView, _ co: Coordinator) {
+        m.removeOverlays(m.overlays)
+        for v in vessels {
+            if let r = co.routes[v.id] { Self.addRoute(m, v, r, tag: selected == v.id ? "sel" : "") }
+        }
+        for case let p as DesmVesselPin in m.annotations where p.kind == .ship && p.estimated {
+            guard let v = vessels.first(where: { $0.id == p.vesselId }), let r = co.routes[v.id],
+                  let (c, f, east, _) = DesmRoutes.estimate(v, along: r.pts) else { continue }
+            p.eastbound = east
+            p.subtitle = "Ước tính theo lịch ~\(Int(f * 100))% hành trình · " + v.invoice
+            UIView.animate(withDuration: 1.5) { p.coordinate = c }
+        }
+    }
     func makeUIView(context: Context) -> MKMapView {
         let m = MKMapView()
         m.delegate = context.coordinator
@@ -6878,19 +7219,24 @@ struct DesmVesselMap: UIViewRepresentable {
     }
     func updateUIView(_ m: MKMapView, context: Context) {
         let sig = vessels.map { $0.id }.joined(separator: ",") + "|" + (selected ?? "") + "|\(ports.count)"
-        if context.coordinator.sig == sig { return }
-        context.coordinator.sig = sig
+        if context.coordinator.sig == sig {
+            if context.coordinator.tick != tick { context.coordinator.tick = tick; refreshLive(m, context.coordinator) }
+            return
+        }
+        context.coordinator.sig = sig; context.coordinator.tick = tick; context.coordinator.routes = [:]
         m.removeAnnotations(m.annotations); m.removeOverlays(m.overlays)
         var focus: [MKMapPoint] = []
         func pt(_ c: CLLocationCoordinate2D) -> MKMapPoint { MKMapPoint(c) }
         for v in vessels {
             let isSel = selected == nil || selected == v.id
             let a = ports[DesmPorts.key(v.pol)], b = ports[DesmPorts.key(v.pod)]
+            var routePts: [CLLocationCoordinate2D] = []
             if let a = a, let b = b {
-                var cs = [a, b]
-                let line = MKGeodesicPolyline(coordinates: &cs, count: 2)
-                line.title = selected == v.id ? "sel" : ""
-                m.addOverlay(line)
+                let r = DesmRoutes.path(pol: v.pol, pod: v.pod, a: a, b: b)
+                routePts = r.pts
+                context.coordinator.routes[v.id] = r
+                Self.addRoute(m, v, r, tag: selected == v.id ? "sel" : "")
+                if isSel { for q in r.pts { focus.append(pt(q)) } }
             }
             if let a = a {
                 let p = DesmVesselPin(); p.coordinate = a; p.kind = .pol; p.vesselId = v.id; p.title = v.pol; p.subtitle = "Cảng đi · " + v.invoice
@@ -6905,6 +7251,11 @@ struct DesmVesselMap: UIViewRepresentable {
                 let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.vesselId = v.id
                 p.title = v.vessel.isEmpty ? v.invoice : v.vessel; p.subtitle = v.invoice
                 m.addAnnotation(p); if isSel { focus.append(pt(c)) }
+            } else if let (c, f, east, _) = DesmRoutes.estimate(v, along: routePts) {
+                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.estimated = true; p.eastbound = east; p.vesselId = v.id
+                p.title = v.vessel.isEmpty ? v.invoice : v.vessel
+                p.subtitle = "Ước tính theo lịch ~\(Int(f * 100))% hành trình · " + v.invoice
+                m.addAnnotation(p); if isSel { focus.append(pt(c)) }
             }
         }
         if let first = focus.first {
@@ -6916,25 +7267,37 @@ struct DesmVesselMap: UIViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var sig = ""
+        var tick = 0
+        var routes: [String: (pts: [CLLocationCoordinate2D], known: Bool)] = [:]
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let l = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
             let r = MKPolylineRenderer(polyline: l)
-            let sel = l.title == "sel"
-            r.strokeColor = sel ? UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1) : UIColor.systemGray
-            r.lineWidth = sel ? 3 : 2
-            r.lineDashPattern = [6, 6]
+            let t = l.title ?? ""
+            let sel = t.hasSuffix("sel")
+            let blue = UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1)
+            r.lineCap = .round; r.lineJoin = .round
+            if t.hasPrefix("done") {
+                r.strokeColor = sel ? blue : blue.withAlphaComponent(0.55)
+                r.lineWidth = sel ? 5 : 3
+            } else {
+                r.strokeColor = sel ? UIColor.systemGray : UIColor.systemGray3
+                r.lineWidth = sel ? 3 : 2
+                r.lineDashPattern = [2, 7]
+            }
             return r
         }
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard let a = annotation as? DesmVesselPin else { return nil }
-            let v = MKMarkerAnnotationView(annotation: a, reuseIdentifier: "desmVesselPin")
-            v.canShowCallout = true
-            switch a.kind {
-            case .pol: v.markerTintColor = .systemGray; v.glyphImage = UIImage(systemName: "arrow.up.right")
-            case .pod: v.markerTintColor = UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1); v.glyphImage = UIImage(systemName: "flag.fill")
-            case .ship: v.markerTintColor = .systemGreen; v.glyphImage = UIImage(systemName: "ferry.fill")
+            if a.kind == .ship {
+                let sv = (mapView.dequeueReusableAnnotationView(withIdentifier: "desmShip") as? DesmShipView)
+                    ?? DesmShipView(annotation: a, reuseIdentifier: "desmShip")
+                sv.annotation = a; sv.configure(a); sv.zPriority = .max
+                return sv
             }
-            return v
+            let pv = (mapView.dequeueReusableAnnotationView(withIdentifier: "desmPort") as? DesmPortView)
+                ?? DesmPortView(annotation: a, reuseIdentifier: "desmPort")
+            pv.annotation = a; pv.configure(a); pv.zPriority = a.kind == .pod ? .defaultSelected : .defaultUnselected
+            return pv
         }
     }
 }
@@ -6948,7 +7311,73 @@ struct DesmVesselSheet: View {
     @State private var selected: String? = nil
     @State private var loading = false
     @State private var error = ""
+    @State private var tick = 0
+    @State private var infos: [String: DesmShipInfo] = [:]
+    @State private var infoMsg: [String: String] = [:]
+    @State private var infoLoading: Set<String> = []
     private let geocoder = CLGeocoder()
+
+    private func loadInfo(_ v: DesmVessel) {
+        guard infos[v.id] == nil, !infoLoading.contains(v.id) else { return }
+        infoLoading.insert(v.id); infoMsg[v.id] = nil
+        model.fetchShipInfo(v) { info, err in
+            infoLoading.remove(v.id)
+            if let info = info { infos[v.id] = info } else { infoMsg[v.id] = err }
+        }
+    }
+
+    private static let dayFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "dd/MM/yyyy"; f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh"); return f }()
+
+    @ViewBuilder private func detail(_ v: DesmVessel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !v.pl.isEmpty { Text("Packing List: " + v.pl).font(.system(size: 12, weight: .semibold)) }
+            if !v.imo.isEmpty { Text("IMO: " + v.imo).font(.system(size: 12)).foregroundStyle(.secondary) }
+            if let i = infos[v.id] {
+                let extra = [i.status.isEmpty ? "" : "Trạng thái: " + i.status,
+                             i.line.isEmpty ? "" : "Hãng tàu: " + i.line,
+                             i.bl.isEmpty ? "" : "BL: " + i.bl,
+                             i.mode.isEmpty ? "" : i.mode,
+                             i.grossKg > 0 ? String(format: "%.0f kg", i.grossKg) : "",
+                             i.volume > 0 ? String(format: "%.2f m³", i.volume) : ""].filter { !$0.isEmpty }
+                if !extra.isEmpty { Text(extra.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary) }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(i.milestones.enumerated()), id: \.element.id) { idx, m in
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(spacing: 0) {
+                                Circle().fill(m.done ? Color.green : (m.planned ? Color.orange : Color.gray.opacity(0.35)))
+                                    .frame(width: 10, height: 10)
+                                if idx < i.milestones.count - 1 {
+                                    Rectangle().fill(m.done ? Color.green.opacity(0.6) : Color.gray.opacity(0.25)).frame(width: 2, height: 22)
+                                }
+                            }
+                            HStack {
+                                Text(m.title).font(.system(size: 12, weight: m.done ? .semibold : .regular))
+                                    .foregroundStyle(m.done ? Color.primary : Color.secondary)
+                                Spacer()
+                                Text(m.date.map { Self.dayFmt.string(from: $0) + (m.planned ? " (dự kiến)" : "") } ?? "—")
+                                    .font(.system(size: 11)).foregroundStyle(m.planned ? Color.orange : Color.secondary)
+                            }
+                            .padding(.top, -3)
+                        }
+                    }
+                }
+            } else if infoLoading.contains(v.id) {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Đang tải tiến trình…").font(.system(size: 11)).foregroundStyle(.secondary) }
+            } else if let m = infoMsg[v.id], !m.isEmpty {
+                Text(m).font(.system(size: 11)).foregroundStyle(.orange)
+            }
+            HStack(spacing: 14) {
+                if !v.vessel.isEmpty, let u = URL(string: "https://www.vesselfinder.com/vessels?name=" + (v.vessel.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? v.vessel)) {
+                    Link(destination: u) { Label("Theo dõi tàu", systemImage: "location.magnifyingglass").font(.system(size: 12, weight: .semibold)) }
+                }
+                if let i = infos[v.id], !i.bl.isEmpty,
+                   let u = URL(string: "https://www.google.com/search?q=" + ((i.line + " " + i.bl + " tracking").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? i.bl)) {
+                    Link(destination: u) { Label("Tra BL", systemImage: "shippingbox").font(.system(size: 12, weight: .semibold)) }
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
 
     private func load() {
         loading = true; error = ""
@@ -6977,7 +7406,7 @@ struct DesmVesselSheet: View {
     private var hasPositions: Bool { vessels.contains { $0.lat != nil && $0.lon != nil } }
 
     private func row(_ v: DesmVessel) -> some View {
-        let color: Color = v.arrived ? .gray : (v.departed ? .green : .orange)
+        let color: Color = v.arrived ? .gray : (v.departed ? .green : Color(red: 0.85, green: 0.65, blue: 0.0))   // xanh = ATD thật, vàng = dự kiến (như web)
         let state = v.arrived ? "Đã đến" : (v.departed ? "Đang đi" : "Chưa khởi hành")
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: "ferry.fill")
@@ -6987,29 +7416,34 @@ struct DesmVesselSheet: View {
                 HStack(spacing: 6) {
                     Text(v.invoice.isEmpty ? "(không có Invoice)" : v.invoice).font(.system(size: 15, weight: .bold)).lineLimit(1)
                     Spacer(minLength: 4)
+                    if v.arrivingSoon {
+                        Text("Sắp đến").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 6).padding(.vertical, 2).background(Color.green, in: Capsule())
+                    }
                     Text(state).font(.system(size: 11, weight: .bold)).foregroundStyle(color)
                 }
                 if !v.vessel.isEmpty { Text(v.vessel + (v.mfr.isEmpty ? "" : " · " + v.mfr)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) }
                 Text("\(v.pol.isEmpty ? "—" : v.pol) → \(v.pod.isEmpty ? "—" : v.pod)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.tabBlue)
                 Text("\(v.departed ? "ATD" : "ETD") \(v.etd.isEmpty ? "-" : v.etd)   ·   \(v.arrived ? "ATA" : "ETA") \(v.eta.isEmpty ? "-" : v.eta)")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
-                if !v.item.isEmpty { Text(v.item).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2) }
+                if !v.item.isEmpty { Text(v.item).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(selected == v.id ? 4 : 2) }
+                if selected == v.id { detail(v) }
             }
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture { selected = selected == v.id ? nil : v.id }
-        .listRowBackground(selected == v.id ? Color.tabBlue.opacity(0.10) : Color(.secondarySystemGroupedBackground))
+        .onTapGesture { selected = selected == v.id ? nil : v.id; if selected == v.id { loadInfo(v) } }
+        .listRowBackground(selected == v.id ? Color.tabBlue.opacity(0.10) : (v.arrivingSoon ? Color.green.opacity(0.12) : Color(.secondarySystemGroupedBackground)))
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DesmVesselMap(vessels: vessels, ports: ports, selected: selected)
+                DesmVesselMap(vessels: vessels, ports: ports, selected: selected, tick: tick)
                     .frame(height: 290)
                     .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
                 if !vessels.isEmpty && !hasPositions {
-                    Text("DESM chưa có toạ độ tàu — bản đồ vẽ tuyến cảng đi → cảng đến (toạ độ cảng là gần đúng).")
+                    Text("DESM chưa có toạ độ tàu — tàu (màu cam) là vị trí ƯỚC TÍNH theo ATD/ETA dọc tuyến biển/sông gần đúng; toạ độ cảng và tuyến không dùng để dẫn đường.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .padding(.horizontal, 16).padding(.bottom, 6)
                 }
@@ -7037,6 +7471,284 @@ struct DesmVesselSheet: View {
             }
         }
         .onAppear { if vessels.isEmpty && !loading { load() } }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in tick += 1 }
+    }
+}
+
+
+// MARK: - Thông báo DESM (mục "Thêm")
+//
+// Nguồn: trang chủ DESM (home.js). POST /getNotice.do (jobCode rỗng) -> danh sách: NOTICE_ID, TITLE, ATT_CNT (số file đính kèm),
+// LAST_UPDATE_DATE, LAST_UPDATED_BY, FILE_GRP_CD. POST /getNoticeContents.do (jobCode = NOTICE_ID) -> results[0].CONTENTS (văn bản thuần, web nhét vào textarea).
+// POST /getRealTimeNotice.do -> thông báo chạy trên đầu trang (TITLE, NOTICE_ID). File đính kèm chưa làm (cần /getIdsmSetupDlgItemScheduleFile.do + /getIdsmAttachDownload.do).
+// "Mới" = NOTICE_ID chưa mở lần nào (lưu UserDefaults; lần đầu mở thì coi tất cả là đã xem). CHƯA kiểm chứng trên máy thật.
+
+struct DesmNotice: Identifiable, Hashable {
+    let id: String
+    var title = "", by = "", date = "", fileGroup = ""
+    var attach = 0
+    var realtime = false
+}
+
+struct DesmAttach: Identifiable, Hashable {
+    let id: String
+    var name = "", ext = "", size = 0.0
+}
+
+struct DesmSharedFile: Identifiable { let id = UUID(); let url: URL }
+
+/// Danh sách NOTICE_ID đã mở (UserDefaults). nil = chưa từng lưu: lần đầu coi mọi thông báo hiện có là đã xem.
+enum DesmNoticeSeen {
+    static let key = "desmSeenNotices"
+    static func load() -> Set<String>? { (UserDefaults.standard.array(forKey: key) as? [String]).map(Set.init) }
+    static func save(_ s: Set<String>) { UserDefaults.standard.set(Array(s), forKey: key) }
+}
+
+extension BrowserModel {
+    func fetchNotices(done: @escaping ([DesmNotice], [DesmNotice], String) -> Void) {
+        func str(_ r: [String: Any], _ k: String) -> String {
+            if let v = r[k] as? String { return v.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let n = r[k] as? NSNumber { return n.stringValue }
+            return ""
+        }
+        func parse(_ rows: [[String: Any]], rt: Bool) -> [DesmNotice] {
+            let f = DateFormatter(); f.dateFormat = "dd/MM/yyyy"; f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh")
+            return rows.map { r in
+                var n = DesmNotice(id: str(r, "NOTICE_ID")); n.realtime = rt
+                n.title = str(r, "TITLE"); n.by = str(r, "LAST_UPDATED_BY"); n.fileGroup = str(r, "FILE_GRP_CD")
+                if let ms = r["LAST_UPDATE_DATE"] as? NSNumber { n.date = f.string(from: Date(timeIntervalSince1970: ms.doubleValue / 1000)) }
+                else { n.date = str(r, "LAST_UPDATE_DATE") }
+                n.attach = (r["ATT_CNT"] as? NSNumber)?.intValue ?? 0
+                return n
+            }
+        }
+        desmQuery("/getNotice.do", body: "jobCode=") { rows, err in
+            guard let rows = rows else { done([], [], err); return }
+            let list = parse(rows, rt: false)
+            self.desmQuery("/getRealTimeNotice.do", body: "") { rt, _ in
+                done(list, parse(rt ?? [], rt: true), "")
+            }
+        }
+    }
+
+    /// Đếm thông báo chưa mở, cập nhật chấm đỏ trên nút "Thêm" và số trên icon app.
+    func refreshNoticeBadge() {
+        guard inDesm else { return }
+        fetchNotices { list, _, err in
+            guard err.isEmpty else { return }
+            var seen = DesmNoticeSeen.load()
+            if seen == nil { seen = Set(list.map { $0.id }); DesmNoticeSeen.save(seen!) }
+            self.setUnread(list.filter { !(seen ?? []).contains($0.id) }.count)
+        }
+    }
+    func setUnread(_ n: Int) {
+        unreadNotices = n
+        let c = UNUserNotificationCenter.current()
+        c.requestAuthorization(options: [.badge]) { ok, _ in
+            if ok { c.setBadgeCount(n) { _ in } }
+        }
+    }
+
+    /// File đính kèm của thông báo: lấy FILE_GRP_CD (từ danh sách, không có thì hỏi lại getNotice theo NOTICE_ID) rồi
+    /// POST /getIdsmSetupDlgItemScheduleFile.do FILE_GRP_CD=... -> [{ID, NAME, EXT, FILE_SIZE}].
+    func fetchNoticeFiles(_ n: DesmNotice, done: @escaping ([DesmAttach], String) -> Void) {
+        func enc(_ x: String) -> String { x.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? x }
+        func files(_ group: String) {
+            guard !group.isEmpty else { done([], ""); return }
+            desmQuery("/getIdsmSetupDlgItemScheduleFile.do", body: "FILE_GRP_CD=" + enc(group)) { rows, err in
+                guard let rows = rows else { done([], err); return }
+                done(rows.compactMap { r in
+                    func s(_ k: String) -> String {
+                        if let v = r[k] as? String { return v }
+                        if let v = r[k] as? NSNumber { return v.stringValue }
+                        return ""
+                    }
+                    let id = s("ID"); if id.isEmpty { return nil }
+                    return DesmAttach(id: id, name: s("NAME"), ext: s("EXT"), size: (r["FILE_SIZE"] as? NSNumber)?.doubleValue ?? Double(s("FILE_SIZE")) ?? 0)
+                }, "")
+            }
+        }
+        if !n.fileGroup.isEmpty { files(n.fileGroup); return }
+        guard n.attach > 0 else { done([], ""); return }
+        desmQuery("/getNotice.do", body: "jobCode=" + enc(n.id)) { rows, err in
+            guard let rows = rows else { done([], err); return }
+            files((rows.first?["FILE_GRP_CD"] as? String) ?? "")
+        }
+    }
+
+    /// Tải một file đính kèm: GET /getIdsmAttachDownload.do?code=<ID> bằng phiên đăng nhập, lưu vào thư mục tạm để chia sẻ/mở.
+    func downloadAttachment(_ a: DesmAttach, done: @escaping (URL?, String) -> Void) {
+        guard let webView = webView else { done(nil, "Chưa có trang DESM để tải."); return }
+        let js = #"""
+        try {
+          const r = await fetch('/getIdsmAttachDownload.do?code=' + encodeURIComponent(code), { credentials: 'include', cache: 'no-store' });
+          if (!r.ok) return JSON.stringify({ err: 'HTTP ' + r.status });
+          const ct = (r.headers.get('content-type') || '').toLowerCase();
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (/text\/html|json/.test(ct) && buf.length < 4000) return JSON.stringify({ err: 'Máy chủ không trả file (có thể đã hết phiên hoặc không có quyền).' });
+          let bin = '';
+          for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+          return JSON.stringify({ b64: btoa(bin) });
+        } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
+        """#
+        webView.callAsyncJavaScript(js, arguments: ["code": a.id], in: nil, in: .page) { result in
+            switch result {
+            case .failure(let e): done(nil, "Không tải được: \(e.localizedDescription)")
+            case .success(let v):
+                guard let text = v as? String, let d = text.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { done(nil, "Không đọc được phản hồi."); return }
+                if let err = obj["err"] as? String { done(nil, err); return }
+                guard let b64 = obj["b64"] as? String, let bytes = Data(base64Encoded: b64), !bytes.isEmpty else { done(nil, "File tải về rỗng."); return }
+                var name = a.name.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
+                if name.isEmpty { name = "dinh-kem-" + a.id }
+                if (name as NSString).pathExtension.isEmpty, !a.ext.isEmpty { name += "." + a.ext.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("desm-notice-\(UUID().uuidString)", isDirectory: true)
+                do {
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    let url = dir.appendingPathComponent(name)
+                    try bytes.write(to: url)
+                    done(url, "")
+                } catch { done(nil, "Không lưu được file: \(error.localizedDescription)") }
+            }
+        }
+    }
+
+    func fetchNoticeContent(_ id: String, done: @escaping (String, String) -> Void) {
+        desmQuery("/getNoticeContents.do", body: "jobCode=" + (id.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? id)) { rows, err in
+            guard let rows = rows else { done("", err); return }
+            done((rows.first?["CONTENTS"] as? String) ?? "", rows.isEmpty ? "Thông báo không có nội dung." : "")
+        }
+    }
+}
+
+struct DesmNoticeSheet: View {
+    @ObservedObject var model: BrowserModel
+    var onClose: () -> Void
+
+    @State private var notices: [DesmNotice] = []
+    @State private var live: [DesmNotice] = []
+    @State private var loading = false
+    @State private var error = ""
+    @State private var seen: Set<String> = []
+    @State private var files: [DesmAttach] = []
+    @State private var filesMsg = ""
+    @State private var downloading: String? = nil
+    @State private var shared: DesmSharedFile? = nil
+    @State private var opened: DesmNotice? = nil
+    @State private var content = ""
+    @State private var contentErr = ""
+    @State private var contentLoading = false
+
+    private func load() {
+        loading = true; error = ""
+        model.fetchNotices { list, rt, err in
+            loading = false; error = err
+            notices = list; live = rt
+            if let saved = DesmNoticeSeen.load() { seen = saved }
+            else { seen = Set(list.map { $0.id }); DesmNoticeSeen.save(seen) }   // lần đầu: coi mọi thông báo hiện có là đã xem
+            model.setUnread(list.filter { !seen.contains($0.id) }.count)
+        }
+    }
+
+    private func show(_ n: DesmNotice) {
+        opened = n; content = ""; contentErr = ""; contentLoading = true
+        files = []; filesMsg = ""; downloading = nil
+        seen.insert(n.id); DesmNoticeSeen.save(seen)
+        model.setUnread(notices.filter { !seen.contains($0.id) }.count)
+        model.fetchNoticeContent(n.id) { text, err in
+            contentLoading = false; content = text; contentErr = err
+        }
+        if n.attach > 0 || !n.fileGroup.isEmpty {
+            model.fetchNoticeFiles(n) { list, err in files = list; filesMsg = err }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !live.isEmpty {
+                    Section("Thông báo khẩn") {
+                        ForEach(live) { n in
+                            Button { show(n) } label: {
+                                Label(n.title, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.system(size: 14, weight: .semibold))
+                            }
+                        }
+                    }
+                }
+                Section(notices.isEmpty ? "" : "Thông báo (\(notices.count))") {
+                    ForEach(notices) { n in
+                        Button { show(n) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    if !seen.contains(n.id) {
+                                        Text("Mới").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                            .padding(.horizontal, 6).padding(.vertical, 2).background(Color.red, in: Capsule())
+                                    }
+                                    Text(n.title).font(.system(size: 14, weight: seen.contains(n.id) ? .regular : .bold)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                                    if n.attach > 0 { Image(systemName: "paperclip").font(.system(size: 11)).foregroundStyle(.secondary) }
+                                }
+                                Text([n.date, n.by].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(.orange) }
+                if !loading && error.isEmpty && notices.isEmpty { Text("Chưa có thông báo.").foregroundStyle(.secondary) }
+            }
+            .overlay { if loading && notices.isEmpty { ProgressView("Đang tải…") } }
+            .navigationTitle("Thông báo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
+                ToolbarItem(placement: .navigationBarTrailing) { Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading) }
+            }
+            .sheet(item: $opened) { n in
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(n.title).font(.system(size: 17, weight: .bold))
+                            Text([n.date, n.by].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 12)).foregroundStyle(.secondary)
+                            Divider()
+                            if contentLoading { ProgressView() }
+                            else if !contentErr.isEmpty { Text(contentErr).foregroundStyle(.orange) }
+                            else { Text(content.isEmpty ? "(Không có nội dung)" : content).font(.system(size: 15)).textSelection(.enabled) }
+                            if !files.isEmpty || !filesMsg.isEmpty {
+                                Divider()
+                                Text("Đính kèm").font(.system(size: 13, weight: .bold)).foregroundStyle(.secondary)
+                                if !filesMsg.isEmpty { Text(filesMsg).font(.system(size: 12)).foregroundStyle(.orange) }
+                                ForEach(files) { f in
+                                    Button {
+                                        guard downloading == nil else { return }
+                                        downloading = f.id; filesMsg = ""
+                                        model.downloadAttachment(f) { url, err in
+                                            downloading = nil
+                                            if let url = url { shared = DesmSharedFile(url: url) } else { filesMsg = err }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: "doc.fill").foregroundStyle(Color.tabBlue)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(f.name.isEmpty ? "(file \(f.id))" : f.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                                                if f.size > 0 { Text(ByteCountFormatter.string(fromByteCount: Int64(f.size), countStyle: .file)).font(.system(size: 11)).foregroundStyle(.secondary) }
+                                            }
+                                            Spacer()
+                                            if downloading == f.id { ProgressView() } else { Image(systemName: "arrow.down.circle").foregroundStyle(Color.tabBlue) }
+                                        }
+                                        .padding(10).background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .navigationTitle("Chi tiết").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Xong") { opened = nil } } }
+                    .sheet(item: $shared) { f in ShareSheet(url: f.url) }
+                }
+            }
+        }
+        .onAppear { if notices.isEmpty && !loading { load() } }
     }
 }
 
