@@ -6907,6 +6907,13 @@ enum DesmRoutes {
         return ([a, b], false)
     }
 
+    /// Phương vị (độ, 0 = bắc, theo chiều kim đồng hồ) từ a đến b.
+    static func bearing(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> Double {
+        let la1 = a.latitude * .pi / 180, la2 = b.latitude * .pi / 180, dl = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(dl) * cos(la2), x = cos(la1) * sin(la2) - sin(la1) * cos(la2) * cos(dl)
+        return atan2(y, x) * 180 / .pi
+    }
+
     static func parseDate(_ s: String) -> Date? {
         let t = s.trimmingCharacters(in: CharacterSet(charactersIn: "() ")).prefix(10)
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "Asia/Ho_Chi_Minh")
@@ -7030,40 +7037,39 @@ final class DesmVesselPin: MKPointAnnotation {
     var vesselId = ""
     var estimated = false
     var eastbound = true   // hướng chạy sang phải/trái màn hình, để lật con tàu
+    var active = false     // chuyến đang xem VÀ đã khởi hành: chỉ khi đó mới có hiệu ứng sóng
+    var heading = 0.0      // hướng tuyến tại cảng đi (độ, 0 = bắc, theo chiều kim đồng hồ), để xoay mũi tên
 }
 
-/// Mốc cảng đi / cảng đến: huy hiệu tròn có viền trắng + bóng, vòng sóng lan ra, nhãn tên cảng; rơi xuống kiểu lò xo khi hiện.
-/// Cảng đến (xanh dương) nổi bật hơn: hai vòng sóng liên tục. Cảng đi (xám xanh): một vòng mờ chậm.
+/// Mốc cảng đi / cảng đến: huy hiệu tròn nhỏ có viền trắng + nhãn tên cảng.
+/// Chỉ chuyến ĐANG XEM và đã khởi hành mới có hiệu ứng (vòng sóng nhẹ, rơi xuống khi hiện); các chuyến khác là mốc tĩnh, mờ hơn.
+/// Cảng đi: mũi tên xoay theo hướng tuyến. Cảng đến: ghim xanh dương.
 final class DesmPortView: MKAnnotationView {
-    private static let W: CGFloat = 124, H: CGFloat = 72, cy: CGFloat = 30
+    private static let W: CGFloat = 104, H: CGFloat = 50, cy: CGFloat = 16, D: CGFloat = 24
     private let badge = UIView(), icon = UIImageView(), label = UILabel(), pill = UIView()
-    private let rings = [CAShapeLayer(), CAShapeLayer()]
+    private let ring = CAShapeLayer()
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        let W = Self.W, H = Self.H, cy = Self.cy
+        let W = Self.W, H = Self.H, cy = Self.cy, D = Self.D
         frame = CGRect(x: 0, y: 0, width: W, height: H)
         centerOffset = CGPoint(x: 0, y: H / 2 - cy)   // tâm huy hiệu trùng toạ độ cảng
         canShowCallout = true
-        for r in rings {
-            r.frame = CGRect(x: 0, y: 0, width: W, height: H)
-            r.path = UIBezierPath(ovalIn: CGRect(x: W / 2 - 30, y: cy - 30, width: 60, height: 60)).cgPath
-            r.fillColor = UIColor.clear.cgColor; r.lineWidth = 2
-            layer.addSublayer(r)
-        }
-        badge.frame = CGRect(x: W / 2 - 18, y: cy - 18, width: 36, height: 36)
-        badge.layer.cornerRadius = 18
-        badge.layer.borderWidth = 3; badge.layer.borderColor = UIColor.white.cgColor
-        badge.layer.shadowColor = UIColor.black.cgColor; badge.layer.shadowOpacity = 0.3
-        badge.layer.shadowRadius = 4; badge.layer.shadowOffset = CGSize(width: 0, height: 2)
+        ring.frame = CGRect(x: 0, y: 0, width: W, height: H)
+        ring.path = UIBezierPath(ovalIn: CGRect(x: W / 2 - 17, y: cy - 17, width: 34, height: 34)).cgPath
+        ring.fillColor = UIColor.clear.cgColor; ring.lineWidth = 1.5
+        layer.addSublayer(ring)
+        badge.frame = CGRect(x: W / 2 - D / 2, y: cy - D / 2, width: D, height: D)
+        badge.layer.cornerRadius = D / 2
+        badge.layer.borderWidth = 2; badge.layer.borderColor = UIColor.white.cgColor
+        badge.layer.shadowColor = UIColor.black.cgColor; badge.layer.shadowOpacity = 0.25
+        badge.layer.shadowRadius = 2.5; badge.layer.shadowOffset = CGSize(width: 0, height: 1)
         addSubview(badge)
         icon.frame = badge.bounds; icon.contentMode = .center; icon.tintColor = .white
         badge.addSubview(icon)
-        pill.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.92)
-        pill.layer.cornerRadius = 9
-        pill.layer.shadowColor = UIColor.black.cgColor; pill.layer.shadowOpacity = 0.2
-        pill.layer.shadowRadius = 2; pill.layer.shadowOffset = CGSize(width: 0, height: 1)
-        label.font = .systemFont(ofSize: 11, weight: .bold); label.textAlignment = .center
+        pill.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.9)
+        pill.layer.cornerRadius = 7.5
+        label.font = .systemFont(ofSize: 10, weight: .bold); label.textAlignment = .center
         label.adjustsFontSizeToFitWidth = true; label.minimumScaleFactor = 0.7
         pill.addSubview(label); addSubview(pill)
     }
@@ -7073,65 +7079,54 @@ final class DesmPortView: MKAnnotationView {
         let isPod = a.kind == .pod
         let col = isPod ? UIColor(red: 47 / 255, green: 125 / 255, blue: 224 / 255, alpha: 1) : UIColor(red: 0.42, green: 0.47, blue: 0.56, alpha: 1)
         badge.backgroundColor = col
-        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
-        icon.image = UIImage(systemName: isPod ? "mappin.and.ellipse" : "arrow.up.right", withConfiguration: cfg)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)
+        icon.image = UIImage(systemName: isPod ? "mappin" : "arrow.up", withConfiguration: cfg)
+        // mũi tên cảng đi chỉ theo hướng tuyến (arrow.up = hướng bắc, xoay theo góc phương vị)
+        icon.transform = isPod ? .identity : CGAffineTransform(rotationAngle: CGFloat(a.heading * .pi / 180))
         label.text = a.title ?? ""; label.textColor = col
-        let w = min(116, max(36, label.intrinsicContentSize.width + 14))
-        pill.frame = CGRect(x: (Self.W - w) / 2, y: Self.cy + 24, width: w, height: 18)
-        label.frame = pill.bounds.insetBy(dx: 5, dy: 0)
-        for (i, r) in rings.enumerated() {
-            r.strokeColor = col.cgColor; r.removeAllAnimations()
-            if !isPod && i == 1 { r.isHidden = true; continue }
-            r.isHidden = false
-            let g = CAAnimationGroup(); g.duration = isPod ? 2.0 : 3.2; g.repeatCount = .infinity
-            g.beginTime = CACurrentMediaTime() + (i == 0 ? 0 : 1.0)
-            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.4; sc.toValue = isPod ? 1.3 : 0.9
-            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = isPod ? 0.8 : 0.4; op.toValue = 0
+        let w = min(98, max(30, label.intrinsicContentSize.width + 12))
+        pill.frame = CGRect(x: (Self.W - w) / 2, y: Self.cy + Self.D / 2 + 3, width: w, height: 15)
+        label.frame = pill.bounds.insetBy(dx: 4, dy: 0)
+        ring.strokeColor = col.cgColor; ring.removeAllAnimations(); badge.layer.removeAllAnimations()
+        if a.active {
+            ring.isHidden = false
+            let g = CAAnimationGroup(); g.duration = 2.4; g.repeatCount = .infinity
+            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.6; sc.toValue = 1.15
+            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = 0.7; op.toValue = 0
             g.animations = [sc, op]; g.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            r.add(g, forKey: "ripple")
-        }
-        // rơi xuống kiểu lò xo
-        badge.layer.removeAllAnimations()
-        let drop = CASpringAnimation(keyPath: "transform.scale"); drop.fromValue = 0.1; drop.toValue = 1
-        drop.damping = 8; drop.initialVelocity = 6; drop.duration = drop.settlingDuration
-        badge.layer.add(drop, forKey: "drop")
-        pill.alpha = 0
-        UIView.animate(withDuration: 0.35, delay: 0.15, options: []) { self.pill.alpha = 1 }
-        if isPod {   // nhịp "thở" nhẹ để thu hút mắt
-            let br = CABasicAnimation(keyPath: "transform.scale"); br.fromValue = 1; br.toValue = 1.08
-            br.beginTime = CACurrentMediaTime() + 0.9; br.duration = 0.8; br.autoreverses = true; br.repeatCount = .infinity
-            br.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            badge.layer.add(br, forKey: "breathe")
+            ring.add(g, forKey: "ripple")
+            let drop = CASpringAnimation(keyPath: "transform.scale"); drop.fromValue = 0.2; drop.toValue = 1
+            drop.damping = 9; drop.initialVelocity = 5; drop.duration = drop.settlingDuration
+            badge.layer.add(drop, forKey: "drop")
+            alpha = 1; pill.alpha = 1
+        } else {
+            ring.isHidden = true
+            alpha = 0.75
         }
     }
 }
 
-/// Con tàu có hiệu ứng: vòng sóng lan ra, thân tàu nhấp nhô theo sóng, vệt nước phía sau.
+/// Con tàu: thân tàu nhấp nhô nhẹ theo sóng; vòng sóng chỉ hiện khi đây là chuyến đang xem.
 final class DesmShipView: MKAnnotationView {
-    private let ring = CAShapeLayer(), ring2 = CAShapeLayer()
-    private let hull = UIImageView(), wake = UIView()
+    private let ring = CAShapeLayer()
+    private let hull = UIImageView()
+    private var pulsing = false
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        frame = CGRect(x: 0, y: 0, width: 56, height: 56)
+        frame = CGRect(x: 0, y: 0, width: 44, height: 44)
         centerOffset = .zero
         canShowCallout = true
-        for (l, _) in [(ring, 0), (ring2, 1)] {
-            l.path = UIBezierPath(ovalIn: CGRect(x: 8, y: 8, width: 40, height: 40)).cgPath
-            l.frame = bounds
-            l.fillColor = UIColor.clear.cgColor
-            l.lineWidth = 2
-            layer.addSublayer(l)
-        }
-        wake.frame = CGRect(x: 0, y: 36, width: 56, height: 3)
-        wake.backgroundColor = UIColor.white.withAlphaComponent(0.7); wake.layer.cornerRadius = 1.5
-        addSubview(wake)
-        let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .bold)
+        ring.path = UIBezierPath(ovalIn: CGRect(x: 6, y: 6, width: 32, height: 32)).cgPath
+        ring.frame = bounds
+        ring.fillColor = UIColor.clear.cgColor; ring.lineWidth = 1.5
+        layer.addSublayer(ring)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 19, weight: .bold)
         hull.image = UIImage(systemName: "ferry.fill", withConfiguration: cfg)
         hull.contentMode = .center
-        hull.frame = CGRect(x: 8, y: 6, width: 40, height: 40)
+        hull.frame = bounds
         hull.layer.shadowColor = UIColor.black.cgColor; hull.layer.shadowOpacity = 0.35
-        hull.layer.shadowRadius = 3; hull.layer.shadowOffset = CGSize(width: 0, height: 2)
+        hull.layer.shadowRadius = 2.5; hull.layer.shadowOffset = CGSize(width: 0, height: 1.5)
         addSubview(hull)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -7139,35 +7134,27 @@ final class DesmShipView: MKAnnotationView {
     func configure(_ a: DesmVesselPin) {
         let col: UIColor = a.estimated ? .systemOrange : .systemGreen
         hull.tintColor = col
-        ring.strokeColor = col.cgColor; ring2.strokeColor = col.cgColor
+        ring.strokeColor = col.cgColor
         hull.transform = a.eastbound ? .identity : CGAffineTransform(scaleX: -1, y: 1)
-        wake.frame.origin.x = a.eastbound ? -14 : 14
+        pulsing = a.active
+        alpha = a.active ? 1 : 0.8
         startAnimating()
     }
 
     func startAnimating() {
-        func pulse(_ l: CAShapeLayer, delay: CFTimeInterval) {
-            l.removeAllAnimations()
-            let g = CAAnimationGroup(); g.duration = 2.2; g.repeatCount = .infinity; g.beginTime = CACurrentMediaTime() + delay
-            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.55; sc.toValue = 1.25
-            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = 0.8; op.toValue = 0.0
+        ring.removeAllAnimations(); ring.isHidden = !pulsing
+        if pulsing {
+            let g = CAAnimationGroup(); g.duration = 2.4; g.repeatCount = .infinity
+            let sc = CABasicAnimation(keyPath: "transform.scale"); sc.fromValue = 0.55; sc.toValue = 1.2
+            let op = CABasicAnimation(keyPath: "opacity"); op.fromValue = 0.7; op.toValue = 0
             g.animations = [sc, op]; g.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            l.add(g, forKey: "pulse")
+            ring.add(g, forKey: "pulse")
         }
-        pulse(ring, delay: 0); pulse(ring2, delay: 1.1)
         hull.layer.removeAllAnimations()
-        let bob = CABasicAnimation(keyPath: "transform.translation.y"); bob.fromValue = -2; bob.toValue = 2
-        bob.duration = 0.9; bob.autoreverses = true; bob.repeatCount = .infinity
+        let bob = CABasicAnimation(keyPath: "transform.translation.y"); bob.fromValue = -1.5; bob.toValue = 1.5
+        bob.duration = 1.0; bob.autoreverses = true; bob.repeatCount = .infinity
         bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         hull.layer.add(bob, forKey: "bob")
-        let roll = CABasicAnimation(keyPath: "transform.rotation.z"); roll.fromValue = -0.05; roll.toValue = 0.05
-        roll.duration = 1.3; roll.autoreverses = true; roll.repeatCount = .infinity
-        roll.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        hull.layer.add(roll, forKey: "roll")
-        wake.layer.removeAllAnimations()
-        let w = CABasicAnimation(keyPath: "opacity"); w.fromValue = 0.2; w.toValue = 0.8
-        w.duration = 0.6; w.autoreverses = true; w.repeatCount = .infinity
-        wake.layer.add(w, forKey: "wake")
     }
     override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { startAnimating() } }
 }
@@ -7229,6 +7216,7 @@ struct DesmVesselMap: UIViewRepresentable {
         func pt(_ c: CLLocationCoordinate2D) -> MKMapPoint { MKMapPoint(c) }
         for v in vessels {
             let isSel = selected == nil || selected == v.id
+            let active = selected == v.id && v.departed && !v.arrived   // chỉ chuyến đang xem và đang đi mới có hiệu ứng
             let a = ports[DesmPorts.key(v.pol)], b = ports[DesmPorts.key(v.pod)]
             var routePts: [CLLocationCoordinate2D] = []
             if let a = a, let b = b {
@@ -7240,19 +7228,21 @@ struct DesmVesselMap: UIViewRepresentable {
             }
             if let a = a {
                 let p = DesmVesselPin(); p.coordinate = a; p.kind = .pol; p.vesselId = v.id; p.title = v.pol; p.subtitle = "Cảng đi · " + v.invoice
+                p.active = active; p.heading = DesmRoutes.bearing(from: a, to: routePts.count > 1 ? routePts[1] : (b ?? a))
                 m.addAnnotation(p); if isSel { focus.append(pt(a)) }
             }
             if let b = b {
                 let p = DesmVesselPin(); p.coordinate = b; p.kind = .pod; p.vesselId = v.id; p.title = v.pod; p.subtitle = "Cảng đến · " + v.invoice
+                p.active = active
                 m.addAnnotation(p); if isSel { focus.append(pt(b)) }
             }
             if let la = v.lat, let lo = v.lon, abs(la) <= 90, abs(lo) <= 180 {
                 let c = CLLocationCoordinate2D(latitude: la, longitude: lo)
-                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.vesselId = v.id
+                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.vesselId = v.id; p.active = active
                 p.title = v.vessel.isEmpty ? v.invoice : v.vessel; p.subtitle = v.invoice
                 m.addAnnotation(p); if isSel { focus.append(pt(c)) }
             } else if let (c, f, east, _) = DesmRoutes.estimate(v, along: routePts) {
-                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.estimated = true; p.eastbound = east; p.vesselId = v.id
+                let p = DesmVesselPin(); p.coordinate = c; p.kind = .ship; p.estimated = true; p.eastbound = east; p.active = active; p.vesselId = v.id
                 p.title = v.vessel.isEmpty ? v.invoice : v.vessel
                 p.subtitle = "Ước tính theo lịch ~\(Int(f * 100))% hành trình · " + v.invoice
                 m.addAnnotation(p); if isSel { focus.append(pt(c)) }
@@ -7442,11 +7432,6 @@ struct DesmVesselSheet: View {
                 DesmVesselMap(vessels: vessels, ports: ports, selected: selected, tick: tick)
                     .frame(height: 290)
                     .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
-                if !vessels.isEmpty && !hasPositions {
-                    Text("DESM chưa có toạ độ tàu — tàu (màu cam) là vị trí ƯỚC TÍNH theo ATD/ETA dọc tuyến biển/sông gần đúng; toạ độ cảng và tuyến không dùng để dẫn đường.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 16).padding(.bottom, 6)
-                }
                 if !error.isEmpty {
                     Text(error).font(.system(size: 12)).foregroundStyle(.orange).padding(.horizontal, 16).padding(.bottom, 6)
                 }
