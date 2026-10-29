@@ -10,11 +10,17 @@ App KHÔNG có backend riêng và không gọi dịch vụ ngoài; mọi dữ li
 | File | Vai trò |
 |---|---|
 | `DESMMobileApp.swift` | Điểm vào, hiện `BrowserView`. |
-| `BrowserView.swift` | File lớn nhất. `BrowserModel` (trạng thái, cài đặt, tạo script tiêm), toàn bộ **JS tiêm vào trang** (chuỗi `#"""` trong `makeScript()`), `BrowserView` (thanh địa chỉ/nút), `SettingsView` (Cài đặt), các tiện ích lấy HTML/script/nhật ký API. |
-| `WebView.swift` | `UIViewRepresentable` bọc WKWebView, `Coordinator` (điều hướng, alert/confirm thật, nhận message từ JS), `SessionStore` (lưu cookie phiên vào Keychain), `CredStore` (tài khoản tự điền, Keychain). |
-| `MobileStyles.swift` | CSS chế độ Mobile (chuỗi lớn, gồm SVG header/footer nhúng). |
-| `Translations.swift` | Từ điển Anh→Việt (khớp nguyên chuỗi) để Việt hoá giao diện DESM phía máy khách. |
-| `PackageScanner.swift` | Quét Package No/QR bằng camera (AVFoundation + Vision), nhận diện `OM4-xx-xx-0000-000`, parse QR `DETAIL!!!...`, quét từ ảnh thư viện. |
+| `Core/` | `BrowserModel.swift` (trạng thái, @AppStorage, tham chiếu WKWebView, `installUserScript`/`evaluateNow`), `LayoutMode.swift`. |
+| `Scripts/` | JS và CSS tiêm vào trang: `UserScript.swift` (`makeScript()` — toàn bộ JS giao diện), `NetRecorder.swift` (ghi API), `PageExport.swift` (đọc cấu trúc/HTML/script trang), `ScanActions.swift` (kết quả quét → JS), `MobileStyles.swift`, `Translations.swift`. |
+| `Networking/DesmAPI.swift` | `desmQueryAsync` (URLSession + cookie), `desmProjectNo()`, `desmQuery` (bản callback), đường lui `desmQueryViaWebView`. |
+| `Session/SessionReconnect.swift` | Thăm dò phiên, tự đăng nhập lại (`probeSession`, `openLogin`, `appBecameActive`). |
+| `UI/` | `BrowserView.swift` (màn chính), `DesmTabBar`, `DesmDialog`, `MoreSheet`, `ShareSheet`. |
+| `Settings/SettingsView.swift` | Màn Cài đặt. |
+| `Sheets/` | Các màn native mở từ "Thêm"/tab: `PackingHistory`, `DocSheet`, `DocDetail`, `Outgoing`, `WipCompletion`, `MrfReturn`, `Activity`, `EditLog`, `Notices`. |
+| `Vessel/` | Bản đồ tàu: `VesselData`, `VesselLoader`, `VesselMap`, `VesselSheet`. |
+| `Tools/` | Công cụ tinh chỉnh: `NetLogStore`, `SnapStore`, `PageSnapshot`, `DesmFetch`, `DesmSource`, `WriteAudit`. |
+| `Scanner/PackageScanner.swift` | Quét Package No/QR bằng camera. |
+| `Web/WebView.swift` | `UIViewRepresentable` bọc WKWebView, `Coordinator` (điều hướng, alert/confirm thật, nhận message từ JS), `SessionStore` (lưu cookie phiên vào Keychain), `CredStore` (tài khoản tự điền, Keychain). |
 | `Branding/`, `Assets.xcassets` | Logo, icon, nền SVG header/footer. |
 
 ## 3. Luồng chạy chính
@@ -25,14 +31,14 @@ App KHÔNG có backend riêng và không gọi dịch vụ ngoài; mọi dữ li
 5. Swift gọi JS qua `evaluateJavaScript` / `callAsyncJavaScript`: `__desmFindPkg`, `__desmFindDetail` (quét), `__desmApplyAll`...
 
 ### Tự kết nối lại khi hết phiên (đăng nhập)
-Vấn đề đã gặp: qua đêm phiên DESM hết hạn nhưng app nạp lại địa chỉ cũ với cookie cũ nên trang không chạy thay vì về `login.do`. Xử lý (extension "Tự kết nối lại" trong `BrowserView.swift`, hook trong `WebView.swift`):
+Vấn đề đã gặp: qua đêm phiên DESM hết hạn nhưng app nạp lại địa chỉ cũ với cookie cũ nên trang không chạy thay vì về `login.do`. Xử lý (extension "Tự kết nối lại" trong `Session/SessionReconnect.swift`, hook trong `Web/WebView.swift`):
 1. Mở app: `SessionStore.restore` rồi `BrowserModel.startLoad` thăm dò `main.do` bằng URLSession (hết phiên = chuyển về login / 401 / có ô mật khẩu); hết phiên hoặc chưa có phiên thì xoá cookie DESM và mở `https://desm.doosanenerbility.com/login.do`.
 2. App quay lại từ nền > 10 phút: thăm dò lại (`appBecameActive`).
 3. Đang dùng: JS ở `netRecorderSource` (`checkXhr`) phát hiện XHR bị đẩy về login/401/HTML đăng nhập → message `desmSession` → `reconnectSession`. Ngoài ra `Coordinator.checkLoginForm` bắt trường hợp trang thường mà hiện ô mật khẩu.
 4. Ở trang đăng nhập: tự điền (`__desmFill`) rồi nếu đang kết nối lại thì tự bấm Login (`__desmSubmitLogin`).
 Chống lặp: ≤3 lần kết nối lại/5 phút, ≤2 lần tự bấm Login mỗi lần. Công tắc: Cài đặt > "Tự đăng nhập lại khi hết phiên" (`desmAutoReconnect`, mặc định bật). CHƯA kiểm chứng: máy chủ DESM xử lý phiên hết hạn thế nào (redirect hay trả trang rỗng) và cấu trúc trang `login.do` (nút Login) — nếu tự bấm không chạy, dùng ghi API/lưu HTML trang đăng nhập để chỉnh `__desmSubmitLogin`.
 
-## 4. Chỉ mục JS tiêm vào trang (trong `makeScript()`)
+## 4. Chỉ mục JS tiêm vào trang (trong `makeScript()`, `Scripts/UserScript.swift`)
 - **Giao diện:** `allowed`, `setViewport`, `navHandlers` (menu ngăn kéo), `addFilterBar`/`buildForm`/`formify` (form tìm kiếm 2 cột + thanh Bộ lọc), `fixMaps`, `slimHeader`, `defaultToolbar`, `modalLock`.
 - **Lưới TreeGrid (`GridE.js`, biến `TGGrids`):** `gridText`, `colShown`, `compactGrid` (chỉ giữ cột chọn + Package No + Location), `pkgGridOf`, `genGridOf`, `genericCards` (thẻ RSI/MRR/MRF/MPR), `cardView` (thẻ Package), `openDetail` (màn chi tiết kiện), `colToggle`.
 - **Danh sách hạng mục của kiện (Detail Item):** `diLoadFast` (gọi thẳng API — xem §5), `diLoad` (cách cũ: khung ẩn `#desmDetailFrame` nạp `page_crt.do?MENU_SEQ=197`, điền Package No, bấm Search, đọc lưới), `diFrame`, `diProject` (đợi/chép ô Dự án), `diSelect` (chọn hạng mục trong lưới ẩn rồi bấm `btnLocationSetup`), `diShow` (đưa khung ẩn lên toàn màn hình để dùng hộp thoại cập nhật vị trí), `diWarm` (mở sẵn khung ẩn).
@@ -76,7 +82,7 @@ của DESM có sẵn form/ô đổi mật khẩu (tài khoản ngoài @doosan.co
 Đã sửa: chỉ tính là trang đăng nhập khi có ĐÚNG MỘT ô mật khẩu đang hiển thị; bỏ dò ô mật khẩu trong HTML ở `probeSession`.
 
 ## Nhật ký API nâng cấp (để làm màn tra cứu hàng gọi API trực tiếp)
-- Trang gửi từng request sang app qua message `desmNet`; app ghi vào file `Caches/desm-netlog.jsonl` (NetLogStore ở cuối BrowserView.swift), tối đa ~40 MB.
+- Trang gửi từng request sang app qua message `desmNet`; app ghi vào file `Caches/desm-netlog.jsonl` (`Tools/NetLogStore.swift`), tối đa ~40 MB.
 - API dữ liệu lưu ĐỦ phản hồi (≤400 000 ký tự/request) và body (≤30 000); js/css/ảnh/font chỉ một dòng. Có thêm `ct` (content-type) và `len`.
 - Xuất 3 dạng trong Cài đặt: văn bản, JSON đầy đủ (`desm-api-full.json`), tóm tắt endpoint (`desm-api-summary.txt`: số lần gọi, query/body mẫu, tên trường phản hồi).
 - Quy trình: bật ghi -> thao tác tra cứu hàng -> lưu JSON + tóm tắt -> dựa vào đó viết client gọi thẳng `URLSession` với cookie phiên (xem `probeSession`).
@@ -99,7 +105,7 @@ Hạn chế: bảng TreeGrid cuộn ảo chỉ có các dòng đang hiển thị
 
 ## Giao diện Header/Footer mới (2026-10-27)
 - Header (CSS, `MobileStyles.swift`): gradient `#173eae → #1761e8 → #27a8ed`, chấm + sóng sáng, bo đáy 26px, nút ≡ và ô Language dạng kính mờ 44px; thẻ tab bo 16px, viền trên xanh 4px. Chiều cao iframe tab đã trừ `7.2rem`.
-- Footer (SwiftUI, `BrowserView.swift`): `DesmTabBar` – 5 tab Kiện hàng / Nhập kho / Xuất kho / Báo cáo / Thêm, thẻ trắng nổi trên nền sóng xanh nhạt; luôn hiện khi đang ở DESM (`model.inDesm`). Ngoài DESM (đăng nhập) vẫn dùng thanh điều hướng cũ.
+- Footer (SwiftUI, `UI/DesmTabBar.swift`): `DesmTabBar` – 5 tab Kiện hàng / Nhập kho / Xuất kho / Báo cáo / Thêm, thẻ trắng nổi trên nền sóng xanh nhạt; luôn hiện khi đang ở DESM (`model.inDesm`). Ngoài DESM (đăng nhập) vẫn dùng thanh điều hướng cũ.
 - Tab mở menu DESM bằng JS `__desmOpenMenu(id, pattern)`; ánh xạ tab → mục menu nằm ở `enum DesmTab` (`menuId`, `pattern`). Chỉ `196` (Kiện hàng) là đã xác nhận; 3 tab còn lại đang khớp theo tên: Nhập kho = "Material Receiving", Xuất kho = "Outgoing Control", Báo cáo = "RSI Summary" — CHƯA kiểm chứng trên máy thật. Không khớp thì app mở ngăn kéo menu và báo toast.
 - "Thêm" (`MoreSheet`) chứa các nút cũ: Menu đầy đủ, Quay lại, Tiến, Tải lại, Về DESM, Chụp trang, Chế độ hiển thị, Ẩn/hiện thanh địa chỉ, Cài đặt.
 - Chưa build bằng Xcode trong môi trường tạo ra; JS đã `node --check`, SVG đã kiểm tra hợp lệ.
@@ -114,7 +120,7 @@ Màn chi tiết kiện / khung Cập nhật vị trí là lớp phủ JS, không
 CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, mục menu bo 16px, mục đang chọn nền trắng chữ xanh, lớp mờ phía sau xanh nhạt.
 
 ## Nút SAVE ở màn Detail Item (2026-10-28)
-- `showItemDetail` (BrowserView.swift): SHORT/OVER/DMG/MISSING (+ô số lượng) và Remarks sửa được, nút SAVE gọi `diSave` -> `GET/POST /saveIdsmOsDetailList.do` (phương thức theo ajaxSetup của trang) với `list` = JSON mảng 1 dòng, giống `btnSaveClick` trong `plDetail.js`.
+- `showItemDetail` (JS trong `Scripts/UserScript.swift`): SHORT/OVER/DMG/MISSING (+ô số lượng) và Remarks sửa được, nút SAVE gọi `diSave` -> `GET/POST /saveIdsmOsDetailList.do` (phương thức theo ajaxSetup của trang) với `list` = JSON mảng 1 dòng, giống `btnSaveClick` trong `plDetail.js`.
 - Dòng gửi: PROJECT_NO, TRK_ITEM_NAME, PACKAGE_NO, MATERIAL_CODE, ITEM_SIZE, DESCRIPTION, DRAWING_NO, LOCATION, TAG_NO, UNIT, IN_QTY, MATERIAL, REMARKS, REPORT_SHORT/OVER/DMG/MISSING ("1"/"0" theo số lượng > 0) và REPORT_*_QTY. Lỗi khi `result.error != null`.
 - Chỉ sửa được khi `IS_CONFIRM_MATERIAL = 'Y'` (như lưới web) và đã có `TRK_ITEM_NAME` (openItemDetail luôn nạp lại dòng đầy đủ bằng API). Chặn lưu khi In Q'ty < RSI Q'ty − MRF Q'ty (như web).
 - App mDESM (Android, React Native) dùng API khác: `POST https://api.doosan.mzgcp.net/mobile/custom/saveMobileDetailItemInfo` + Bearer idToken Oracle IDCS; body USER_AD, PROJECT_NO, TRK_ITEM_NAME, PACKAGE_NO, MATERIAL_CODE, REMARKS, REPORT_* ('Y'/'N'). KHÔNG dùng ở đây vì cần OAuth.
@@ -122,7 +128,7 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 
 ## Sửa dòng MRR: Received Date / Visual Check hàng loạt (2026-10-28)
 - Nguồn: `desmMrrCreationPopUp.js`, `plMrr.js` (người dùng gửi). Web POST (ajaxSetup mặc định POST).
-- Thẻ MRR (genericCards, lưới có cột MRR_NO + INSPECTION_DATE_FROM, dòng có MRR_HEADER_ID) mở rộng ra có nút "Sửa dòng MRR" -> `mrrEditor` (BrowserView.swift, ngay trước `genericCards`).
+- Thẻ MRR (genericCards, lưới có cột MRR_NO + INSPECTION_DATE_FROM, dòng có MRR_HEADER_ID) mở rộng ra có nút "Sửa dòng MRR" -> `mrrEditor` (`Scripts/UserScript.swift`, ngay trước `genericCards`).
 - Đọc: `/getDesmMrrInfoList.do {MRR_HEADER_ID}` -> `results.headerList[0]`, `results.lineList`.
 - Chỉ sửa khi STATUS = Incomplete hoặc Rejected (như web: Pre-Confirmed/Confirmed là chỉ xem).
 - Chọn nhiều dòng -> đặt Received Date (yyyy/MM/dd) hoặc Visual Check (Good/Defect) -> SAVE = `/saveDesmMrrSave.do` với TRANS_TYPE='Incomplete', `updateList` = JSON các dòng đã sửa (MRR_LINE_ID, TRK_ITEM_NAME, PACKING_LIST_NO, PACKAGE_NO, DESCRIPTION, SHIPMENT_NO, PACKAGE_TYPE, VISUAL_CHECK, VISUAL_CHECK_DATE, STORAGE_LOCATION, RECEIVED_DATE, REMARKS, ATTACH_GRP_CD, FILE_PATH, QTY) cùng trường header (MRR_HEADER_ID, MRR_NO, MRR_NAME, STATUS, RECEIVED/INSPECTION_DATE_FROM/TO, REMARK, ATTACH_GRP_CD, PREPARED_BY, CHECKED_BY, CONFIRMED_BY, APPROVED_BY='', PROJECT_NO). Lỗi khi `result.error != null`.
@@ -131,26 +137,26 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Đã chạy thử trong Chromium với API giả (payload đúng); CHƯA thử với DESM thật. Định dạng ngày server trả về chưa kiểm chứng (mrrFmt đoán yyyy/MM/dd, yy/MM/dd, timestamp; không parse được thì gửi nguyên chuỗi gốc).
 
 ## Mục "Lịch sử Packing List" (Thêm)
-- Thêm ô "Lịch sử Packing List" vào `MoreSheet` -> mở `PackingHistorySheet` (cuối `BrowserView.swift`), tương ứng khung "Packing List Upload History (Last 3 days)" ở `home.do`.
+- Thêm ô "Lịch sử Packing List" vào `MoreSheet` -> mở `PackingHistorySheet` (`Sheets/PackingHistory.swift`), tương ứng khung "Packing List Upload History (Last 3 days)" ở `home.do`.
 - Dữ liệu: `POST /getInitDefailProject.do` (lấy `SEGMENT1` = mã dự án) rồi `POST /dashboard/getHomeSummary.do` với `PROJECT_NO`, `DAY_TERM` (mặc định 3). Trường dùng: `INVOICE_NO, SHIPMENT_NO, ORGINAL_FILE, RESULT, CREATION_DATE, LAST_UPDATED_BY, ATT_ID`.
 - CHƯA kiểm chứng: `DAY_TERM` = 1/7 có được máy chủ chấp nhận; chưa build bằng Xcode (JS đã qua `node --check`).
 
 ## Mục "RSI chưa đóng / vừa đóng" và "MRF trả hàng" (Thêm)
-- `DesmDocSheet` + `BrowserModel.fetchDocs` (cuối `BrowserView.swift`). API: RSI = `getDesmRsiViewList.do` + `getDesmRsiOutGoingList.do`; MRF = `getMrfSummaryList.do` + `getDesmMrfReturnList.do` (đều POST, xem log 2026-10-28).
+- `DesmDocSheet` + `BrowserModel.fetchDocs` (`Sheets/DocSheet.swift`). API: RSI = `getDesmRsiViewList.do` + `getDesmRsiOutGoingList.do`; MRF = `getMrfSummaryList.do` + `getDesmMrfReturnList.do` (đều POST, xem log 2026-10-28).
 - "Chưa đóng" = tổng BALANCE_QTY (RSI) / MRF_BALANCE_QTY (MRF) > 0. "Vừa đóng" = có HANDOVER_DATE / RETURN_DATE trong N ngày và không còn số lượng còn lại. Đây là QUY ƯỚC suy từ dữ liệu, chưa xác nhận với nghiệp vụ; chưa biết hết giá trị STATUS.
 - Chưa kiểm chứng: máy chủ lọc đúng theo START/END_*_DATE khi để trống số phiếu (đã lọc thêm phía máy khách); RSI chưa đóng chỉ xét phiếu có ngày yêu cầu trong 180 ngày gần nhất.
 - Chi tiết phiếu: bấm một phiếu trong `DesmDocSheet` -> `DesmDocDetailView` (`fetchDocDetail`): tải lại theo số phiếu (không giới hạn ngày), ghép dòng yêu cầu/tồn với ngày bàn giao (RSI: theo Package No + Material Code; MRF: theo MRF_LINE_ID). Dùng đúng các truy vấn đã có trong log nên tham số đã kiểm chứng.
 
-## Tab "Xuất kho" (native): `DesmOutgoingSheet` / `DesmOutgoingVM` (cuối `BrowserView.swift`)
+## Tab "Xuất kho" (native): `DesmOutgoingSheet` / `DesmOutgoingVM` (`Sheets/Outgoing.swift`)
 - Thay cho việc mở màn Outgoing Control (menu 376) của web khi bấm tab Xuất kho (web vẫn mở được qua "Menu đầy đủ").
 - Tìm: `POST /getDesmOutGoingCreationList.do` (popup Creation, tham số theo log 2026-10-28). Lưu: `POST /saveDesmRsiOutSave.do`, body `updateList=<JSON>` gồm `RSI_HEADER_ID, RSI_LINE_ID, HANDOVER_DATE (yyyy/MM/dd), HANDOVER_QTY, MATERIAL_CODE, PROJECT_NO, RECEIVER_NAME` (đọc từ `desmOutGoingCreationPopUp.js`). Thành công khi `error` rỗng/null; `error == "QTY"` kèm `RSI_LINE_ID`, `HANDOVER_AVAILABLE_QTY` là vượt số lượng.
 - WIP Completion (`/material/savePlWipQuantity.do`, cần SHOP_UNIT + SHOP_BLDG) là chức năng khác, chưa làm.
 - CHƯA kiểm chứng: tên trường dữ liệu trả về của danh sách (suy từ cột lưới), và máy chủ có yêu cầu thêm gì cho lệnh lưu. Thử với 1 dòng trước.
 
-## "WIP Completion" (Thêm): `DesmWipSheet` / `DesmWipVM` (cuối `BrowserView.swift`)
+## "WIP Completion" (Thêm): `DesmWipSheet` / `DesmWipVM` (`Sheets/WipCompletion.swift`)
 - Tìm `POST /material/getPlWipCreationList.do` (đã có trong log), lưu `POST /material/savePlWipQuantity.do` với `updateList` JSON `{PROJECT_NO, RSI_HEADER_ID, RSI_LINE_ID, WIP_DATE, WIP_QTY, SHOP_UNIT, SHOP_BLDG, MATERIAL_CODE}` (từ `plWipCreationPopup.js`). Mỗi dòng bắt buộc có ngày, số lượng, C.Unit và BLDG; có nút gán loạt như web. Chưa kiểm chứng lệnh lưu với máy chủ thật.
 
-## Tab "Trả hàng" (MRF) thay tab "Nhập kho": `DesmMrfReturnSheet` / `DesmMrfReturnVM` (cuối `BrowserView.swift`)
+## Tab "Trả hàng" (MRF) thay tab "Nhập kho": `DesmMrfReturnSheet` / `DesmMrfReturnVM` (`Sheets/MrfReturn.swift`)
 - Làm theo popup "Return Creation" (`desmReturnCreationPopUp.js`, menu 479). Tìm: `POST /getDesmReturnCreationList.do` (PROJECT_NO, PACKAGE_NO, MRF_NO, MATERIAL_CODE, ...). Dòng dùng: MRF_NO, MRF_NAME, SUBCONTRACTOR, RETURN_REQ_DATE, MATERIAL_CODE, PACKAGE_NO, DESCRIPTION, REQ_RETURN_QTY, RETURN_AVAILABLE_QTY, MRF_HEADER_ID, MRF_LINE_ID, RSI_LINE_ID.
 - Lưu: `POST /saveDesmMrfReturnSave.do`, `updateList` = JSON `{MRF_HEADER_ID, MRF_LINE_ID, MATERIAL_CODE, PROJECT_NO, RETURN_DATE (yyyy/MM/dd), RETURN_QTY, RSI_LINE_ID}`. `error == "QTY"` kèm `MRF_LINE_ID`, `RETURN_AVAILABLE_QTY` là vượt số lượng.
 - CHƯA kiểm chứng với DESM thật: tên trường danh sách (suy từ cột lưới; log mới chỉ trả rỗng) và lệnh lưu. Thử 1 dòng trước. Ô "MRF Name" lọc phía máy khách.
@@ -160,7 +166,7 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Nút mũi tên tải (có `ATT_ID`) -> `BrowserModel.downloadPackingFile`: dò địa chỉ chứa "download" trong `home.do` + script của nó, thử thêm vài địa chỉ phổ biến với `?ATT_ID=` / `?attId=`, chỉ nhận phản hồi là file (zip `PK` hoặc không phải HTML/JSON). Lưu vào thư mục tạm theo tên `ORGINAL_FILE`, mở bảng chia sẻ (Lưu vào Tệp...).
 - CHƯA kiểm chứng: địa chỉ/tham số tải thật của DESM. Nếu báo "Không tìm được địa chỉ tải file", bật ghi API, bấm tên file ở khung Packing List Upload History trên home.do rồi gửi log để cố định đúng địa chỉ.
 
-## Mục "Hoạt động" (Thêm) — `DesmActivitySheet` / `BrowserModel.fetchActivity` (cuối `BrowserView.swift`)
+## Mục "Hoạt động" (Thêm) — `DesmActivitySheet` / `BrowserModel.fetchActivity` (`Sheets/Activity.swift`)
 - Gom trong 1/3/7 ngày: Packing List tải lên (`fetchPackingHistory`), RSI mới tạo (`getDesmRsiViewList.do`, theo REQUEST_DATE), RSI bàn giao (`getDesmRsiOutGoingList.do`), MRF mới (`getMrfSummaryList.do`, lọc RETURN_REQ_DATE phía máy khách), MRF đã trả (`getDesmMrfReturnList.do`). Đều là truy vấn đã có trong log.
 - Nhãn "MỚI" = mã hoạt động chưa có trong `UserDefaults['desmActivitySeen']` (tối đa 600 mã); lần mở đầu tiên không gắn nhãn. Chỉ cập nhật khi mở màn hình, KHÔNG có thông báo đẩy khi app đóng (cần backend hoặc background fetch).
 - "Mới tạo" suy từ ngày yêu cầu nên chỉ chính xác theo ngày. Chưa có lịch sử cập nhật vị trí (cần ghi API khi mở "Edit Log" của hạng mục: `desmPlDtlEditLogPopUp.do`).
@@ -176,7 +182,7 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - CHƯA kiểm chứng với DESM thật (JS đã `node --check`). Chưa có Edit Log toàn dự án (API cần từng hạng mục), nên mục "Hoạt động" vẫn chỉ có lần đổi vị trí cuối của mỗi kiện.
 - Các endpoint khác thấy trong plDetail.js: `deleteDesmLocation.do` (xoá vị trí, body `deleteList`), `saveIdsmQrCodeList.do`, `desmAttListPopUp.do`.
 
-## Mục "Tra Edit Log" (Thêm) — `DesmEditLogSheet` / `DesmEditLogDetailView` (cuối `BrowserView.swift`)
+## Mục "Tra Edit Log" (Thêm) — `DesmEditLogSheet` / `DesmEditLogDetailView` (`Sheets/EditLog.swift`)
 - Nhập Material Code (KEY1='material') hoặc Package No -> `/getIdsmOsDetailList.do` -> chọn hạng mục -> `/getDesmPlDetailEditLogList.do`; bản ghi mới nhất trước, so với bản cũ hơn để hiện trường thay đổi. Cùng API với nút Edit Log ở màn Detail Item. Chưa kiểm chứng với DESM thật.
 
 ## Đồng bộ giao diện các màn native (2026-10-28)
@@ -185,7 +191,7 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Màn mới nên dùng `.desmSheet()` và `Color.tabBlue` thay vì màu hệ thống.
 
 ## Hộp thoại tự vẽ ở đáy màn hình (2026-10-28)
-- `DesmDialogCard` / `DesmDialogState` / `DesmDialogAction` + `.desmDialog(...)`, `.desmAlert(isPresented:...)` (trước `.desmSheet()` trong `BrowserView.swift`). Thẻ bo 30pt sát đáy (tầm ngón cái tay phải), nút cao 52pt, màu `Color.tabBlue`; chạm nền mờ = chạy nút cancel (hoặc nút duy nhất).
+- `DesmDialogCard` / `DesmDialogState` / `DesmDialogAction` + `.desmDialog(...)`, `.desmAlert(isPresented:...)` (`UI/DesmDialog.swift`). Thẻ bo 30pt sát đáy (tầm ngón cái tay phải), nút cao 52pt, màu `Color.tabBlue`; chạm nền mờ = chạy nút cancel (hoặc nút duy nhất).
 - Thay: hộp "Quét mã" (trước là confirmationDialog), "Không mở được địa chỉ", Kết quả (Cài đặt), lỗi tải xlsx, 3 xác nhận (Xuất kho / WIP / Trả hàng).
 - Alert/confirm JS của trang và hỏi "Lưu tài khoản?" (`WebView.swift`) đi qua `BrowserModel.presentDialog` (hàng đợi `dialogQueue`, hiện ở `BrowserView`). Nếu đang có sheet/camera phủ lên (`useOverlayDialog()` = false) thì dùng `UIAlertController` như cũ để `completionHandler` luôn được gọi. Prompt có ô nhập vẫn dùng alert hệ thống.
 - Chưa build Xcode.
@@ -195,7 +201,7 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Mục đích: khi AI cần xem mã nguồn DESM (.js, .css, HTML) hoặc kết quả một API mà app chưa có, AI đưa link/địa chỉ, người dùng dán vào màn này, bấm Tải rồi chia sẻ file lại.
 - Mỗi dòng một yêu cầu: `/resources/scripts/....js?rv=xxx` hoặc nguyên link https://desm... (GET); `POST /duong/dan.do KEY=VALUE&...` (POST form, có X-Requested-With). Chỉ cùng domain với trang đang mở, dùng phiên đăng nhập hiện có.
 - Một dòng -> file đúng loại (.js/.json/.css/.html/.txt); nhiều dòng -> gộp một file .txt có tiêu đề `===== METHOD url =====` và `HTTP status · content-type · số ký tự`. Dòng bắt đầu bằng # bị bỏ qua. Có danh sách "đã dùng gần đây".
-- Code: `BrowserModel.fetchResource`, `DesmFetched`, `DesmFetchSheet` (cuối BrowserView.swift). CHƯA kiểm chứng trên máy thật. Ô cũ "Tải địa chỉ" trong Cài đặt > Nâng cao vẫn còn.
+- Code: `BrowserModel.fetchResource`, `DesmFetched`, `DesmFetchSheet` (`Tools/DesmFetch.swift`). CHƯA kiểm chứng trên máy thật. Ô cũ "Tải địa chỉ" trong Cài đặt > Nâng cao vẫn còn.
 - Dành cho AI: nếu cần file JS/API của DESM, hãy bảo người dùng mở Thêm > "Tải file / API cho AI", dán đúng dòng cần tải (ví dụ `/resources/scripts/shippingStatus/vesselFinder.js?rv=bJ5Z2O2Jp5`) và gửi file lại.
 
 ## Bản đồ tàu (Thêm > "Bản đồ tàu")
@@ -222,3 +228,17 @@ CSS cuối `MobileStyles.swift`: nền gradient xanh nhạt, bo phải 28px, m�
 - Mở: Package → `__desmFindPkg` như cũ. Packing List → `__desmFindPackingList({pl, open})`: điền `txtPackingListNo`, xoá `txtPackageNo`, Search, đợi lưới ổn định; **đúng 1 kiện thì mở luôn** (`__desmOpenPkg`), nhiều kiện thì toast "n kiện thuộc …" để chọn, không có thì `plempty`. Gọi từ Lịch sử Packing List (không có `open`) giữ hành vi cũ.
 - CHƯA kiểm chứng trên máy thật: Vision có đọc được chữ viết tay trắng trên thép mạ kẽm / chữ stencil xoay dọc hay không (xoay máy cho chữ nằm ngang); toạ độ `boundingBox` dùng để ghép hàng; ô Packing List của DESM có tìm khớp chuỗi `OM4-DE-IS-0016` hay không.
 - Kiểm thử logic phân tích (bản đối chiếu Python) trên dữ liệu 10 ảnh tem: nhãn tiếng Việt, Shipping Mark Hàn/Nhật, Shipping Invoice LS-0006/0001, stencil, viết tay `DE-IS-05-01`, `P2-LS-06-51`, `GTI-TGO-0009`.
+
+## Nhật ký thao tác ghi (2026-10-29) — Thêm > "Nhật ký thao tác ghi"
+- Mọi lệnh LƯU do app gửi đều ghi vào `Application Support/desm-write-audit.json` (tối đa 500 bản ghi, chỉ trên máy): thời điểm, nhãn, địa chỉ, dữ liệu gửi, giá trị trước khi sửa (Detail Item, MRR), phản hồi, kết luận.
+- Trạng thái: `sending` (đã gửi, chưa có kết quả; quá 2 phút hiển thị là "không rõ") · `ok` · `rejected` (máy chủ trả `error`) · `unknown` (đã gửi nhưng không có phản hồi JSON hợp lệ: có thể đã lưu -> kiểm tra trên web trước khi lưu lại) · `notsent`.
+- Bản ghi `begin` được ghi ĐỒNG BỘ trước khi lệnh đi (kể cả khi app bị tắt ngay sau đó); `end` ghi bất đồng bộ.
+- Swift: `BrowserModel.desmWrite(path, updateList:, label:)` tự ghi (Xuất kho, WIP, Trả hàng MRF). JS: `auditBegin/auditEnd` ở đầu `makeScript()`, dùng trong `diSave` (Detail Item) và `mrrPost` (tham số `au`, chỉ truyền cho lệnh lưu MRR) -> message `desmAudit` -> `WriteAuditStore.handle`.
+- Lệnh ghi mới PHẢI đi qua `desmWrite` hoặc gọi `auditBegin/End`. Chưa ghi: `saveDesmLocation.do` (do chính nút của web gửi) — muốn ghi thì dùng chỗ `__desmU` ở `netRecorderSource`.
+- Xuất toàn bộ ra .txt bằng nút chia sẻ trên màn hình nhật ký. Chưa build Xcode; JS đã `node --check`.
+
+## Tách BrowserView.swift + API bằng URLSession (2026-10-29)
+- `BrowserView.swift` (8.207 dòng) đã tách thành ~30 file theo thư mục (bảng §2). Nội dung giữ nguyên; chỉ đổi `private`/`fileprivate` ở mức thành viên thành internal để các extension `BrowserModel` ở file khác dùng được. File project (`project.pbxproj`) đã khai báo nhóm thư mục tương ứng — thêm file mới phải thêm vào Xcode/pbxproj.
+- `desmQuery` giờ chạy bằng **URLSession**, không còn cần trang DESM đang mở: cookie lấy từ kho cookie của WebView, hoặc từ Keychain (`SessionStore.storedCookies()`) khi không có WebView. Hết phiên (HTTP 401 / bị chuyển về `login.do`) → `DesmAPIError.expired`. Lỗi khác → tự lùi về cách cũ (`desmQueryViaWebView`, fetch trong WebView). CHƯA kiểm chứng trên máy thật: máy chủ có chấp nhận request từ URLSession (header Referer/Origin đã gửi) hay không — nếu không, log sẽ thấy "phản hồi không phải JSON" rồi tự dùng đường lui.
+- Async/await: `desmQueryAsync`, `desmProjectNo()`, `fetchDocsAsync`, `fetchDocDetailAsync`, `fetchActivityAsync`, `fetchVesselsAsync`, `fetchShipInfoAsync`. Các hàm callback cũ (`fetchDocs`, `fetchDocDetail`, `fetchActivity`, `fetchVessels`, `fetchShipInfo`, `desmQuery`) vẫn còn như lớp bọc mỏng nên các View không phải sửa. Còn dạng callback: `Outgoing`, `WipCompletion`, `MrfReturn`, `EditLog`, `Notices`, các hàm `callAsyncJavaScript` (PackingHistory, DesmFetch, PageSnapshot…) — chuyển dần khi động tới.
+- Chưa làm: thông báo nền (`BGAppRefreshTask`), unit test `PkgParser`. Nền tảng cho thông báo nền đã sẵn: gọi `desmQueryAsync` không cần WebView (cần thêm đường lấy cookie thuần Keychain khi `webView == nil` — `desmCookies()` đã làm).
