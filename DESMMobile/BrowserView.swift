@@ -3542,6 +3542,7 @@ struct MoreSheet: View {
             },
             Item(symbol: "clock.arrow.circlepath", title: "Lịch sử Packing List", enabled: model.inDesm) { onHistory() },
             Item(symbol: "doc.text.magnifyingglass", title: "RSI chưa đóng / vừa đóng", enabled: model.inDesm) { onDoc(.rsi) },
+            Item(symbol: "chart.bar.xaxis", title: "Tổng hợp RSI", enabled: model.inDesm) { model.openDesmTab(.report) },
             Item(symbol: "arrow.uturn.backward.circle", title: "MRF trả hàng", enabled: model.inDesm) { onDoc(.mrf) },
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
             Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },
@@ -4197,6 +4198,31 @@ struct SettingsView: View {
                 Text("Mã nguồn trang")
             } footer: {
                 Text("Mở màn hình cần xem (Package, Hạng mục chi tiết…) trước. HTML có thể chứa thông tin nội bộ, hãy kiểm tra trước khi chia sẻ.")
+            }
+
+            Section {
+                Button("Thu thập mẫu API (loginStatus + chuỗi giao diện)…") {
+                    let specs = ["GET /loginStatus.do",
+                                 "POST /getMessageProperties.do",
+                                 "GET /getMessageProperties.do"]
+                    var out = "DESM — mẫu API (loginStatus, getMessageProperties)\n"
+                    func next(_ i: Int) {
+                        if i >= specs.count { shareText(out, prefix: "desm-api-sample", ext: "txt"); return }
+                        model.fetchResource(specs[i]) { r, err in
+                            out += "\n===== \(specs[i]) =====\n"
+                            if let r = r {
+                                let body = r.text.count > 200_000 ? String(r.text.prefix(200_000)) + "\n…(cắt bớt)" : r.text
+                                out += "HTTP \(r.status) · \(r.contentType) · \(r.text.count) ký tự\n\(body)\n"
+                            } else { out += "LỖI: \(err)\n" }
+                            next(i + 1)
+                        }
+                    }
+                    next(0)
+                }
+            } header: {
+                Text("Thu thập mẫu API")
+            } footer: {
+                Text("Cần đang ở DESM và đã đăng nhập. Gọi /loginStatus.do và /getMessageProperties.do rồi lưu một file để gửi lại cho tác giả. Nội dung phản hồi có thể chứa thông tin nội bộ, hãy xem trước khi chia sẻ.")
             }
 
             Section {
