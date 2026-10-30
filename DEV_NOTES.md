@@ -99,8 +99,7 @@ Nâng cao > "Ghi từng màn hình". Script `snapRecorderSource` (trang chính) 
 (path, HTML đã làm sạch, cây cấu trúc, danh sách + nội dung CSS). `SnapStore` lưu trong Caches/desm-snap; nút "Lưu tất cả màn hình" xuất 1 file: mục lục -> từng màn -> toàn bộ CSS.
 
 ## Chụp ảnh toàn trang
-Nút "Chụp" ở thanh dưới -> `BrowserModel.captureFullPage()`: mở rộng khung cuộn/iframe, `createPDF` toàn bộ contentSize, vẽ PNG (≤12 000 px, ≤80 triệu điểm), khôi phục trang, mở bảng chia sẻ (Lưu vào Ảnh / Tệp). Quá dài -> xuất PDF.
-Hạn chế: bảng TreeGrid cuộn ảo chỉ có các dòng đang hiển thị.
+Nút "Chụp" -> `BrowserModel.captureFullPage()` (`Tools/PageSnapshot.swift`): ảnh THẬT của trang, không vẽ lại/dàn lại. Dò vùng cuộn chính (`shotProbeJS`: cuộn cả trang hoặc khung cuộn/iframe cùng domain), cuộn từng đoạn bằng chiều cao vùng nhìn thấy, mỗi đoạn `WKWebView.takeSnapshot`, rồi ghép (phần trên từ ảnh đầu, phần dưới từ ảnh cuối, tối đa 80 đoạn). Fixed/sticky trong vùng cuộn tạm ẩn ở các đoạn sau. Trả lại vị trí cuộn. Không sửa CSS trang. TreeGrid cuộn ảo đủ dòng vì cuộn thật. Ảnh PNG (≤16 000 px cao, ≤60 triệu điểm) -> bảng chia sẻ. CHƯA thử máy thật (2026-10-30): thay cách createPDF + lớp `html.desm-shot` cũ (đã xoá).
 
 ## Vuốt mép màn hình để quay lại/tiến
 `WebView.swift`: hai `UIScreenEdgePanGestureRecognizer` (trái = goBack, phải = goForward; ngưỡng 60 pt hoặc vận tốc 500) thay cho `allowsBackForwardNavigationGestures` (đã tắt để không chuyển hai lần). Công tắc: Cài đặt > Hiển thị (`desmEdgeSwipe`, mặc định bật).
@@ -433,5 +432,14 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 ## Sửa: mở menu khác khi đang xem chi tiết kiện bị lớp phủ che (2026-10-30)
 - `__desmOpenMenu` (không phải chế độ soft) đóng hết lớp phủ chi tiết trước khi bấm menu: bấm nút Back của khung ẩn / màn con / #desmDetail (tối đa 8 lớp), rồi gỡ #desmDetail, .desm-sub và class desm-detail-open. Áp cho mọi nút mở menu (footer, RSI Summary, MRF Summary). CHƯA thử máy thật.
 
-## Chụp trang: danh sách thẻ + chi tiết kiện chụp đủ chiều dài (2026-10-30)
+## [ĐÃ THAY bằng cuộn-và-ghép takeSnapshot, xem mục "Chụp ảnh toàn trang"] Chụp trang createPDF (2026-10-30)
 - 'Chụp trang' (Thêm / nút Chụp) đã chụp toàn trang qua createPDF. Thêm lớp `html.desm-shot` (đặt/gỡ trong shotExpandJS/shotRestoreJS) với CSS ở MobileStyles: #desmCards/#desmGenCards không cuộn bên trong, .desm-detail chuyển absolute + thân không cuộn; chờ dàn lại 0,9 giây. CHƯA thử máy thật.
+- Sửa tiếp: ảnh chụp vẫn bằng kích thước màn hình vì html/body/#wrapper/#content-wrapper giữ chiều cao cố định. Lớp desm-shot giờ ép các khung này height:auto + overflow visible; thêm `shotMeasureJS` đo đáy phần tử thấp nhất (bỏ fixed) và lấy max với contentSize làm vùng createPDF. CHƯA thử máy thật.
+
+## AI riêng: chọn model tự do + tự nối lại khi mất kết nối (2026-10-30)
+- Đầu khung chat có 2 nút: nhà AI (menu) và model (mở `AIModelPickerView` trong `AISettingsView.swift`): gõ tên model bất kỳ, chọn "Mặc định của nhà", hoặc chạm danh sách dò từ nhà đó (cache `desmAIModels.<nhà>` ở `AIStore.cachedModels`, tự dò lần đầu nếu có khoá).
+- Thứ tự tự khôi phục mỗi câu hỏi (`AIChatSession.send`): (1) đứt mạng/HTTP 5xx → thử lại chính nhà đó 1 lần sau 1,5 giây (`AIStore.isTransient`, cờ `AIError.network`); (2) model sai/không có (404, hoặc 400/403 nhắc "model") → thử model mặc định của nhà (`AIStore.isBadModel`); (3) vẫn lỗi → sang nhà kế tiếp có khoá (như cũ, công tắc "Tự chuyển sang AI khác khi lỗi", nhà lỗi nghỉ 5 phút). Câu trả lời ghi rõ đã đổi model/nhà. CHƯA build/thử máy thật.
+
+## AI riêng: tự dò model dùng được (2026-10-30)
+- Màn nhà AI > "Tự dò model dùng được" (cũng chạy khi bấm Return ở ô khoá nếu chưa có danh sách) và trong khung chọn model ở chat: `AIClient.listModels` → `rankChatModels` (bỏ embedding/ảnh/tiếng/video…, ưu tiên flash/mini/haiku/"latest") → `probe` thử tối đa 10 model, 3 cái cùng lúc, mỗi cái 1 câu "OK" có kèm công cụ giả (400/404/422 thì thử lại không công cụ → "✓ không công cụ"; 429 → "hết hạn mức"). Kết quả hiện ✓ + ms, lưu `desmAIOk.<nhà>`; giữ model đang chọn nếu chạy được, không thì chọn model tốt nhất gọi được công cụ. Tốn tối đa ~10-20 lượt gọi nhỏ mỗi lần dò. CHƯA build/thử máy thật. (Ghi chú cũ nhắc `pickWorkingModel` nhưng hàm đó không có trong code.)
+- Thứ tự ưu tiên dò/hiển thị model (`rankChatModels`): bậc 0 chat nhanh "latest" → 1 chat nhanh ổn định → 2 chat lớn ổn định → 3 lite → 4 preview/exp/thinking; cùng bậc thì phiên bản cao trước (so số tự nhiên). Model không phải chat bị loại khỏi dò và xếp cuối danh sách. Danh sách ở màn nhà AI và khung chọn model cũng theo thứ tự này (✓ lên đầu).

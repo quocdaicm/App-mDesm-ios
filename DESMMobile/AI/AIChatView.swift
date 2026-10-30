@@ -157,23 +157,55 @@ final class AIChatSession: ObservableObject {
                 }
                 var msgs = me.plainMsgs(kind: p.kind)
                 msgs.append(.user(q))
-                do {
-                    let ans = try await AIAgent.run(
-                        provider: p, key: key, model: modelName,
-                        system: AIChatSession.systemPrompt(tools: useTools),
-                        history: msgs, tools: useTools ? DesmAITools.toolDefs : [],
-                        exec: { (name: String, args: [String: Any]) async -> String in
-                            return await model.runDesmTool(name, args)
-                        },
-                        status: { (s: String) in
-                            Task { @MainActor in me.status = s }
-                        },
-                        budget: i == 0 ? 180 : 90)
-                    if Task.isCancelled { return }
+                // Thử model đã chọn; nếu model sai/không có thì thử model mặc định của nhà; đứt mạng/5xx thì thử lại 1 lần; sau đó mới sang nhà khác
+                var tryModels = [modelName]
+                if !p.defaultModel.isEmpty && p.defaultModel != modelName { tryModels.append(p.defaultModel) }
+                var mi = 0
+                var retried = false
+                var lastErr: Error? = nil
+                var answer: String? = nil
+                while mi < tryModels.count && answer == nil {
+                    do {
+                        answer = try await AIAgent.run(
+                            provider: p, key: key, model: tryModels[mi],
+                            system: AIChatSession.systemPrompt(tools: useTools),
+                            history: msgs, tools: useTools ? DesmAITools.toolDefs : [],
+                            exec: { (name: String, args: [String: Any]) async -> String in
+                                return await model.runDesmTool(name, args)
+                            },
+                            status: { (s: String) in
+                                Task { @MainActor in me.status = s }
+                            },
+                            budget: i == 0 ? 180 : 90)
+                    } catch {
+                        if error is CancellationError || Task.isCancelled { return }
+                        lastErr = error
+                        if AIStore.isTransient(error) && !retried {
+                            retried = true
+                            AILog.add("↻ " + p.name + " mất kết nối tạm thời → thử lại sau 1,5 giây")
+                            me.status = "Mất kết nối " + p.name + ", đang thử lại…"
+                            try? await Task.sleep(nanoseconds: 1_500_000_000)
+                            continue
+                        }
+                        if AIStore.isBadModel(error) && mi + 1 < tryModels.count {
+                            AILog.add("↪︎ Model " + tryModels[mi] + " lỗi → thử model mặc định " + tryModels[mi + 1])
+                            me.status = "Model " + tryModels[mi] + " không dùng được, thử " + tryModels[mi + 1] + "…"
+                            mi += 1
+                            continue
+                        }
+                        break
+                    }
+                }
+                if Task.isCancelled { return }
+                if let ans = answer {
                     AIStore.clearFailed(p.id)
                     var shown = ans
-                    if !failures.isEmpty {
-                        shown = "↪︎ Đã tự chuyển sang " + p.name + " (" + failures.joined(separator: "; ") + ").\n\n" + ans
+                    var notes = failures
+                    if mi > 0 { notes.append("model " + tryModels[0] + " không dùng được, đã dùng " + tryModels[mi]) }
+                    if !notes.isEmpty {
+                        let head: String = failures.isEmpty ? "Đã tự đổi model" : "Đã tự chuyển sang " + p.name
+                        let detail: String = notes.joined(separator: "; ")
+                        shown = "↪︎ " + head + " (" + detail + ").\n\n" + ans
                     }
                     me.append(AIChatLine(isUser: false, text: shown))
                     me.turns.append(AIPlainTurn(isUser: true, text: q))
@@ -182,13 +214,11 @@ final class AIChatSession: ObservableObject {
                     me.busy = false
                     me.status = ""
                     return
-                } catch {
-                    if error is CancellationError || Task.isCancelled { return }
-                    AIStore.markFailed(p.id)
-                    let why = String(error.localizedDescription.prefix(110))
-                    failures.append(p.name + " lỗi: " + why)
-                    AILog.add("✗ " + p.name + " thất bại: " + why + (i + 1 < cands.count ? " → thử nhà kế tiếp" : ""))
                 }
+                AIStore.markFailed(p.id)
+                let why = String((lastErr?.localizedDescription ?? "không rõ").prefix(110))
+                failures.append(p.name + " lỗi: " + why)
+                AILog.add("✗ " + p.name + " thất bại: " + why + (i + 1 < cands.count ? " → thử nhà kế tiếp" : ""))
             }
             me.append(AIChatLine(isUser: false, text: "⚠️ " + (failures.count > 1 ? "Tất cả nhà AI đều lỗi:\n" : "") + failures.joined(separator: "\n")))
             me.busy = false
@@ -207,6 +237,7 @@ struct AIChatView: View {
     @State private var input = ""
     @State private var tick = 0     // ép vẽ lại khi đổi nhà AI
     @State private var showLog = false
+    @State private var showModels = false
 
     private let blue1 = AITheme.blue1
     private let blue2 = AITheme.blue2
@@ -246,6 +277,9 @@ struct AIChatView: View {
         .sheet(isPresented: $showLog) {
             AILogView()
         }
+        .sheet(isPresented: $showModels, onDismiss: { tick += 1 }) {
+            AIModelPickerView(provider: AIStore.active)
+        }
     }
 
     private func scrollEnd(_ proxy: ScrollViewProxy) {
@@ -258,13 +292,20 @@ struct AIChatView: View {
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Trợ lý AI").font(.title3.bold()).foregroundColor(.white)
-                Menu {
-                    ForEach(AIProvider.all) { q in
-                        Button((AIStore.key(q.id).isEmpty ? "○ " : "● ") + q.name) { AIStore.activeID = q.id; tick += 1 }
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(AIProvider.all) { q in
+                            Button((AIStore.key(q.id).isEmpty ? "○ " : "● ") + q.name) { AIStore.activeID = q.id; tick += 1 }
+                        }
+                    } label: {
+                        Text(p.name + " ▾").font(.footnote.bold()).foregroundColor(Color.white.opacity(0.95)).lineLimit(1)
                     }
-                } label: {
-                    Text(p.name + " · " + AIStore.model(p) + (AIStore.toolsOn ? " · tra DESM" : "") + "  ▾")
-                        .font(.footnote).foregroundColor(Color.white.opacity(0.9)).lineLimit(1)
+                    Button { showModels = true } label: {
+                        Text(AIStore.model(p) + (AIStore.toolsOn ? " · tra DESM" : "") + " ▾")
+                            .font(.footnote).foregroundColor(Color.white.opacity(0.9)).lineLimit(1)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.white.opacity(0.18)).cornerRadius(8)
+                    }
                 }
             }
             Spacer()

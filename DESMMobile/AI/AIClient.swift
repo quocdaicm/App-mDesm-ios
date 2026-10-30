@@ -6,6 +6,7 @@ import Foundation
 struct AIError: LocalizedError {
     let message: String
     var status: Int = 0
+    var network: Bool = false      // lỗi đường truyền (mất mạng, đứt kết nối…) → đáng thử lại một lần
     var errorDescription: String? { return message }
 }
 
@@ -88,7 +89,7 @@ enum AIClient {
                 throw AIError(message: "Nhà AI không trả lời trong " + String(Int(timeout)) + " giây (quá thời gian chờ). Thử lại hoặc chọn model nhanh hơn.")
             }
             AILog.add("✗ " + label + " lỗi mạng sau " + secs + "s: " + error.localizedDescription)
-            throw AIError(message: "Lỗi mạng: \(error.localizedDescription)")
+            throw AIError(message: "Lỗi mạng: \(error.localizedDescription)", network: true)
         }
         let data = result.0
         let resp = result.1
@@ -289,5 +290,97 @@ enum AIClient {
         } catch {
             return "Lỗi: " + error.localizedDescription
         }
+    }
+}
+
+// MARK: - Tự dò model dùng được
+struct AIModelCheck {
+    enum State { case ok, okNoTools, limited, failed }
+    var model: String
+    var state: State
+    var ms: Int
+    var note: String
+    var usable: Bool { return state == .ok || state == .okNoTools }
+}
+
+extension AIClient {
+    /// Bỏ model không phải chat văn bản (embedding, ảnh, tiếng nói, video…) và xếp model nhanh/"latest" lên trước.
+    static func rankChatModels(_ p: AIProvider, _ models: [String]) -> [String] {
+        let bad = ["embed", "tts", "image", "imagen", "veo", "audio", "aqa", "whisper", "moderation", "dall", "transcribe",
+                   "realtime", "robotics", "computer-use", "live", "guard", "rerank", "search", "diffusion", "lyria", "gemma-3n"]
+        let good = models.filter { (m: String) -> Bool in
+            let l = m.lowercased()
+            return !bad.contains(where: { l.contains($0) })
+        }
+        // Bậc ưu tiên (nhỏ = thử trước): 0 chat nhanh bản "latest" · 1 chat nhanh ổn định · 2 chat lớn ổn định · 3 bản lite · 4 preview/thử nghiệm/suy luận
+        func tier(_ m: String) -> Int {
+            let l = m.lowercased()
+            if l.contains("preview") || l.contains("exp") || l.contains("thinking") || l.contains("reason") || l.contains("-r1") { return 4 }
+            if l.contains("lite") || l.contains("nano") { return 3 }
+            let fast = ["flash", "mini", "haiku", "small", "versatile", "instant", "chat"].contains(where: { l.contains($0) })
+            if fast && l.contains("latest") { return 0 }
+            if fast { return 1 }
+            return 2
+        }
+        // Cùng bậc: số phiên bản cao hơn trước (2.5 trước 2.0), so số tự nhiên chứ không so chữ
+        return good.sorted { (a: String, b: String) -> Bool in
+            let ta = tier(a), tb = tier(b)
+            if ta != tb { return ta < tb }
+            return a.compare(b, options: [.numeric, .caseInsensitive]) == .orderedDescending
+        }
+    }
+
+    /// Thử một model bằng một câu ngắn (có kèm công cụ giả; nếu bị từ chối thì thử lại không công cụ).
+    static func checkModel(_ p: AIProvider, key: String, model m: String) async -> AIModelCheck {
+        let t0 = Date()
+        func ms() -> Int { return Int(Date().timeIntervalSince(t0) * 1000) }
+        let tool = AIToolDef(name: "ping", description: "Kiểm tra kết nối",
+                             schema: ["type": "object", "properties": ["q": ["type": "string"] as [String: Any]] as [String: Any]])
+        let msgs: [AIMsg] = [.user("Trả lời đúng một từ: OK")]
+        do {
+            _ = try await chat(p, key: key, model: m, system: "Trả lời cực ngắn.", msgs: msgs, tools: [tool], timeout: 25)
+            return AIModelCheck(model: m, state: .ok, ms: ms(), note: "")
+        } catch let e as AIError {
+            if e.status == 429 { return AIModelCheck(model: m, state: .limited, ms: ms(), note: "hết hạn mức / quá nhiều yêu cầu") }
+            if e.status == 400 || e.status == 404 || e.status == 422 {
+                do {
+                    _ = try await chat(p, key: key, model: m, system: "Trả lời cực ngắn.", msgs: msgs, tools: [], timeout: 25)
+                    return AIModelCheck(model: m, state: .okNoTools, ms: ms(), note: "chạy được nhưng không gọi công cụ")
+                } catch let e2 as AIError {
+                    return AIModelCheck(model: m, state: e2.status == 429 ? .limited : .failed, ms: ms(), note: String(e2.message.prefix(80)))
+                } catch {
+                    return AIModelCheck(model: m, state: .failed, ms: ms(), note: "lỗi")
+                }
+            }
+            return AIModelCheck(model: m, state: .failed, ms: ms(), note: String(e.message.prefix(80)))
+        } catch {
+            return AIModelCheck(model: m, state: .failed, ms: ms(), note: "lỗi")
+        }
+    }
+
+    /// Thử tối đa `limit` model (ưu tiên `first` rồi model nhanh), 3 model cùng lúc để không vượt hạn mức. Gọi `progress` sau mỗi kết quả.
+    static func probe(_ p: AIProvider, key: String, models: [String], first: [String] = [], limit: Int = 10,
+                      progress: @escaping @MainActor (AIModelCheck, Int, Int) -> Void) async -> [AIModelCheck] {
+        var cands: [String] = []
+        for m in first + rankChatModels(p, models) where !m.isEmpty && !cands.contains(m) { cands.append(m) }
+        cands = Array(cands.prefix(limit))
+        var results: [AIModelCheck] = []
+        await withTaskGroup(of: AIModelCheck.self) { (g: inout TaskGroup<AIModelCheck>) in
+            var next = 0
+            while next < min(3, cands.count) {
+                let m = cands[next]; next += 1
+                g.addTask { await AIClient.checkModel(p, key: key, model: m) }
+            }
+            while let r = await g.next() {
+                results.append(r)
+                await progress(r, results.count, cands.count)
+                if Task.isCancelled { g.cancelAll(); break }
+                if next < cands.count {
+                    let m = cands[next]; next += 1
+                    g.addTask { await AIClient.checkModel(p, key: key, model: m) }
+                }
+            }
+        }
+        return results
     }
 }

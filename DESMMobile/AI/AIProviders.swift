@@ -146,6 +146,38 @@ enum AIStore {
         return m.isEmpty ? p.defaultModel : m
     }
 
+    /// Danh sách model đã dò gần nhất của từng nhà (để chọn nhanh trong khung chat mà không phải dò lại).
+    static func cachedModels(_ id: String) -> [String] {
+        return UserDefaults.standard.stringArray(forKey: "desmAIModels." + id) ?? []
+    }
+
+    static func setCachedModels(_ l: [String], for id: String) {
+        UserDefaults.standard.set(l, forKey: "desmAIModels." + id)
+    }
+
+    /// Model đã kiểm tra là chạy được (kết quả lần dò gần nhất), để hiện dấu ✓ trong danh sách.
+    static func okModels(_ id: String) -> [String] {
+        return UserDefaults.standard.stringArray(forKey: "desmAIOk." + id) ?? []
+    }
+
+    static func setOkModels(_ l: [String], for id: String) {
+        UserDefaults.standard.set(l, forKey: "desmAIOk." + id)
+    }
+
+    /// Lỗi tạm thời (đứt mạng, máy chủ 5xx) → thử lại chính nhà đó một lần trước khi chuyển nhà khác.
+    static func isTransient(_ e: Error) -> Bool {
+        guard let a = e as? AIError else { return false }
+        return a.network || a.status == 500 || a.status == 502 || a.status == 503 || a.status == 504
+    }
+
+    /// Model không tồn tại / không được phép dùng → thử model mặc định của nhà trước khi chuyển nhà khác.
+    static func isBadModel(_ e: Error) -> Bool {
+        guard let a = e as? AIError else { return false }
+        if a.status == 404 { return true }
+        if a.status == 400 || a.status == 403 { return a.message.lowercased().contains("model") }
+        return false
+    }
+
     static func setModel(_ m: String, for id: String) {
         UserDefaults.standard.set(m.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "desmAIModel." + id)
     }

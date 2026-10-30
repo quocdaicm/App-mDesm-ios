@@ -284,11 +284,6 @@ enum MobileStyles {
       position:absolute!important; left:-200vw!important; top:0!important; width:100vw!important;
       height:70vh!important; overflow:hidden!important; pointer-events:none!important;
     }
-    /* Chụp toàn trang (PageSnapshot.swift): bỏ khung cuộn bên trong để ảnh có đủ danh sách thẻ / chi tiết kiện */
-    html.desm-shot #desmCards, html.desm-shot #desmGenCards { height:auto!important; max-height:none!important; overflow:visible!important; }
-    html.desm-shot .desm-gbar { position:static!important; }
-    html.desm-shot .desm-detail { position:absolute!important; bottom:auto!important; height:auto!important; min-height:100vh; }
-    html.desm-shot .desm-detail-body { overflow:visible!important; height:auto!important; max-height:none!important; flex:none!important; }
     html.desm-mobile-mode .desm-cards-empty { padding:24px 12px; text-align:center; color:#6b7686; font-size:14px; }
     html.desm-mobile-mode #desmCards {
       overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; background:#f3f6fb; max-width:100%;
