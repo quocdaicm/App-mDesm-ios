@@ -284,6 +284,11 @@ enum MobileStyles {
       position:absolute!important; left:-200vw!important; top:0!important; width:100vw!important;
       height:70vh!important; overflow:hidden!important; pointer-events:none!important;
     }
+    /* Chụp toàn trang (PageSnapshot.swift): bỏ khung cuộn bên trong để ảnh có đủ danh sách thẻ / chi tiết kiện */
+    html.desm-shot #desmCards, html.desm-shot #desmGenCards { height:auto!important; max-height:none!important; overflow:visible!important; }
+    html.desm-shot .desm-gbar { position:static!important; }
+    html.desm-shot .desm-detail { position:absolute!important; bottom:auto!important; height:auto!important; min-height:100vh; }
+    html.desm-shot .desm-detail-body { overflow:visible!important; height:auto!important; max-height:none!important; flex:none!important; }
     html.desm-mobile-mode .desm-cards-empty { padding:24px 12px; text-align:center; color:#6b7686; font-size:14px; }
     html.desm-mobile-mode #desmCards {
       overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; background:#f3f6fb; max-width:100%;
@@ -321,6 +326,12 @@ enum MobileStyles {
     html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gq,
     html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gcnt,
     html.desm-mobile-mode #desmGenCards.desm-gtable .desm-glist { display:none!important; }
+    html.desm-mobile-mode .desm-gbar { flex-wrap:wrap; }
+    html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gbar2 { display:none!important; }
+    html.desm-mobile-mode .desm-gbar2 { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+    html.desm-mobile-mode .desm-gq2 { flex:1 1 42%; }
+    html.desm-mobile-mode .desm-gchip { flex:0 0 auto; height:32px; padding:0 12px; border:1px solid #cbd8f0; border-radius:16px; background:#fff; color:#35507a; font-weight:600; font-size:13px; }
+    html.desm-mobile-mode .desm-gchip.desm-on { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
     html.desm-mobile-mode .desm-gbar {
       display:flex; align-items:center; gap:8px; margin:0 0 8px; padding:8px 10px; background:#fff;
       border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:sticky; top:0; z-index:5;

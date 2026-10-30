@@ -1761,7 +1761,7 @@ extension BrowserModel {
               var list = el('div', 'desm-glist');
               bar.appendChild(all); bar.appendChild(q); bar.appendChild(cnt); bar.appendChild(tg);
               box.appendChild(bar); box.appendChild(list);
-              box.__all = all; box.__q = q; box.__cnt = cnt; box.__tg = tg; box.__list = list;
+              box.__all = all; box.__q = q; box.__cnt = cnt; box.__tg = tg; box.__list = list; box.__bar = bar;
               q.addEventListener('input', function() { box.__sig = null; genericCards(doc); });
               tg.addEventListener('click', function(e) {
                 e.preventDefault(); e.stopPropagation();
@@ -1822,6 +1822,43 @@ extension BrowserModel {
               titleCol = pkgCol;
               if (locCol) restCols.unshift(locCol);
             }
+            // Bộ lọc riêng: Tất cả / Chưa đóng / Đã đóng (theo số lượng còn lại, hoặc STATUS nếu không có cột còn lại) + ô tìm theo số phiếu / tên phiếu
+            var F = box.__f = box.__f || { mode: 'all', no: '', name: '' };
+            var fNo = null, fName = null, fBal = null;
+            for (var kc in G.Cols) {
+              if (!fNo && /^(RSI|MRR|MRF|MPR)_?(NO|NUMBER)$/i.test(kc)) fNo = kc;
+              else if (!fName && /^(RSI|MRR|MRF|MPR)_?NAME$/i.test(kc)) fName = kc;
+              else if (/BALANCE_?QTY$/i.test(kc) && (!fBal || kc === 'BALANCE_QTY')) fBal = kc;
+            }
+            var fSt = statCols.length ? statCols[0].c : null;
+            if (!box.__bar2 && (fNo || fName || fBal || fSt)) {
+              var b2 = el('div', 'desm-gbar2'); box.__bar2 = b2;
+              if (fBal || fSt) {
+                [['all', 'Tất cả'], ['open', 'Chưa đóng'], ['closed', 'Đã đóng']].forEach(function(m) {
+                  var cb = el('button', 'desm-gchip', m[1]); cb.type = 'button'; cb.setAttribute('data-m', m[0]);
+                  cb.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); F.mode = m[0]; box.__sig = null; genericCards(doc); });
+                  b2.appendChild(cb);
+                });
+              }
+              function mk(key, fld, fallback) {
+                if (!key) return;
+                var ht = ''; try { ht = gridText(G, G.Rows.Header, key); } catch (e) {}
+                var inp = doc.createElement('input'); inp.type = 'search'; inp.className = 'desm-gq desm-gq2'; inp.placeholder = 'Tìm ' + (ht || fallback);
+                inp.addEventListener('input', function() { F[fld] = inp.value; box.__sig = null; genericCards(doc); });
+                b2.appendChild(inp);
+              }
+              mk(fNo, 'no', 'số phiếu'); mk(fName, 'name', 'tên phiếu');
+              box.__bar.appendChild(b2);
+            }
+            if (box.__bar2) [].forEach.call(box.__bar2.querySelectorAll('.desm-gchip'), function(cb) { cb.classList.toggle('desm-on', cb.getAttribute('data-m') === F.mode); });
+            function isClosedRow(r) {
+              if (fBal) {
+                var t = String(gridText(G, r, fBal) || '').replace(/,/g, '').trim(), v = parseFloat(t);
+                if (!isNaN(v)) return v <= 0;
+              }
+              return fSt ? /close|complet|cancel|done|finish|reject/i.test(String(gridText(G, r, fSt) || '')) : false;
+            }
+            var fNoV = pkgNorm(F.no), fNameV = pkgNorm(F.name);
             var rows = diRows(G), qv = pkgNorm(box.__q.value);
             var items = rows.map(function(r) {
               var o = { r: r, id: r.id, sel: isSel(r), all: cols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }) };
@@ -1832,10 +1869,16 @@ extension BrowserModel {
               o.rest = restCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
               o.hay = pkgNorm(o.all.map(function(d) { return d.v; }).join(' '));
               return o;
-            }).filter(function(o) { return !qv || o.hay.indexOf(qv) >= 0; });
+            }).filter(function(o) {
+              if (qv && o.hay.indexOf(qv) < 0) return false;
+              if (fNoV && pkgNorm(gridText(G, o.r, fNo)).indexOf(fNoV) < 0) return false;
+              if (fNameV && pkgNorm(gridText(G, o.r, fName)).indexOf(fNameV) < 0) return false;
+              if (F.mode !== 'all' && (fBal || fSt)) { var cl = isClosedRow(o.r); if ((F.mode === 'closed') !== cl) return false; }
+              return true;
+            });
             box.__rowsShown = items.map(function(o) { return o.r; });
             var nSel = items.filter(function(o) { return o.sel; }).length;
-            var sig = items.map(function(o) { return [o.id, o.sel ? 1 : 0, o.title, o.stat, o.all.length, o.all.map(function(d) { return d.v; }).join('~'), win.__desmGenOpen[o.id] ? 1 : 0].join('|'); }).join('\n') + '#' + qv;
+            var sig = items.map(function(o) { return [o.id, o.sel ? 1 : 0, o.title, o.stat, o.all.length, o.all.map(function(d) { return d.v; }).join('~'), win.__desmGenOpen[o.id] ? 1 : 0].join('|'); }).join('\n') + '#' + qv + '#' + F.mode + '#' + fNoV + '#' + fNameV;
             if (box.__sig === sig) return;
             box.__sig = sig;
             box.__all.checked = items.length > 0 && nSel === items.length;
@@ -2274,6 +2317,19 @@ extension BrowserModel {
             if (soft) {
               try { if (pkgDoc(document, 0)) return 1; } catch (e) {}
               if (w.__desmSoftOpened && Date.now() - w.__desmSoftOpened < 20000) return 1;
+            }
+            // Mở mục menu khác khi đang xem chi tiết kiện / màn con / khung ẩn phủ toàn màn hình: đóng hết lớp phủ trước, nếu không màn mới nằm dưới lớp phủ
+            if (!soft) {
+              try {
+                for (var n = 0; n < 8; n++) {
+                  var bks = D.querySelectorAll('.desm-sub .desm-detail-back'), bk = D.querySelector('#desmDetailFrameBar .desm-detail-back') ||
+                    (bks.length ? bks[bks.length - 1] : null) || D.querySelector('#desmDetail .desm-detail-back');
+                  if (!bk) break;
+                  bk.click();
+                }
+                [].forEach.call(D.querySelectorAll('.desm-sub, #desmDetail'), function(x) { if (x.parentNode) x.parentNode.removeChild(x); });
+                D.documentElement.classList.remove('desm-detail-open');
+              } catch (e) {}
             }
             var rx = null; try { rx = pattern ? new RegExp(pattern, 'i') : null; } catch (e) {}
             function txt(x) { return ((x && x.textContent) || '').replace(/\s+/g, ' ').trim(); }

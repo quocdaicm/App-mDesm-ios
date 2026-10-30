@@ -423,3 +423,15 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 
 ## Thẻ có Package No.: hiện kiện + vị trí trước, chạm để mở thông tin kiện (2026-10-30)
 - `genericCards`: nếu lưới có cột PACKAGE_NO thì tiêu đề thẻ = Package No., dòng đầu = Location (STORAGE_LOCATION/LOCATION), các cột khác sau. Chạm thẻ gọi `__desmFindPkg({term, key, open:true})` (cùng đường với quét QR): chuyển sang màn Package, tìm kiện, đúng 1 kiện thì mở chi tiết. Nút 'Xem tất cả cột của dòng này' mở `genDetail` như cũ. Thẻ không có PACKAGE_NO giữ hành vi cũ. JS đã node --check, CHƯA thử máy thật.
+
+## Thẻ RSI/MRF...: nút lọc Chưa đóng / Đã đóng + ô tìm số phiếu, tên phiếu (2026-10-30)
+- `genericCards` thêm hàng `.desm-gbar2` trong thanh trên: 3 nút Tất cả / Chưa đóng / Đã đóng (đóng = cột `*BALANCE_QTY` <= 0; không có thì dựa STATUS chứa close/complet/cancel/done/finish/reject) và ô 'Tìm <tên cột>' cho cột `RSI_NO|MRR_NO|MRF_NO|MPR_NO` và `*_NAME`. Lọc phía máy khách trên các dòng đã Search, so khớp bỏ ký tự đặc biệt/hoa thường. Trạng thái ở `box.__f`. Quy ước 'đóng' theo từng dòng kiện (CHƯA xác nhận với nghiệp vụ DESM); CHƯA thử máy thật.
+
+## Trang Thêm: đổi 'Tổng hợp RSI' -> 'RSI Summary', thêm 'MRF Summary' (2026-10-30)
+- `BrowserModel.openDesmMenu(title:pattern:)` mở mục menu theo tên (MRF Summary = menu id 1696 (xác nhận từ dump 2026-10-30; RSI Summary = 436, MRF Summary mở được và đã hiện giao diện thẻ). Không thấy thì mở ngăn kéo menu + toast.
+
+## Sửa: mở menu khác khi đang xem chi tiết kiện bị lớp phủ che (2026-10-30)
+- `__desmOpenMenu` (không phải chế độ soft) đóng hết lớp phủ chi tiết trước khi bấm menu: bấm nút Back của khung ẩn / màn con / #desmDetail (tối đa 8 lớp), rồi gỡ #desmDetail, .desm-sub và class desm-detail-open. Áp cho mọi nút mở menu (footer, RSI Summary, MRF Summary). CHƯA thử máy thật.
+
+## Chụp trang: danh sách thẻ + chi tiết kiện chụp đủ chiều dài (2026-10-30)
+- 'Chụp trang' (Thêm / nút Chụp) đã chụp toàn trang qua createPDF. Thêm lớp `html.desm-shot` (đặt/gỡ trong shotExpandJS/shotRestoreJS) với CSS ở MobileStyles: #desmCards/#desmGenCards không cuộn bên trong, .desm-detail chuyển absolute + thân không cuộn; chờ dàn lại 0,9 giây. CHƯA thử máy thật.

@@ -33,7 +33,10 @@ struct MoreSheet: View {
             Item(symbol: "house.fill", title: "Về DESM") { model.home() },
             Item(symbol: "clock.arrow.circlepath", title: "Lịch sử Packing List", enabled: model.inDesm) { onHistory() },
             Item(symbol: "doc.text.magnifyingglass", title: "RSI chưa đóng / vừa đóng", enabled: model.inDesm) { onDoc(.rsi) },
-            Item(symbol: "chart.bar.xaxis", title: "Tổng hợp RSI", enabled: model.inDesm) { model.openDesmTab(.report) },
+            Item(symbol: "chart.bar.xaxis", title: "RSI Summary", enabled: model.inDesm) { model.openDesmTab(.report) },
+            Item(symbol: "chart.bar.doc.horizontal", title: "MRF Summary", enabled: model.inDesm) {
+                model.openDesmMenu(id: "1696", title: "MRF Summary", pattern: "^(MRF ?Summary|Tổng hợp ?MRF)$")
+            },
             Item(symbol: "arrow.uturn.backward.circle", title: "MRF trả hàng", enabled: model.inDesm) { onDoc(.mrf) },
             Item(symbol: "hammer", title: "WIP Completion", enabled: model.inDesm) { onWip() },
             Item(symbol: "bell.badge", title: "Hoạt động", enabled: model.inDesm) { onActivity() },

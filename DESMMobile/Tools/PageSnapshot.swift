@@ -12,12 +12,14 @@ import UserNotifications
 // Cách làm: (1) tạm mở rộng các khung cuộn bên trong trang (iframe, vùng overflow auto/scroll/hidden) cho hiện hết chiều cao;
 // (2) WKWebView.createPDF với vùng = toàn bộ nội dung cuộn; (3) vẽ trang PDF thành ảnh PNG (giới hạn ~12 000 px cạnh dài, ~80 triệu điểm ảnh);
 // (4) khôi phục kiểu cũ của trang. Trang quá dài để thành PNG thì xuất PDF. Lưu ý: bảng TreeGrid chỉ vẽ các dòng đang hiển thị (cuộn ảo)
-// nên các dòng chưa cuộn tới có thể không có trong ảnh.
+// nên các dòng chưa cuộn tới có thể không có trong ảnh (dạng thẻ thì đủ hết). Thêm lớp html.desm-shot để danh sách thẻ và màn chi tiết kiện hiện hết chiều cao.
 extension BrowserModel {
     static let shotExpandJS = #"""
     (function() {
-      var saved = window.__desmShotSaved = [];
+      var saved = window.__desmShotSaved = [], sdocs = window.__desmShotDocs = [];
       function fix(doc, lvl) {
+        // Lớp 'desm-shot' (MobileStyles.swift): danh sách thẻ + màn chi tiết kiện dàn hết chiều cao thay vì cuộn bên trong
+        try { doc.documentElement.classList.add('desm-shot'); sdocs.push(doc); } catch (e) {}
         var els = doc.querySelectorAll('*'), n = Math.min(els.length, 20000);
         for (var i = 0; i < n; i++) {
           var e = els[i], t = e.tagName;
@@ -60,6 +62,9 @@ extension BrowserModel {
       var s = window.__desmShotSaved || [];
       for (var i = s.length - 1; i >= 0; i--) { try { s[i][0].style.cssText = s[i][1]; } catch (e) {} }
       window.__desmShotSaved = [];
+      var d = window.__desmShotDocs || [];
+      for (var k = 0; k < d.length; k++) { try { d[k].documentElement.classList.remove('desm-shot'); } catch (e) {} }
+      window.__desmShotDocs = [];
     })();
     """#
 
@@ -68,7 +73,7 @@ extension BrowserModel {
         showToast("Đang chụp toàn trang…")
         wv.evaluateJavaScript(BrowserModel.shotExpandJS) { _, _ in
             // chờ trang dàn lại bố cục sau khi mở rộng
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                 let size = wv.scrollView.contentSize
                 guard size.width > 1, size.height > 1 else {
                     wv.evaluateJavaScript(BrowserModel.shotRestoreJS, completionHandler: nil)

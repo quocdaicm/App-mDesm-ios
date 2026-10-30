@@ -177,6 +177,18 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    /// Mở một mục menu DESM theo tên (không có id đã biết). Không tìm thấy thì mở ngăn kéo menu để người dùng tự chọn.
+    func openDesmMenu(id: String? = nil, title: String, pattern: String) {
+        let idArg = id.map { "'\($0)'" } ?? "null"
+        let js = "window.__desmOpenMenu ? window.__desmOpenMenu(\(idArg), '\(pattern)') : 0;"
+        webView?.evaluateJavaScript(js) { [weak self] r, _ in
+            if (r as? Int ?? 0) == 0 {
+                self?.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
+                self?.showToast("Chọn mục “\(title)” trong menu")
+            }
+        }
+    }
+
     func showToast(_ text: String) {
         toast = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
