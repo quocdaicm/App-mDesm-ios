@@ -478,3 +478,17 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 - Đã bỏ tự tìm khi mở tab Xuất kho (`DesmOutgoingSheet`). `MrfReturn.swift` (getDesmReturnCreationList) chưa đo, vẫn tự tìm.
 - Trường của getDesmOutGoingCreationList đã xác nhận: RSI_HEADER_ID, RSI_LINE_ID, REQ_QTY, HANDOVER_QTY, HANDOVER_AVAILABLE_QTY, HANDOVER_DATE, STATUS, REQUEST_DATE, PENDING, PACKING_LIST_NO... KHÔNG có Remarks/Requested/Checked/Approved by.
 - Log/dump ngày này chỉ là màn Outgoing Control (MENU_SEQ=376). Màn có Remarks + Check/Reject là "RSI Creation" (MENU_SEQ=336) — cần ghi API ở màn đó.
+
+## Tự ẩn khung lọc khi cuộn (thẻ RSI/MRF/MRR/MPR Summary) — 2026-10-30
+- `genericCards`: lắng nghe cuộn trên `#desmGenCards`; cuộn xuống (>6px) thêm class `desm-bar-hide` -> `.desm-gbar` trượt lên khỏi khung (CSS ở `MobileStyles.swift`); cuộn lên >6px, về đầu danh sách (<=8px), hoặc đang focus ô lọc thì hiện lại. Chế độ Bảng không ẩn.
+- Chưa thử trên máy thật.
+- (cập nhật) Cuộn xuống trong danh sách thẻ giờ ẩn cả các phần tử đứng trước danh sách trong trang (hàng Bộ lọc/Search, Package No., Cột/Number of Page): `setHidden` trong `genericCards` thêm class `desm-tophide` (display:none) rồi tính lại chiều cao `#desmGenCards`. Không ẩn nếu còn quá ít chỗ cuộn hoặc đang focus ô nhập bên trong phần bị ẩn. Hiện lại khi cuộn lên >8px, về đầu danh sách, hoặc focus ô lọc. Phần chrome ngoài iframe (menu, Language, tab Package/RSI Summary) không bị ẩn.
+- Thẻ RSI/MRF Summary (`genericCards`): bỏ nút "Xem tất cả cột của dòng này"; chạm thẻ (trừ ô vuông chọn bên trái) mở thẳng RSI Detail / MRF Detail (`genDetail`), không còn nhảy sang màn Package. Các lưới khác có Package No. (không phải RSI/MRF) giữ cách cũ.
+
+## Sửa nhận diện thẻ RSI/MRF Summary (2026-10-30)
+- Lỗi: thẻ MRF Summary vẫn hiện nút "Xem tất cả cột của dòng này" vì `genericCards` chỉ ẩn khi lưới có đúng cột `MRF_NO`/`RSI_NO`, trong khi ô lọc nhận cột theo regex `(RSI|MRF)_?(NO|NUMBER)`.
+- Thêm `docKey(G, 'MRF'|'RSI')` (cùng regex) dùng cho `isRM` trong `genericCards` và `genDetail` (nhận diện MRF/RSI Detail, lấy số phiếu từ đúng cột; không còn lấy nhầm Package No. làm số phiếu). Chưa thử máy thật.
+
+## Ô 'Tìm MRF/RSI No.' / 'Tìm ... Name' (2026-10-30)
+- Lọc giờ so khớp theo giá trị cột ĐANG HIỂN THỊ trên thẻ (header/khoá dạng `<MRF|RSI|MRR|MPR> No/Number/Name`) + khoá cột thật + giá trị thô; so cả dạng bỏ ký tự đặc biệt và dạng chữ thường nguyên văn. Ô nghe thêm keyup/change/search (iOS). Tên phiếu lấy cùng loại với số phiếu (MRF No ↔ MRF Name).
+- Hai ô chuyển ra thành hàng `.desm-gsearch` chèn ngay dưới hàng chứa ô Packing List No / Package No của trang (dò input theo placeholder/id/name chứa package|packing, leo lên tới hàng chứa nó; không thấy thì chèn ngay trên danh sách thẻ). Căn lề và lấy bo góc/cỡ chữ/viền từ ô native; CSS ở `MobileStyles.swift` (`.desm-gsearch`, nền trắng, cao 44px, chữ 16px chống zoom iOS). Hàng này bị ẩn cùng các phần phía trên khi cuộn xuống. Chips Tất cả/Chưa đóng/Đã đóng vẫn ở thanh dính. Chưa thử máy thật.

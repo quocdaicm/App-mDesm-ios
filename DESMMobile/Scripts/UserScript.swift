@@ -1992,6 +1992,13 @@ extension BrowserModel {
             load();
           }
           // Màn chi tiết của một dòng RSI / MRF / MRR / MPR: chạm thẻ để vào. Hiện toàn bộ cột của dòng; RSI và MRF nạp thêm các dòng bên trong.
+          // Tìm khoá cột số phiếu thật (MRF_NO / MRF_NUMBER / RSINO ...) của lưới; trả '' nếu không có
+          function docKey(G, kind) {
+            if (!G || !G.Cols) return '';
+            var re = new RegExp('^' + kind + '_?(NO|NUMBER)$', 'i');
+            for (var k in G.Cols) { if (re.test(k)) return k; }
+            return '';
+          }
           function genDetail(win, doc, G, it) {
             function el(tag, cls, text) { var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
             function dash(v) { return v == null || v === '' ? '-' : v; }
@@ -2001,7 +2008,8 @@ extension BrowserModel {
               return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
             }
             function same(a, b) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b == null ? '' : b).replace(/\s+/g, ' ').trim(); }
-            var isMrf = !!(G.Cols.MRF_NO), isRsi = !isMrf && !!(G.Cols.RSI_NO), isMrr = !!(G.Cols.MRR_NO);
+            var mrfKey = docKey(G, 'MRF'), rsiKey = docKey(G, 'RSI');
+            var isMrf = !!mrfKey, isRsi = !isMrf && !!rsiKey, isMrr = !!(G.Cols.MRR_NO);
             var title = isMrf ? 'MRF Detail' : (isRsi ? 'RSI Detail' : (isMrr ? 'MRR Detail' : 'Chi tiết'));
             var ov = el('div', 'desm-detail desm-sub'), tp = el('div', 'desm-detail-top');
             var bk = el('button', 'desm-detail-back', '‹  Quay lại'); bk.type = 'button';
@@ -2031,10 +2039,10 @@ extension BrowserModel {
               var hh = {}; for (var hk in it.r) hh[hk] = it.r[hk]; hh.PROJECT_NO = proj;
               function alive() { return !!ov.parentNode; }
               if (isRsi) {
-                hh.RSI_NO = it.r.RSI_NO != null && it.r.RSI_NO !== '' ? it.r.RSI_NO : it.title;
+                var rv = it.r[rsiKey]; if (rv == null || rv === '') rv = it.r.RSI_NO; hh.RSI_NO = rv != null && rv !== '' ? rv : it.title;
                 rsiTickList(win, doc, doc, body, hh, alive, true);
               } else {
-                hh.MRF_NO = it.r.MRF_NO != null && it.r.MRF_NO !== '' ? it.r.MRF_NO : it.title;
+                var mv = it.r[mrfKey]; if (mv == null || mv === '') mv = it.r.MRF_NO; hh.MRF_NO = mv != null && mv !== '' ? mv : it.title;
                 mrfTickList(win, doc, doc, body, hh, '', alive);
               }
             }
@@ -2074,6 +2082,53 @@ extension BrowserModel {
               box.appendChild(bar); box.appendChild(list);
               box.__all = all; box.__q = q; box.__cnt = cnt; box.__tg = tg; box.__list = list; box.__bar = bar;
               q.addEventListener('input', function() { box.__sig = null; genericCards(doc); });
+              // Vuốt lên xem danh sách thì tự ẩn TOÀN BỘ phần phía trên danh sách (hàng Bộ lọc/Search, ô Package No., hàng Cột/Number of Page)
+              // và khung lọc dính (checkbox + lọc nhanh + Tất cả/Chưa đóng/Đã đóng + ô tìm) để thẻ chiếm cả màn hình.
+              // Vuốt xuống một chút, về đầu danh sách, hoặc đang nhập vào ô lọc thì hiện lại.
+              var lastY = 0;
+              function topEls() {
+                var out = [], n = box;
+                while (n && n !== doc.body && n !== doc.documentElement) {
+                  for (var p = n.previousElementSibling; p; p = p.previousElementSibling) {
+                    if (/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(p.tagName) || !p.offsetHeight) continue;
+                    var ps = ''; try { ps = win.getComputedStyle(p).position; } catch (e) {}
+                    if (ps === 'fixed' || ps === 'absolute') continue;
+                    out.push(p);
+                  }
+                  n = n.parentElement;
+                }
+                return out;
+              }
+              function fitBox() {
+                try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
+              }
+              function setHidden(on) {
+                if (on === !!box.__tophid) return;
+                if (on) {
+                  var els = topEls(), total = 0;
+                  els.forEach(function(x) { total += x.offsetHeight; });
+                  // Chỉ ẩn khi sau khi ẩn danh sách vẫn còn đủ chỗ cuộn (tránh nhấp nháy ẩn/hiện liên tục)
+                  if (box.scrollHeight - box.clientHeight < total + bar.offsetHeight + 140) return;
+                  if (els.some(function(x) { return x.contains(doc.activeElement); })) return;
+                  els.forEach(function(x) { x.classList.add('desm-tophide'); });
+                  box.__tophid = els;
+                  box.classList.add('desm-bar-hide');
+                } else {
+                  (box.__tophid || []).forEach(function(x) { x.classList.remove('desm-tophide'); });
+                  box.__tophid = null;
+                  box.classList.remove('desm-bar-hide');
+                }
+                fitBox();
+              }
+              box.__setHidden = setHidden;
+              box.addEventListener('scroll', function() {
+                var y = box.scrollTop, dy = y - lastY; lastY = y;
+                if (box.classList.contains('desm-gtable')) { setHidden(false); return; }
+                if (bar.contains(doc.activeElement) || y <= 8) { setHidden(false); return; }
+                if (dy > 8) setHidden(true);
+                else if (dy < -8) setHidden(false);
+              }, { passive: true });
+              bar.addEventListener('focusin', function() { setHidden(false); });
               tg.addEventListener('click', function(e) {
                 e.preventDefault(); e.stopPropagation();
                 win.__desmGen = !win.__desmGen;
@@ -2090,6 +2145,7 @@ extension BrowserModel {
             host.classList.toggle('desm-grid-off', on);
             box.classList.toggle('desm-gtable', !on);
             if (!on) {
+              if (box.__setHidden) box.__setHidden(false);
               box.style.height = '';
               if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
               box.__sig = 'off'; return;
@@ -2141,8 +2197,23 @@ extension BrowserModel {
               else if (!fName && /^(RSI|MRR|MRF|MPR)_?NAME$/i.test(kc)) fName = kc;
               else if (/BALANCE_?QTY$/i.test(kc) && (!fBal || kc === 'BALANCE_QTY')) fBal = kc;
             }
+            if (fNo) {
+              var fKind = (fNo.match(/^(RSI|MRR|MRF|MPR)/i) || [''])[0];
+              var fNameRe = new RegExp('^' + fKind + '_?NAME$', 'i');
+              fName = null;
+              for (var kn in G.Cols) { if (fNameRe.test(kn)) { fName = kn; break; } }
+            }
             var fSt = statCols.length ? statCols[0].c : null;
-            if (!box.__bar2 && (fNo || fName || fBal || fSt)) {
+            // Cột dùng để lọc: theo cột đang HIỂN THỊ trên thẻ (đúng giá trị người dùng thấy) + khoá cột thật
+            function colIdx(re) {
+              var out = [];
+              cols.forEach(function(x, i) { if (re.test(x.h) || re.test(x.c)) out.push(i); });
+              return out;
+            }
+            var fKindRe = fNo ? (fNo.match(/^(RSI|MRR|MRF|MPR)/i) || [''])[0] : '';
+            var noIdx = fKindRe ? colIdx(new RegExp('^' + fKindRe + '[\\s_]*(NO|NUMBER|#)\\.?$', 'i')) : [];
+            var nameIdx = fKindRe ? colIdx(new RegExp('^' + fKindRe + '[\\s_]*NAME$', 'i')) : [];
+            if (!box.__bar2 && (fBal || fSt)) {
               var b2 = el('div', 'desm-gbar2'); box.__bar2 = b2;
               if (fBal || fSt) {
                 [['all', 'Tất cả'], ['open', 'Chưa đóng'], ['closed', 'Đã đóng']].forEach(function(m) {
@@ -2151,15 +2222,66 @@ extension BrowserModel {
                   b2.appendChild(cb);
                 });
               }
+              box.__bar.appendChild(b2);
+            }
+            // Hai ô 'Tìm MRF No.' / 'Tìm MRF Name' nằm trong trang, ngay dưới hàng Packing List No / Package No
+            if ((fNo || fName) && !box.__srow) {
+              var sr = el('div', 'desm-gsearch'); box.__srow = sr;
               function mk(key, fld, fallback) {
                 if (!key) return;
                 var ht = ''; try { ht = gridText(G, G.Rows.Header, key); } catch (e) {}
-                var inp = doc.createElement('input'); inp.type = 'search'; inp.className = 'desm-gq desm-gq2'; inp.placeholder = 'Tìm ' + (ht || fallback);
-                inp.addEventListener('input', function() { F[fld] = inp.value; box.__sig = null; genericCards(doc); });
-                b2.appendChild(inp);
+                var inp = doc.createElement('input'); inp.type = 'search'; inp.className = 'desm-gq2';
+                inp.placeholder = 'Tìm ' + (ht || fallback);
+                inp.setAttribute('autocomplete', 'off'); inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('enterkeyhint', 'search');
+                inp.value = F[fld] || '';
+                var go = function() { if (F[fld] === inp.value) return; F[fld] = inp.value; box.__sig = null; genericCards(doc); };
+                ['input', 'keyup', 'change', 'search'].forEach(function(ev) { inp.addEventListener(ev, go); });
+                inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { try { inp.blur(); } catch (e2) {} } });
+                sr.appendChild(inp);
               }
               mk(fNo, 'no', 'số phiếu'); mk(fName, 'name', 'tên phiếu');
-              box.__bar.appendChild(b2);
+              sr.addEventListener('focusin', function() { if (box.__setHidden) box.__setHidden(false); });
+            }
+            if (box.__srow) {
+              var sr2 = box.__srow;
+              sr2.style.display = on ? '' : 'none';
+              if (on && !sr2.isConnected) {
+                // Tìm hàng chứa ô Packing List No / Package No của trang để chèn ngay dưới
+                var cand = [].filter.call(doc.querySelectorAll('input:not([type=hidden]):not([type=checkbox])'), function(i) {
+                  return !box.contains(i) && !sr2.contains(i) && i.offsetHeight > 0 && /package|packing/i.test((i.placeholder || '') + ' ' + (i.id || '') + ' ' + (i.name || ''));
+                });
+                var anchor = cand.length ? cand[cand.length - 1] : null, row = null;
+                if (anchor) {
+                  var ah = anchor.getBoundingClientRect().height || 30;
+                  row = anchor;
+                  while (row.parentElement && row.parentElement !== doc.body) {
+                    var pe = row.parentElement;
+                    if (pe.contains(box) || pe.querySelector('#toolbar') || pe.getBoundingClientRect().height > ah * 1.8) break;
+                    row = pe;
+                  }
+                }
+                if (row && row.parentNode) {
+                  row.parentNode.insertBefore(sr2, row.nextSibling);
+                  // Căn lề + kiểu chữ theo ô native để nhìn đều
+                  var fitRow = function() {
+                    try {
+                      var rr = sr2.getBoundingClientRect(), ins = cand.map(function(i) { return i.getBoundingClientRect(); });
+                      var l = Math.min.apply(null, ins.map(function(x) { return x.left; })), r = Math.max.apply(null, ins.map(function(x) { return x.right; }));
+                      sr2.style.paddingLeft = Math.max(0, l - rr.left) + 'px';
+                      sr2.style.paddingRight = Math.max(0, rr.right - r) + 'px';
+                      var cs = win.getComputedStyle(anchor);
+                      [].forEach.call(sr2.querySelectorAll('input'), function(i) {
+                        i.style.height = cs.height; i.style.borderRadius = cs.borderRadius; i.style.fontSize = cs.fontSize;
+                        i.style.borderColor = cs.borderTopColor; i.style.borderWidth = cs.borderTopWidth; i.style.borderStyle = cs.borderTopStyle === 'none' ? 'solid' : cs.borderTopStyle;
+                        i.style.boxShadow = cs.boxShadow; i.style.background = '#fff'; i.style.color = cs.color; i.style.fontFamily = cs.fontFamily;
+                      });
+                    } catch (e) {}
+                  };
+                  fitRow(); win.setTimeout(fitRow, 400);
+                } else {
+                  box.parentNode.insertBefore(sr2, box);
+                }
+              }
             }
             if (box.__bar2) [].forEach.call(box.__bar2.querySelectorAll('.desm-gchip'), function(cb) { cb.classList.toggle('desm-on', cb.getAttribute('data-m') === F.mode); });
             function isClosedRow(r) {
@@ -2170,6 +2292,14 @@ extension BrowserModel {
               return fSt ? /close|complet|cancel|done|finish|reject/i.test(String(gridText(G, r, fSt) || '')) : false;
             }
             var fNoV = pkgNorm(F.no), fNameV = pkgNorm(F.name);
+            function hit(o, idxs, key, raw, norm) {
+              var rawT = String(raw || '').trim().toLowerCase();
+              if (!norm && !rawT) return true;
+              var t = idxs.map(function(i) { return o.all[i] ? o.all[i].v : ''; }).join(' ');
+              if (key) { t += ' ' + gridText(G, o.r, key); var rv = o.r[key]; if (rv != null) t += ' ' + String(rv).replace(/<[^>]*>/g, ''); }
+              if (norm && pkgNorm(t).indexOf(norm) >= 0) return true;
+              return !!rawT && t.toLowerCase().indexOf(rawT) >= 0;
+            }
             var rows = diRows(G), qv = pkgNorm(box.__q.value);
             var items = rows.map(function(r) {
               var o = { r: r, id: r.id, sel: isSel(r), all: cols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }) };
@@ -2182,8 +2312,8 @@ extension BrowserModel {
               return o;
             }).filter(function(o) {
               if (qv && o.hay.indexOf(qv) < 0) return false;
-              if (fNoV && pkgNorm(gridText(G, o.r, fNo)).indexOf(fNoV) < 0) return false;
-              if (fNameV && pkgNorm(gridText(G, o.r, fName)).indexOf(fNameV) < 0) return false;
+              if (!hit(o, noIdx, fNo, F.no, fNoV)) return false;
+              if (!hit(o, nameIdx, fName, F.name, fNameV)) return false;
               if (F.mode !== 'all' && (fBal || fSt)) { var cl = isClosedRow(o.r); if ((F.mode === 'closed') !== cl) return false; }
               return true;
             });
@@ -2239,7 +2369,9 @@ extension BrowserModel {
                 });
                 more.appendChild(eb);
               }
-              if (it.pkg) {
+              // RSI / MRF Summary: chạm vào thông tin thẻ là mở RSI / MRF Detail, không cần nút riêng
+              var isRM = !!(docKey(G, 'MRF') || docKey(G, 'RSI'));
+              if (it.pkg && !isRM) {
                 var ac = el('button', 'desm-detail-list desm-gall-cols', 'Xem tất cả cột của dòng này'); ac.type = 'button';
                 ac.addEventListener('click', function(ev) { ev.stopPropagation(); genDetail(win, doc, G, it); });
                 card.appendChild(ac);
@@ -2250,7 +2382,7 @@ extension BrowserModel {
                   try { G.SelectRow(it.r, it.sel ? 0 : 1); } catch (e) {}
                 } else {
                   // Chạm thẻ = vào xem chi tiết bên trong (chạm ô vuông bên trái = chọn dòng)
-                  if (it.pkg && win.__desmFindPkg && !(ev.target && ev.target.classList && ev.target.classList.contains('desm-gall-cols'))) {
+                  if (it.pkg && !isRM && win.__desmFindPkg && !(ev.target && ev.target.classList && ev.target.classList.contains('desm-gall-cols'))) {
                     // Có Package No.: mở thông tin kiện (chuyển sang màn Package, tìm đúng kiện rồi mở chi tiết)
                     win.__desmFindPkg({ term: it.pkg, key: it.pkg, open: true });
                     return;
