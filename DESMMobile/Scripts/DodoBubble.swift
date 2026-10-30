@@ -11,6 +11,7 @@ extension BrowserModel {
         let vi = dodoVi ? "true" : "false"
         let slow = dodoSlow ? "true" : "false"
         let data = dodoData ? "true" : "false"
+        let auto = dodoAuto ? "true" : "false"
         let engine = aiEngine == "ai" ? "ai" : "dodo"
         let hosts = (try? JSONSerialization.data(withJSONObject: BrowserModel.allowedHosts, options: []))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
@@ -22,6 +23,7 @@ extension BrowserModel {
           w.__desmDodoVi = \#(vi);
           w.__desmDodoSlow = \#(slow);
           w.__desmDodoData = \#(data);
+          w.__desmDodoAuto = \#(auto);
           w.__desmDodoEngine = '\#(engine)';
           if (w.__desmDodo) { try { w.__desmDodo.sync(); } catch (e) {} return; }
           var host = (location.hostname || '').toLowerCase();
@@ -117,10 +119,7 @@ extension BrowserModel {
             (document.head || document.documentElement).appendChild(s);
           }
           function openChat() {
-            if (w.__desmDodoEngine === 'ai') {
-              try { w.webkit.messageHandlers.desmAI.postMessage({}); } catch (e) { toast('Không mở được khung AI.'); }
-              return;
-            }
+            if (w.__desmDodoEngine === 'ai') { try { w.webkit.messageHandlers.desmAI.postMessage({}); } catch (e) {} return; }   // AI riêng: mở khung chat native
             ensure(function() { try { w.Dodo.open(); } catch (e) {} sync(); });
           }
           function mount() {
@@ -200,6 +199,7 @@ extension BrowserModel {
           // Đọc CẢ TRANG cho AI riêng: mọi khung đang hiện (kể cả iframe), toàn bộ dòng của các lưới TreeGrid đã tải (kể cả cột đang ẩn), ô nhập đang có giá trị, rồi văn bản trang. Cắt theo giới hạn ký tự.
           function pageText(limit) {
             limit = limit || 40000;
+            var T0 = Date.now();   // ngân sách thời gian: đọc quá 2,5 giây thì dừng (đọc lưới lớn từng làm trang web đứng)
             var out = [], used = 0, cut0 = false;
             function push(s) { if (used >= limit) { cut0 = true; return false; } if (used + s.length > limit) { s = s.slice(0, limit - used); cut0 = true; } out.push(s); used += s.length + 1; return true; }
             function clean(v, n) { v = String(v == null ? '' : v).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/[\r\n|]+/g, ' ').replace(/\s+/g, ' ').trim(); return v.length > n ? v.slice(0, n) : v; }
@@ -225,6 +225,7 @@ extension BrowserModel {
                   if (!push('[' + tag + ' — Lưới ' + n + ': ' + rows.length + ' dòng đã tải]')) return n;
                   if (!push(heads.join(' | '))) return n;
                   for (var k = 0; k < rows.length; k++) {
+                    if (Date.now() - T0 > 2500) { cut0 = true; return n; }
                     var cells = []; for (var j = 0; j < cols.length; j++) cells.push(gtext(G, rows[k], cols[j]));
                     if (!push(cells.join(' | '))) return n;
                   }
@@ -236,7 +237,7 @@ extension BrowserModel {
               var res = [];
               try {
                 var els = doc.querySelectorAll('input,select,textarea');
-                for (var i = 0; i < els.length && res.length < 60; i++) {
+                for (var i = 0; i < els.length && i < 400 && res.length < 60; i++) {
                   var el = els[i], ty = (el.type || '').toLowerCase();
                   if (ty === 'password' || ty === 'hidden' || ty === 'button' || ty === 'submit' || ty === 'file' || ty === 'checkbox' || ty === 'radio') continue;
                   if (!el.getClientRects || el.getClientRects().length === 0) continue;
@@ -314,21 +315,84 @@ extension BrowserModel {
             }
             return pageText(limit);
           }
-          // Gắn vào câu hỏi gửi Dodo: dữ liệu màn hình (nếu bật) + yêu cầu trả lời tiếng Việt (nếu bật). Khung chat vẫn hiện nguyên câu bạn gõ.
+          // Gắn vào câu hỏi gửi Dodo: dữ liệu tra trực tiếp từ DESM theo số kiện trong câu hỏi (nếu bật) + dữ liệu màn hình (nếu bật) + yêu cầu trả lời tiếng Việt (nếu bật).
+          // Khung chat vẫn hiện nguyên câu bạn gõ. Chỉ ĐỌC (getInitDefailProject / getIdsmOsSummaryList / getIdsmOsDetailList); dữ liệu chỉ đi tới máy chủ DESM.
           try {
             var f0 = w.fetch;
+            w.__desmF0 = f0;
+            var post = function(path, body, ms) {
+              var p = f0.call(w, path, { method: 'POST', credentials: 'include', cache: 'no-store',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }, body: body })
+                .then(function(r) { return r.text(); })
+                .then(function(t) { var s = JSON.parse(t); var x = s && s.results; return Array.isArray(x) ? x : (x && Array.isArray(x.list) ? x.list : []); });
+              return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, ms || 8000); })]);
+            };
+            var enc = encodeURIComponent;
+            var pkgNums = function(q) {
+              var out = [], re = /(^|[^\d-])(\d{3,5}-\d{2,4})(?![\d-])/g, m;
+              while ((m = re.exec(q)) && out.length < 3) { if (out.indexOf(m[2]) < 0) out.push(m[2]); re.lastIndex = m.index + m[0].length - 1; }
+              return out;
+            };
+            var projNo = function() {
+              if (w.__desmProj) return Promise.resolve(w.__desmProj);
+              return post('/getInitDefailProject.do', '', 6000).then(function(rows) {
+                var no = rows[0] && rows[0].SEGMENT1; if (!no) throw new Error('no project');
+                w.__desmProj = String(no); return w.__desmProj;
+              });
+            };
+            var kv = function(r) {
+              var a = [];
+              for (var k in r) { var v = r[k]; if (v == null || v === '' || typeof v === 'object') continue; a.push(k + ': ' + String(v).replace(/\s+/g, ' ').trim()); }
+              return a.join('; ').slice(0, 1500);
+            };
+            var ITEM_F = ['MATERIAL_CODE', 'DESCRIPTION', 'LOCATION', 'UNIT', 'IN_QTY', 'REMAIN_QTY', 'REMARKS'];
+            var itemLine = function(r) {
+              var a = [];
+              ITEM_F.forEach(function(k) { var v = r[k]; if (v != null && v !== '') a.push(k + '=' + String(v).replace(/\s+/g, ' ').trim()); });
+              return '- ' + a.join(' | ');
+            };
+            var autoData = function(q, nums) {
+              var wantItems = /hạng mục|hang muc|item|vật tư|vat tu|material|chi tiết|chi tiet|detail|số lượng|so luong|qty|thiếu|thieu|short|over|dmg|hư|mất|missing/i.test(q);
+              return projNo().then(function(P) {
+                return Promise.all(nums.map(function(pkg) {
+                  var sBody = 'PROJECT_NO=' + enc(P) + '&PACKAGE_LIST_NO=&PACKAGE_NO=' + enc(pkg) + '&DESCRIPTION=&IS_CONFIRM_MATERIAL=&RECEIPTED=&ATTRIBUTE10=&REMARK=&VENDOR=&LOCATION=&START_RECEIPT_DATE=&END_RECEIPT_DATE=&MRR_VISUAL_CHECK=All&MRR_RECEIVED=&START_MRR_RECEIVED_DATE=&END_MRR_RECEIVED_DATE=&CUSTOMS_YN=&MIR_CATEGORY=&PACKAGE_STATUS=';
+                  var dBody = 'PAGE_NUM=1&PAGE_CNT=300&PROJECT_NO=' + enc(P) + '&PACKAGE_LIST_NO=&PACKAGE_NO=' + enc(pkg) + '&DESCRIPTION=&DRAWING_NO=&TAG_NO=&QTY_TYPE=rsi&QTY=&KEY1=&VALUE1=&LOCATION=&SEQUENCE=&VENDOR=&ATTRIBUTE10=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS=';
+                  var ps = post('/getIdsmOsSummaryList.do', sBody).then(function(rows) {
+                    var hit = rows.filter(function(r) { return String(r.PACKAGE_NO == null ? '' : r.PACKAGE_NO).trim() === pkg; });
+                    if (!hit.length) return 'Kiện ' + pkg + ': không tìm thấy trong DESM (dự án ' + P + ').';
+                    return 'Kiện ' + pkg + ' (STORAGE_LOCATION = Location, vị trí kho của kiện):\n' + hit.slice(0, 2).map(kv).join('\n');
+                  }).catch(function(e) { return 'Kiện ' + pkg + ': không tra được (' + (e && e.message || e) + ').'; });
+                  var pd = !wantItems ? Promise.resolve('') : post('/getIdsmOsDetailList.do', dBody, 10000).then(function(rows) {
+                    if (!rows.length) return 'Hạng mục chi tiết của kiện ' + pkg + ': không có dòng nào.';
+                    var lines = rows.slice(0, 60).map(itemLine).join('\n');
+                    return 'Hạng mục chi tiết của kiện ' + pkg + ' (' + rows.length + ' dòng' + (rows.length > 60 ? ', chỉ hiện 60 dòng đầu' : '') + '):\n' + lines.slice(0, 7000);
+                  }).catch(function(e) { return 'Hạng mục chi tiết của kiện ' + pkg + ': không tra được (' + (e && e.message || e) + ').'; });
+                  return Promise.all([ps, pd]).then(function(x) { return x.filter(Boolean).join('\n'); });
+                })).then(function(parts) { return '[Dữ liệu tra trực tiếp từ DESM theo câu hỏi — chỉ đọc]\n' + parts.join('\n\n'); });
+              });
+            };
             if (f0) w.fetch = function(inp, init) {
+              var self = this, args = arguments, run = null;
               try {
                 var u = typeof inp === 'string' ? inp : (inp && inp.url);
-                if ((w.__desmDodoVi || w.__desmDodoData || w.__desmDodoSlow) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
-                  var q = init.body.get('user_prompt') || '', add = '';
+                if ((w.__desmDodoVi || w.__desmDodoData || w.__desmDodoSlow || w.__desmDodoAuto) && /\/dodo\/chat\/stream/.test(String(u)) && init && init.body instanceof URLSearchParams) {
+                  var q = init.body.get('user_prompt') || '';
                   if (w.__desmDodoSlow) init.body.set('mode', 'slow');
-                  if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = ''; try { tx = allText(12000); } catch (e2) { tx = ''; } if (tx) add += '\n\n' + tx; }
-                  if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0 && w.__desmDodoVi) add += '\n\n[Trả lời bằng tiếng Việt]';
-                  if (add) init.body.set('user_prompt', q + add);
+                  var nums = (w.__desmDodoAuto && q && q.indexOf('[Dữ liệu tra trực tiếp') < 0) ? pkgNums(q) : [];
+                  var finish = function(auto) {
+                    try {
+                      var add = '';
+                      if (auto) add += '\n\n' + auto;
+                      if (q && q.indexOf('[Dữ liệu đang hiển thị') < 0 && w.__desmDodoData) { var tx = ''; try { tx = allText(auto ? 4000 : 12000); } catch (e2) { tx = ''; } if (tx) add += '\n\n' + tx; }
+                      if (q && q.indexOf('[Trả lời bằng tiếng Việt]') < 0 && w.__desmDodoVi) add += '\n\n[Trả lời bằng tiếng Việt]';
+                      if (add) init.body.set('user_prompt', q + add);
+                    } catch (e3) {}
+                    return f0.apply(self, args);
+                  };
+                  run = nums.length ? function() { return autoData(q, nums).then(finish, function() { return finish(''); }); } : function() { return finish(''); };
                 }
-              } catch (e) {}
-              return f0.apply(this, arguments);
+              } catch (e) { run = null; }
+              return run ? run() : f0.apply(self, args);
             };
           } catch (e) {}
           w.__desmDodo = { sync: sync, open: openChat, screenText: screenText, pageText: allText };

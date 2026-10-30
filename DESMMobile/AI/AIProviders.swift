@@ -1,208 +1,163 @@
-// AIProviders.swift — các nhà cung cấp AI riêng (API key của chính bạn), chuyển từ app LiveTranslate.
-// Dùng cho khung chat "AI riêng" thay cho Dodo của web DESM. Key lưu trong Keychain của máy.
+// AIProviders.swift — danh sách nhà AI, khoá API (Keychain) và cấu hình (UserDefaults) của "AI riêng".
+// Khoá API chỉ lưu trong Keychain của máy này (service "DESMMobile.AI"). Chưa build/chưa thử trên máy thật.
 
 import Foundation
 import Security
-import SwiftUI
 
-// MARK: - Keychain riêng cho key AI
-enum AIKeychain {
-    private static let service = "DESMMobile.AI"
+enum AIKind { case openai, claude, gemini }
 
-    static func set(_ value: String, for account: String) {
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
-    }
+struct AIProvider: Identifiable {
+    let id: String
+    let name: String
+    let kind: AIKind
+    let baseURL: String        // "custom" để trống: người dùng tự nhập
+    let defaultModel: String
+    let keyHelp: String
 
-    static func get(_ account: String) -> String? {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-}
-
-// MARK: - Nhà cung cấp
-enum AIProviderKind { case gemini, anthropic, openAI }
-
-enum AIProvider: String, CaseIterable, Identifiable {
-    case gemini, groq, anthropic, openai, deepseek, mistral, openrouter, custom
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .gemini: return "Google Gemini"
-        case .groq: return "Groq"
-        case .anthropic: return "Claude (Anthropic)"
-        case .openai: return "OpenAI"
-        case .deepseek: return "DeepSeek"
-        case .mistral: return "Mistral"
-        case .openrouter: return "OpenRouter"
-        case .custom: return "Tùy chỉnh (OpenAI-compatible)"
-        }
-    }
-    var shortName: String {
-        switch self {
-        case .anthropic: return "Claude"
-        case .custom: return "Tùy chỉnh"
-        case .gemini: return "Gemini"
-        default: return name
-        }
-    }
-    var kind: AIProviderKind {
-        switch self {
-        case .gemini: return .gemini
-        case .anthropic: return .anthropic
-        default: return .openAI
-        }
-    }
-    var defaultBase: String {
-        switch self {
-        case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
-        case .anthropic: return "https://api.anthropic.com/v1/messages"
-        case .openai: return "https://api.openai.com/v1"
-        case .groq: return "https://api.groq.com/openai/v1"
-        case .mistral: return "https://api.mistral.ai/v1"
-        case .deepseek: return "https://api.deepseek.com/v1"
-        case .openrouter: return "https://openrouter.ai/api/v1"
-        case .custom: return ""
-        }
-    }
-    var defaultModel: String {
-        switch self {
-        case .gemini: return "gemini-flash-latest"
-        case .anthropic: return "claude-haiku-4-5-20251001"
-        case .openai: return "gpt-4o-mini"
-        case .groq: return "llama-3.3-70b-versatile"
-        case .mistral: return "mistral-small-latest"
-        case .deepseek: return "deepseek-chat"
-        case .openrouter: return "meta-llama/llama-3.3-70b-instruct:free"
-        case .custom: return ""
-        }
-    }
-    var keyURL: URL? {
-        switch self {
-        case .gemini: return URL(string: "https://aistudio.google.com/apikey")
-        case .groq: return URL(string: "https://console.groq.com/keys")
-        case .anthropic: return URL(string: "https://console.anthropic.com/settings/keys")
-        case .openai: return URL(string: "https://platform.openai.com/api-keys")
-        case .deepseek: return URL(string: "https://platform.deepseek.com/api_keys")
-        case .mistral: return URL(string: "https://console.mistral.ai/api-keys")
-        case .openrouter: return URL(string: "https://openrouter.ai/keys")
-        case .custom: return nil
-        }
-    }
-    var note: String {
-        switch self {
-        case .gemini: return "Có gói miễn phí (giới hạn theo phút/ngày), không cần thẻ."
-        case .groq: return "Có gói miễn phí, không cần thẻ, tốc độ rất nhanh."
-        case .anthropic: return "Trả phí theo lượng dùng, cần nạp tiền trước."
-        case .openai: return "Trả phí theo lượng dùng."
-        case .deepseek: return "Giá rẻ, trả phí theo lượng dùng."
-        case .mistral: return "Có gói miễn phí (có thể cần xác minh số điện thoại)."
-        case .openrouter: return "Có một số model miễn phí (tên kết thúc bằng :free), giới hạn số yêu cầu mỗi ngày."
-        case .custom: return "Dùng dịch vụ tương thích OpenAI (Ollama/LM Studio trên máy tính, Together…). Nhập Base URL kết thúc bằng /v1."
-        }
-    }
-    var icon: String {
-        switch self {
-        case .gemini: return "sparkles"
-        case .groq: return "bolt.fill"
-        case .anthropic: return "asterisk"
-        case .openai: return "circle.hexagongrid.fill"
-        case .deepseek: return "water.waves"
-        case .mistral: return "wind"
-        case .openrouter: return "arrow.triangle.branch"
-        case .custom: return "server.rack"
-        }
-    }
-    var color: Color {
-        switch self {
-        case .gemini: return Color(red: 0.35, green: 0.5, blue: 1.0)
-        case .groq: return Color(red: 1.0, green: 0.45, blue: 0.2)
-        case .anthropic: return Color(red: 0.85, green: 0.5, blue: 0.35)
-        case .openai: return Color(red: 0.2, green: 0.75, blue: 0.6)
-        case .deepseek: return Color(red: 0.3, green: 0.4, blue: 0.95)
-        case .mistral: return Color(red: 1.0, green: 0.65, blue: 0.1)
-        case .openrouter: return Color(red: 0.55, green: 0.4, blue: 0.95)
-        case .custom: return Color(red: 0.55, green: 0.6, blue: 0.7)
-        }
-    }
-
-    fileprivate var keyAccount: String { "key.\(rawValue)" }
-    fileprivate var enabledKey: String { "desmAI.enabled.\(rawValue)" }
-    fileprivate var modelKey: String { "desmAI.model.\(rawValue)" }
-    fileprivate var baseKey: String { "desmAI.base.\(rawValue)" }
-}
-
-struct AIConfig {
-    let id: AIProvider
-    let key: String
-    let model: String
-    let base: String
+    static let all: [AIProvider] = [
+        AIProvider(id: "gemini", name: "Google Gemini", kind: .gemini,
+                   baseURL: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.5-flash",
+                   keyHelp: "Lấy khoá tại aistudio.google.com/apikey"),
+        AIProvider(id: "claude", name: "Anthropic Claude", kind: .claude,
+                   baseURL: "https://api.anthropic.com/v1", defaultModel: "claude-haiku-5-5",
+                   keyHelp: "Lấy khoá tại console.anthropic.com"),
+        AIProvider(id: "openai", name: "OpenAI", kind: .openai,
+                   baseURL: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini",
+                   keyHelp: "Lấy khoá tại platform.openai.com/api-keys"),
+        AIProvider(id: "groq", name: "Groq", kind: .openai,
+                   baseURL: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile",
+                   keyHelp: "Lấy khoá tại console.groq.com/keys"),
+        AIProvider(id: "deepseek", name: "DeepSeek", kind: .openai,
+                   baseURL: "https://api.deepseek.com/v1", defaultModel: "deepseek-chat",
+                   keyHelp: "Lấy khoá tại platform.deepseek.com"),
+        AIProvider(id: "mistral", name: "Mistral", kind: .openai,
+                   baseURL: "https://api.mistral.ai/v1", defaultModel: "mistral-small-latest",
+                   keyHelp: "Lấy khoá tại console.mistral.ai"),
+        AIProvider(id: "openrouter", name: "OpenRouter", kind: .openai,
+                   baseURL: "https://openrouter.ai/api/v1", defaultModel: "openai/gpt-4o-mini",
+                   keyHelp: "Lấy khoá tại openrouter.ai/keys"),
+        AIProvider(id: "custom", name: "Tùy chỉnh (OpenAI-compatible)", kind: .openai,
+                   baseURL: "", defaultModel: "",
+                   keyHelp: "Nhập địa chỉ API dạng https://máy-chủ/v1 và khoá của nhà đó"),
+    ]
 }
 
 enum AIStore {
-    private static var d: UserDefaults { .standard }
+    static let service = "DESMMobile.AI"
 
-    static func key(_ p: AIProvider) -> String { AIKeychain.get(p.keyAccount) ?? "" }
-    static func setKey(_ p: AIProvider, _ v: String) {
-        AIKeychain.set(v.trimmingCharacters(in: .whitespacesAndNewlines), for: p.keyAccount)
+    // MARK: Keychain
+    private static func baseQuery(_ account: String) -> [String: Any] {
+        return [kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account]
     }
 
-    static func enabled(_ p: AIProvider) -> Bool { d.object(forKey: p.enabledKey) as? Bool ?? true }
-    static func setEnabled(_ p: AIProvider, _ v: Bool) { d.set(v, forKey: p.enabledKey) }
+    // Keychain là IPC sang tiến trình khác, có lúc chậm hàng chục ms (thậm chí treo lúc máy vừa mở khoá) mà `key()` từng bị gọi 8 lần
+    // mỗi lần khung chat vẽ lại ở luồng chính → giữ bản sao trong bộ nhớ, chỉ đọc Keychain lần đầu của mỗi nhà.
+    private static let cacheLock = NSLock()
+    private static var keyCache: [String: String] = [:]
+
+    static func key(_ id: String) -> String {
+        cacheLock.lock()
+        if let c = keyCache[id] { cacheLock.unlock(); return c }
+        cacheLock.unlock()
+        let t0 = Date()
+        var q = baseQuery(id)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: AnyObject?
+        var v = ""
+        if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data {
+            v = String(data: d, encoding: .utf8) ?? ""
+        }
+        let ms = Int(Date().timeIntervalSince(t0) * 1000)
+        if ms >= 50 { AILog.add("⚠️ Keychain đọc khoá " + id + " mất " + String(ms) + "ms") }
+        cacheLock.lock(); keyCache[id] = v; cacheLock.unlock()
+        return v
+    }
+
+    static func setKey(_ k: String, for id: String) {
+        let t = k.trimmingCharacters(in: .whitespacesAndNewlines)
+        cacheLock.lock(); keyCache[id] = t; cacheLock.unlock()
+        SecItemDelete(baseQuery(id) as CFDictionary)
+        guard !t.isEmpty, let d = t.data(using: .utf8) else { return }
+        var q = baseQuery(id)
+        q[kSecValueData as String] = d
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(q as CFDictionary, nil)
+    }
+
+    // MARK: Cấu hình
+    static var activeID: String {
+        get { UserDefaults.standard.string(forKey: "desmAIActive") ?? "gemini" }
+        set { UserDefaults.standard.set(newValue, forKey: "desmAIActive") }
+    }
+
+    static var active: AIProvider {
+        return AIProvider.all.first(where: { $0.id == activeID }) ?? AIProvider.all[0]
+    }
+
+    /// Cho AI tự gọi API DESM (chỉ đọc). Mặc định bật khi đã chọn dùng AI riêng.
+    static var toolsOn: Bool {
+        get { UserDefaults.standard.object(forKey: "desmAITools") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "desmAITools") }
+    }
+
+    // MARK: Tự chuyển nhà AI khi lỗi
+    /// Bật: nhà đang chọn lỗi/quá hạn thì tự thử nhà kế tiếp có khoá (mặc định bật).
+    static var autoSwitch: Bool {
+        get { UserDefaults.standard.object(forKey: "desmAIAutoSwitch") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "desmAIAutoSwitch") }
+    }
+
+    private static let failLock = NSLock()
+    private static var failedAt: [String: Date] = [:]
+    static let cooldownSeconds: TimeInterval = 300
+
+    /// Nhà vừa lỗi được cho "nghỉ" 5 phút: các câu hỏi sau không phải chờ nó hết hạn (60 giây) rồi mới sang nhà khác.
+    static func markFailed(_ id: String) { failLock.lock(); failedAt[id] = Date(); failLock.unlock() }
+    static func clearFailed(_ id: String) { failLock.lock(); failedAt[id] = nil; failLock.unlock() }
+    static func isCoolingDown(_ id: String) -> Bool {
+        failLock.lock(); defer { failLock.unlock() }
+        if let t = failedAt[id] { return Date().timeIntervalSince(t) < cooldownSeconds }
+        return false
+    }
+
+    /// Nhà dùng được: có khoá và có model (nhà "Tuỳ chỉnh" còn cần địa chỉ API).
+    static func usable(_ p: AIProvider) -> Bool {
+        if key(p.id).isEmpty || model(p).isEmpty { return false }
+        if p.id == "custom" && baseURL(p).isEmpty { return false }
+        return true
+    }
+
+    /// Thứ tự thử cho một câu hỏi: nhà đang chọn trước, rồi các nhà còn lại theo thứ tự trong danh sách; nhà đang "nghỉ" xếp cuối; tối đa 4 nhà.
+    static func candidates() -> [AIProvider] {
+        let act = active
+        if !autoSwitch { return usable(act) ? [act] : [] }
+        let all = [act] + AIProvider.all.filter { $0.id != act.id }
+        let ok = all.filter { usable($0) }
+        let ready = ok.filter { !isCoolingDown($0.id) }
+        let cooling = ok.filter { isCoolingDown($0.id) }
+        return Array((ready + cooling).prefix(4))
+    }
 
     static func model(_ p: AIProvider) -> String {
-        let m = (d.string(forKey: p.modelKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let m = (UserDefaults.standard.string(forKey: "desmAIModel." + p.id) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return m.isEmpty ? p.defaultModel : m
     }
-    static func setModel(_ p: AIProvider, _ v: String) {
-        d.set(v.trimmingCharacters(in: .whitespacesAndNewlines), forKey: p.modelKey)
+
+    static func setModel(_ m: String, for id: String) {
+        UserDefaults.standard.set(m.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "desmAIModel." + id)
     }
 
-    static func base(_ p: AIProvider) -> String {
-        guard p == .custom else { return p.defaultBase }
-        return (d.string(forKey: p.baseKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    static func setBase(_ p: AIProvider, _ v: String) {
-        d.set(v.trimmingCharacters(in: .whitespacesAndNewlines), forKey: p.baseKey)
-    }
-
-    static func order() -> [AIProvider] {
-        let saved = (d.stringArray(forKey: "desmAI.order") ?? []).compactMap { AIProvider(rawValue: $0) }
-        return saved + AIProvider.allCases.filter { !saved.contains($0) }
-    }
-    static func saveOrder(_ o: [AIProvider]) { d.set(o.map { $0.rawValue }, forKey: "desmAI.order") }
-
-    /// nil nếu nhà này đang tắt hoặc thiếu key/base.
-    static func config(_ p: AIProvider) -> AIConfig? {
-        guard enabled(p) else { return nil }
-        let k = key(p)
-        let b = base(p)
-        if p == .custom {
-            guard !b.isEmpty, !model(p).isEmpty else { return nil }
-        } else {
-            guard !k.isEmpty else { return nil }
-        }
-        return AIConfig(id: p, key: k, model: model(p), base: b)
+    static func baseURL(_ p: AIProvider) -> String {
+        var b = p.id == "custom" ? (UserDefaults.standard.string(forKey: "desmAIBase.custom") ?? "") : p.baseURL
+        b = b.trimmingCharacters(in: .whitespacesAndNewlines)
+        while b.hasSuffix("/") { b.removeLast() }
+        return b
     }
 
-    /// Các nhà đã sẵn sàng, theo thứ tự ưu tiên (đầu danh sách dùng trước, lỗi thì chuyển sang nhà kế tiếp).
-    static func active() -> [AIConfig] { order().compactMap { config($0) } }
+    static func setCustomBase(_ b: String) {
+        UserDefaults.standard.set(b.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "desmAIBase.custom")
+    }
 }

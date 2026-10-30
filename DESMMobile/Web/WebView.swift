@@ -307,7 +307,7 @@ struct WebView: UIViewRepresentable {
                 return
             }
             if message.name == "desmAI" {
-                // Chạm bong bóng khi trợ lý = "AI riêng" → mở khung chat native
+                // Chạm bong bóng khi chọn "AI riêng": mở khung chat native
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
                 DispatchQueue.main.async { self.model.showAIChat = true }

@@ -1,295 +1,293 @@
-// AIClient.swift — gọi API của từng nhà (Gemini / Claude / OpenAI-compatible), dò danh sách model, tự thử model.
-// Chuyển từ LLMClient.swift của LiveTranslate (bỏ phần dịch hội thoại).
+// AIClient.swift — gọi 3 kiểu API (OpenAI-compatible, Claude, Gemini) có hỗ trợ công cụ (function calling) + dò danh sách model.
+// Chưa build/chưa thử trên máy thật.
 
 import Foundation
 
-enum AIError: LocalizedError {
-    case http(Int, String)
-    case badResponse
-    case empty(String)
+struct AIError: LocalizedError {
+    let message: String
+    var status: Int = 0
+    var errorDescription: String? { return message }
+}
 
-    var errorDescription: String? {
-        switch self {
-        case .http(let code, let body):
-            switch code {
-            case 429: return "hết hạn mức tạm thời (429)"
-            case 503: return "model đang quá tải (503)"
-            case 401, 403: return "key không hợp lệ hoặc không có quyền (\(code))"
-            case 413: return "dữ liệu gửi quá lớn (413) — giảm \"Lượng dữ liệu gửi\" trong Cài đặt"
-            case 404: return "không tìm thấy model/địa chỉ (404): \(body)"
-            default: return "lỗi \(code): \(body)"
-            }
-        case .badResponse:
-            return "phản hồi không đọc được"
-        case .empty(let why):
-            return "AI trả về nội dung rỗng (\(why)). Thử hỏi ngắn gọn hơn, tắt bớt công tắc dữ liệu hoặc đổi model."
+struct AIToolDef {
+    let name: String
+    let description: String
+    let schema: [String: Any]      // JSON schema, kiểu viết thường (Gemini được đổi sang chữ hoa)
+}
+
+struct AIToolCall {
+    let id: String
+    let name: String
+    let args: [String: Any]
+}
+
+struct AITurn {
+    var text: String
+    var calls: [AIToolCall]
+    var raw: Any                   // nội dung gốc của lượt trả lời để gửi lại đúng nguyên văn trong các vòng tra cứu
+
+    /// Lượt trả lời chỉ có chữ (dùng lưu lịch sử hội thoại gọn, không kèm dữ liệu tra cứu).
+    static func plain(_ text: String, kind: AIKind) -> AITurn {
+        switch kind {
+        case .openai: return AITurn(text: text, calls: [], raw: ["role": "assistant", "content": text] as [String: Any])
+        case .claude: return AITurn(text: text, calls: [], raw: [["type": "text", "text": text]] as [[String: Any]])
+        case .gemini: return AITurn(text: text, calls: [], raw: [["text": text]] as [[String: Any]])
         }
     }
 }
 
-struct AIProviderError: LocalizedError {
-    let provider: String
-    let underlying: Error
-    var errorDescription: String? { "\(provider): \(underlying.localizedDescription)" }
+struct AIToolResult {
+    let call: AIToolCall
+    let output: String
+}
+
+enum AIMsg {
+    case user(String)
+    case assistant(AITurn)
+    case tools([AIToolResult])
 }
 
 enum AIClient {
-    typealias Msg = (role: String, text: String)   // role: "user" | "model"
+    // MARK: HTTP
+    /// Phiên riêng cho AI: có giới hạn tổng thời gian (không chỉ thời gian im lặng) để không bao giờ chờ vô hạn.
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForResource = 100
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
 
-    /// Ảnh (JPEG) đính kèm cho CÂU HỎI HIỆN TẠI. Chỉ gắn vào tin nhắn người dùng cuối cùng; các lượt trước chỉ còn chữ.
-    /// Đặt trước khi gọi và xoá sau khi xong (xem AIChatView.send).
-    static var currentImages: [Data] = []
-
-    static func geminiAttach(_ contents: inout [[String: Any]]) {
-        guard !currentImages.isEmpty, let i = contents.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
-        var parts = contents[i]["parts"] as? [[String: Any]] ?? []
-        for d in currentImages { parts.append(["inline_data": ["mime_type": "image/jpeg", "data": d.base64EncodedString()]]) }
-        contents[i]["parts"] = parts
-    }
-
-    static func anthropicAttach(_ msgs: inout [[String: Any]]) {
-        guard !currentImages.isEmpty, let i = msgs.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
-        let text = msgs[i]["content"] as? String ?? ""
-        var blocks: [[String: Any]] = currentImages.map {
-            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": $0.base64EncodedString()]]
+    static func request(_ url: String, method: String = "POST", headers: [String: String], body: [String: Any]?, timeout: TimeInterval = 60) async throws -> [String: Any] {
+        guard let u = URL(string: url) else { throw AIError(message: "Địa chỉ API không hợp lệ.") }
+        var r = URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        r.httpMethod = method
+        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+        var sent = 0
+        if let b = body {
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let d = try JSONSerialization.data(withJSONObject: b)
+            r.httpBody = d
+            sent = d.count
         }
-        blocks.append(["type": "text", "text": text])
-        msgs[i]["content"] = blocks
-    }
-
-    static func openAIAttach(_ msgs: inout [[String: Any]]) {
-        guard !currentImages.isEmpty, let i = msgs.lastIndex(where: { ($0["role"] as? String) == "user" }) else { return }
-        let text = msgs[i]["content"] as? String ?? ""
-        var blocks: [[String: Any]] = [["type": "text", "text": text]]
-        for d in currentImages {
-            blocks.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + d.base64EncodedString()]])
-        }
-        msgs[i]["content"] = blocks
-    }
-
-    static func complete(_ c: AIConfig, system: String, messages: [Msg],
-                         temperature: Double?, timeout: TimeInterval) async throws -> String {
-        switch c.id.kind {
-        case .gemini:    return try await gemini(c, system, messages, temperature, timeout)
-        case .anthropic: return try await anthropic(c, system, messages, timeout)
-        case .openAI:    return try await openAI(c, system, messages, temperature, timeout)
-        }
-    }
-
-    static func post(_ url: URL, headers: [String: String], body: [String: Any],
-                             timeout: TimeInterval) async throws -> [String: Any] {
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = timeout
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw AIError.badResponse }
-        guard http.statusCode == 200 else {
-            let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(140))
-            throw AIError.http(http.statusCode, snippet)
-        }
-        let any = try JSONSerialization.jsonObject(with: data)
-        if let obj = any as? [String: Any] { return obj }
-        if let arr = any as? [[String: Any]], let first = arr.first { return first }   // một số API trả mảng
-        throw AIError.badResponse
-    }
-
-    private static func gemini(_ c: AIConfig, _ system: String, _ messages: [Msg],
-                               _ temperature: Double?, _ timeout: TimeInterval) async throws -> String {
-        var name = c.model
-        if name.hasPrefix("models/") { name = String(name.dropFirst(7)) }
-        guard let url = URL(string: "\(c.base)/models/\(name):generateContent") else { throw AIError.badResponse }
-
-        var contents: [[String: Any]] = messages.map { ["role": $0.role, "parts": [["text": $0.text]]] }
-        geminiAttach(&contents)
-        var gen: [String: Any] = [:]
-        if let t = temperature { gen["temperature"] = t }
-        var body: [String: Any] = ["contents": contents, "generationConfig": gen]
-        if !system.isEmpty { body["system_instruction"] = ["parts": [["text": system]]] }
-
-        let root = try await post(url, headers: ["x-goog-api-key": c.key], body: body, timeout: timeout)
-        guard let cands = root["candidates"] as? [[String: Any]],
-              let content = cands.first?["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else {
-            throw AIError.empty(geminiWhy(root))
-        }
-        let text = parts.filter { ($0["thought"] as? Bool) != true }
-            .compactMap { $0["text"] as? String }.joined()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw AIError.badResponse }
-        return text
-    }
-
-    /// Lý do Gemini không trả nội dung: finishReason / blockReason
-    static func geminiWhy(_ root: [String: Any]) -> String {
-        if let pf = root["promptFeedback"] as? [String: Any], let b = pf["blockReason"] as? String { return "bị chặn: \(b)" }
-        if let c = (root["candidates"] as? [[String: Any]])?.first, let f = c["finishReason"] as? String { return "finishReason=\(f)" }
-        return "không có candidates"
-    }
-
-    private static func anthropic(_ c: AIConfig, _ system: String, _ messages: [Msg],
-                                  _ timeout: TimeInterval) async throws -> String {
-        guard let url = URL(string: c.base) else { throw AIError.badResponse }
-        var msgs: [[String: Any]] = messages.map {
-            ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text]
-        }
-        anthropicAttach(&msgs)
-        var body: [String: Any] = ["model": c.model, "max_tokens": 2048, "messages": msgs]
-        if !system.isEmpty { body["system"] = system }
-
-        let root = try await post(url,
-                                  headers: ["x-api-key": c.key, "anthropic-version": "2023-06-01"],
-                                  body: body, timeout: timeout)
-        guard let content = root["content"] as? [[String: Any]] else { throw AIError.badResponse }
-        let text = content.compactMap { $0["text"] as? String }.joined()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw AIError.badResponse }
-        return text
-    }
-
-    private static func openAI(_ c: AIConfig, _ system: String, _ messages: [Msg],
-                               _ temperature: Double?, _ timeout: TimeInterval) async throws -> String {
-        var base = c.base
-        while base.hasSuffix("/") { base.removeLast() }
-        let full = base.hasSuffix("/chat/completions") ? base : base + "/chat/completions"
-        guard let url = URL(string: full) else { throw AIError.badResponse }
-
-        var msgs: [[String: Any]] = []
-        if !system.isEmpty { msgs.append(["role": "system", "content": system]) }
-        msgs += messages.map { ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text] }
-        openAIAttach(&msgs)
-
-        var body: [String: Any] = ["model": c.model, "messages": msgs]
-        // Một số model (vd. dòng reasoning của OpenAI) không cho đổi temperature
-        if let t = temperature, c.id != .openai { body["temperature"] = t }
-
-        var headers: [String: String] = [:]
-        if !c.key.isEmpty { headers["Authorization"] = "Bearer \(c.key)" }
-
-        let root = try await post(url, headers: headers, body: body, timeout: timeout)
-        guard let choices = root["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let text = message["content"] as? String else { throw AIError.badResponse }
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { throw AIError.badResponse }
-        return t
-    }
-}
-
-// MARK: - Dò danh sách model + tự chọn model chạy được
-extension AIClient {
-    /// Lấy danh sách model mà key này dùng được (chỉ model chat/văn bản).
-    static func listModels(_ c: AIConfig, timeout: TimeInterval = 15) async throws -> [String] {
-        var headers: [String: String] = [:]
-        let url: URL?
-        switch c.id.kind {
-        case .gemini:
-            url = URL(string: "\(c.base)/models?pageSize=1000")
-            headers["x-goog-api-key"] = c.key
-        case .anthropic:
-            var b = c.base
-            if b.hasSuffix("/messages") { b.removeLast(9) }
-            url = URL(string: b + "/models?limit=1000")
-            headers["x-api-key"] = c.key
-            headers["anthropic-version"] = "2023-06-01"
-        case .openAI:
-            var b = c.base
-            while b.hasSuffix("/") { b.removeLast() }
-            if b.hasSuffix("/chat/completions") { b.removeLast(17) }
-            url = URL(string: b + "/models")
-            if !c.key.isEmpty { headers["Authorization"] = "Bearer \(c.key)" }
-        }
-        guard let url else { throw AIError.badResponse }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = timeout
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw AIError.badResponse }
-        guard http.statusCode == 200 else {
-            let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(140))
-            throw AIError.http(http.statusCode, snippet)
-        }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AIError.badResponse
-        }
-
-        var ids: [String] = []
-        if c.id.kind == .gemini {
-            for m in (root["models"] as? [[String: Any]]) ?? [] {
-                let methods = m["supportedGenerationMethods"] as? [String] ?? []
-                guard methods.contains("generateContent"), var n = m["name"] as? String else { continue }
-                if n.hasPrefix("models/") { n.removeFirst(7) }
-                ids.append(n)
+        let label = method + " " + (u.host ?? "?") + u.path
+        let t0 = Date()
+        AILog.add("→ " + label + " gửi " + String(sent / 1024) + " KB (chờ tối đa " + String(Int(timeout)) + "s)")
+        let result: (Data, URLResponse)
+        do {
+            result = try await session.data(for: r)
+        } catch {
+            let secs = String(format: "%.1f", Date().timeIntervalSince(t0))
+            let code = (error as? URLError)?.code
+            if code == .cancelled || Task.isCancelled {
+                AILog.add("✋ " + label + " bị huỷ sau " + secs + "s")
+                throw CancellationError()
             }
-        } else {
-            ids = ((root["data"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
+            if code == .timedOut {
+                AILog.add("✗ " + label + " QUÁ THỜI GIAN sau " + secs + "s")
+                throw AIError(message: "Nhà AI không trả lời trong " + String(Int(timeout)) + " giây (quá thời gian chờ). Thử lại hoặc chọn model nhanh hơn.")
+            }
+            AILog.add("✗ " + label + " lỗi mạng sau " + secs + "s: " + error.localizedDescription)
+            throw AIError(message: "Lỗi mạng: \(error.localizedDescription)")
         }
-
-        let skip = ["embed", "whisper", "tts", "moderation", "guard", "dall", "image", "imagen",
-                    "audio", "transcribe", "realtime", "rerank", "veo", "video", "aqa", "speech"]
-        let out = ids.filter { id in
-            let l = id.lowercased()
-            return !skip.contains { l.contains($0) }
+        let data = result.0
+        let resp = result.1
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        AILog.add("← " + label + " HTTP " + String(code) + ", nhận " + String(data.count / 1024) + " KB sau " + String(format: "%.1f", Date().timeIntervalSince(t0)) + "s")
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if code < 200 || code >= 300 {
+            throw AIError(message: "HTTP \(code): " + shortError(obj, data), status: code)
         }
-        guard !out.isEmpty else { throw AIError.badResponse }
-        return Array(Set(out)).sorted()
+        guard let o = obj else { throw AIError(message: "Phản hồi không phải JSON.") }
+        return o
     }
 
-    /// Thử lần lượt tối đa `limit` model (ưu tiên model hiện tại, mặc định, rồi model nhanh) và trả về model đầu tiên chạy được.
-    static func pickWorkingModel(_ c: AIConfig, limit: Int = 8,
-                                 progress: ((String) -> Void)? = nil) async throws -> (picked: String?, all: [String]) {
-        let all = try await listModels(c)
-        let fast = ["flash", "mini", "haiku", "small", "instant", "lite", "8b", "sonnet"]
-        var order: [String] = []
-        for m in [c.model, c.id.defaultModel] where all.contains(m) && !order.contains(m) { order.append(m) }
-        order += all.filter { id in fast.contains { id.lowercased().contains($0) } && !order.contains(id) }
-        order += all.filter { !order.contains($0) }
+    private static func shortError(_ obj: [String: Any]?, _ data: Data) -> String {
+        if let e = obj?["error"] as? [String: Any], let m = e["message"] as? String { return String(m.prefix(300)) }
+        if let m = obj?["error"] as? String { return String(m.prefix(300)) }
+        if let m = obj?["message"] as? String { return String(m.prefix(300)) }
+        return String((String(data: data, encoding: .utf8) ?? "").prefix(300))
+    }
 
-        for m in order.prefix(limit) {
-            progress?(m)
-            let cfg = AIConfig(id: c.id, key: c.key, model: m, base: c.base)
-            if (try? await complete(cfg, system: "Reply with one short word.",
-                                    messages: [(role: "user", text: "Say hello")],
-                                    temperature: nil, timeout: 12)) != nil {
-                return (m, all)
+    // MARK: Chat
+    static func chat(_ p: AIProvider, key: String, model: String, system: String, msgs: [AIMsg], tools: [AIToolDef], timeout: TimeInterval = 60) async throws -> AITurn {
+        switch p.kind {
+        case .openai: return try await chatOpenAI(p, key: key, model: model, system: system, msgs: msgs, tools: tools, timeout: timeout)
+        case .claude: return try await chatClaude(p, key: key, model: model, system: system, msgs: msgs, tools: tools, timeout: timeout)
+        case .gemini: return try await chatGemini(p, key: key, model: model, system: system, msgs: msgs, tools: tools, timeout: timeout)
+        }
+    }
+
+    private static func chatOpenAI(_ p: AIProvider, key: String, model: String, system: String, msgs: [AIMsg], tools: [AIToolDef], timeout: TimeInterval) async throws -> AITurn {
+        var messages: [[String: Any]] = [["role": "system", "content": system]]
+        for m in msgs {
+            switch m {
+            case .user(let t):
+                messages.append(["role": "user", "content": t])
+            case .assistant(let a):
+                if let raw = a.raw as? [String: Any] { messages.append(raw) }
+            case .tools(let rs):
+                for r in rs { messages.append(["role": "tool", "tool_call_id": r.call.id, "content": r.output]) }
             }
         }
-        return (nil, all)
+        var body: [String: Any] = ["model": model, "messages": messages]
+        if !tools.isEmpty {
+            body["tools"] = tools.map { (t: AIToolDef) -> [String: Any] in
+                return ["type": "function", "function": ["name": t.name, "description": t.description, "parameters": t.schema] as [String: Any]]
+            }
+        }
+        let o = try await request(AIStore.baseURL(p) + "/chat/completions", headers: ["Authorization": "Bearer " + key], body: body, timeout: timeout)
+        guard let choice = (o["choices"] as? [[String: Any]])?.first, let msg = choice["message"] as? [String: Any] else {
+            throw AIError(message: "Phản hồi không có nội dung.")
+        }
+        let text = (msg["content"] as? String) ?? ""
+        var calls: [AIToolCall] = []
+        var rawCalls: [[String: Any]] = []
+        let tcs = (msg["tool_calls"] as? [[String: Any]]) ?? []
+        for (i, tc) in tcs.enumerated() {
+            let fn = (tc["function"] as? [String: Any]) ?? [:]
+            let name = (fn["name"] as? String) ?? ""
+            let argStr = (fn["arguments"] as? String) ?? "{}"
+            let id = (tc["id"] as? String) ?? "call_\(i)"
+            let args = (try? JSONSerialization.jsonObject(with: Data(argStr.utf8))) as? [String: Any] ?? [:]
+            calls.append(AIToolCall(id: id, name: name, args: args))
+            rawCalls.append(["id": id, "type": "function", "function": ["name": name, "arguments": argStr] as [String: Any]])
+        }
+        var raw: [String: Any] = ["role": "assistant"]
+        if !text.isEmpty { raw["content"] = text }
+        else if rawCalls.isEmpty { raw["content"] = "" }
+        else { raw["content"] = NSNull() }
+        if !rawCalls.isEmpty { raw["tool_calls"] = rawCalls }
+        return AITurn(text: text, calls: calls, raw: raw)
     }
 
-    // MARK: Thử lần lượt nhiều nhà
-    /// Nhà đứng đầu dùng trước; lỗi thì sang nhà kế tiếp. Trả về (câu trả lời, nhà đã trả lời).
-    static func run(_ providers: [AIConfig], system: String, messages: [Msg],
-                    temperature: Double? = 0.3, timeout: TimeInterval = 60) async throws -> (text: String, by: AIConfig) {
-        var last: Error?
-        for c in providers {
-            var attempts = 0
-            while true {
-                do {
-                    let t = try await complete(c, system: system, messages: messages,
-                                               temperature: temperature, timeout: timeout)
-                    return (t, c)
-                } catch {
-                    if Task.isCancelled { throw error }
-                    last = AIProviderError(provider: c.id.shortName, underlying: error)
-                    attempts += 1
-                    if providers.count == 1, attempts < 2, isTransient(error) {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        continue
-                    }
-                    break
+    private static func chatClaude(_ p: AIProvider, key: String, model: String, system: String, msgs: [AIMsg], tools: [AIToolDef], timeout: TimeInterval) async throws -> AITurn {
+        var messages: [[String: Any]] = []
+        for m in msgs {
+            switch m {
+            case .user(let t):
+                messages.append(["role": "user", "content": t])
+            case .assistant(let a):
+                messages.append(["role": "assistant", "content": a.raw])
+            case .tools(let rs):
+                let blocks: [[String: Any]] = rs.map { (r: AIToolResult) -> [String: Any] in
+                    return ["type": "tool_result", "tool_use_id": r.call.id, "content": r.output]
                 }
+                messages.append(["role": "user", "content": blocks])
             }
         }
-        throw last ?? AIError.badResponse
+        var body: [String: Any] = ["model": model, "max_tokens": 4096, "system": system, "messages": messages]
+        if !tools.isEmpty {
+            body["tools"] = tools.map { (t: AIToolDef) -> [String: Any] in
+                return ["name": t.name, "description": t.description, "input_schema": t.schema]
+            }
+        }
+        let o = try await request(AIStore.baseURL(p) + "/messages",
+                                  headers: ["x-api-key": key, "anthropic-version": "2023-06-01"], body: body, timeout: timeout)
+        let blocks = (o["content"] as? [[String: Any]]) ?? []
+        var text = ""
+        var calls: [AIToolCall] = []
+        for b in blocks {
+            let type = (b["type"] as? String) ?? ""
+            if type == "text" {
+                text += (b["text"] as? String) ?? ""
+            } else if type == "tool_use" {
+                calls.append(AIToolCall(id: (b["id"] as? String) ?? UUID().uuidString,
+                                        name: (b["name"] as? String) ?? "",
+                                        args: (b["input"] as? [String: Any]) ?? [:]))
+            }
+        }
+        if blocks.isEmpty { throw AIError(message: "Phản hồi không có nội dung.") }
+        return AITurn(text: text, calls: calls, raw: blocks)
     }
 
-    private static func isTransient(_ e: Error) -> Bool {
-        if let g = e as? AIError, case .http(let code, _) = g { return [429, 500, 502, 503, 504].contains(code) }
-        return e is URLError
+    private static func chatGemini(_ p: AIProvider, key: String, model: String, system: String, msgs: [AIMsg], tools: [AIToolDef], timeout: TimeInterval) async throws -> AITurn {
+        var contents: [[String: Any]] = []
+        for m in msgs {
+            switch m {
+            case .user(let t):
+                contents.append(["role": "user", "parts": [["text": t]]])
+            case .assistant(let a):
+                contents.append(["role": "model", "parts": a.raw])
+            case .tools(let rs):
+                let parts: [[String: Any]] = rs.map { (r: AIToolResult) -> [String: Any] in
+                    return ["functionResponse": ["name": r.call.name, "response": ["result": r.output] as [String: Any]] as [String: Any]]
+                }
+                contents.append(["role": "user", "parts": parts])
+            }
+        }
+        var body: [String: Any] = ["systemInstruction": ["parts": [["text": system]]] as [String: Any], "contents": contents]
+        if !tools.isEmpty {
+            let decls: [[String: Any]] = tools.map { (t: AIToolDef) -> [String: Any] in
+                return ["name": t.name, "description": t.description, "parameters": geminiSchema(t.schema)]
+            }
+            body["tools"] = [["functionDeclarations": decls]]
+        }
+        let name = model.hasPrefix("models/") ? String(model.dropFirst(7)) : model
+        let o = try await request(AIStore.baseURL(p) + "/models/" + name + ":generateContent",
+                                  headers: ["x-goog-api-key": key], body: body, timeout: timeout)
+        guard let cand = (o["candidates"] as? [[String: Any]])?.first else {
+            throw AIError(message: "Gemini không trả kết quả (có thể câu hỏi bị chặn).")
+        }
+        let parts = ((cand["content"] as? [String: Any])?["parts"] as? [[String: Any]]) ?? []
+        if parts.isEmpty { throw AIError(message: "Gemini không trả nội dung (có thể bị chặn hoặc hết hạn mức).") }
+        var text = ""
+        var calls: [AIToolCall] = []
+        for (i, part) in parts.enumerated() {
+            if let fc = part["functionCall"] as? [String: Any] {
+                calls.append(AIToolCall(id: "g\(i)", name: (fc["name"] as? String) ?? "", args: (fc["args"] as? [String: Any]) ?? [:]))
+            } else if let t = part["text"] as? String, (part["thought"] as? Bool) != true {
+                text += t
+            }
+        }
+        return AITurn(text: text, calls: calls, raw: parts)
+    }
+
+    /// Gemini yêu cầu kiểu schema viết hoa (OBJECT, STRING, INTEGER).
+    static func geminiSchema(_ v: Any) -> Any {
+        if let d = v as? [String: Any] {
+            var o: [String: Any] = [:]
+            for (k, x) in d {
+                if k == "type", let s = x as? String { o[k] = s.uppercased() } else { o[k] = geminiSchema(x) }
+            }
+            return o
+        }
+        if let a = v as? [Any] { return a.map { geminiSchema($0) } }
+        return v
+    }
+
+    // MARK: Dò model
+    static func listModels(_ p: AIProvider, key: String) async throws -> [String] {
+        switch p.kind {
+        case .gemini:
+            let o = try await request(AIStore.baseURL(p) + "/models?pageSize=200", method: "GET", headers: ["x-goog-api-key": key], body: nil)
+            let ms = (o["models"] as? [[String: Any]]) ?? []
+            let names: [String] = ms.compactMap { (m: [String: Any]) -> String? in
+                let methods = (m["supportedGenerationMethods"] as? [String]) ?? []
+                guard methods.contains("generateContent"), let n = m["name"] as? String else { return nil }
+                return n.hasPrefix("models/") ? String(n.dropFirst(7)) : n
+            }
+            return names.sorted()
+        case .claude:
+            let o = try await request(AIStore.baseURL(p) + "/models?limit=100", method: "GET",
+                                      headers: ["x-api-key": key, "anthropic-version": "2023-06-01"], body: nil)
+            let ms = (o["data"] as? [[String: Any]]) ?? []
+            return ms.compactMap { (m: [String: Any]) -> String? in return m["id"] as? String }.sorted()
+        case .openai:
+            let o = try await request(AIStore.baseURL(p) + "/models", method: "GET", headers: ["Authorization": "Bearer " + key], body: nil)
+            let ms = (o["data"] as? [[String: Any]]) ?? []
+            return ms.compactMap { (m: [String: Any]) -> String? in return m["id"] as? String }.sorted()
+        }
+    }
+
+    /// Thử một câu ngắn để biết khoá + model dùng được không.
+    static func test(_ p: AIProvider, key: String, model: String) async -> String {
+        do {
+            let t = try await chat(p, key: key, model: model, system: "Trả lời cực ngắn.", msgs: [.user("Trả lời đúng một từ: OK")], tools: [])
+            let s = t.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "Kết nối được. Model trả lời: " + (s.isEmpty ? "(trống)" : String(s.prefix(60)))
+        } catch {
+            return "Lỗi: " + error.localizedDescription
+        }
     }
 }

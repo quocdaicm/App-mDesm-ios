@@ -4,7 +4,7 @@ import SwiftUI
 
 @main
 struct DESMMobileApp: App {
-    init() { BackgroundRefresh.register() }
+    init() { BackgroundRefresh.register(); LegacyAICleanup.runOnce() }
 
     var body: some Scene {
         WindowGroup { BrowserView() }

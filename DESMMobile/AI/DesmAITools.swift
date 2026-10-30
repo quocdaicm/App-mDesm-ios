@@ -1,264 +1,230 @@
-// DesmAITools.swift — bộ công cụ CHỈ ĐỌC để AI riêng tự tra dữ liệu DESM (kiện, hạng mục chi tiết, RSI, MRF, WIP, tàu, thông báo…)
-// kể cả những màn chưa mở. Dùng phiên đăng nhập DESM sẵn có (desmQueryAsync). KHÔNG có công cụ ghi/sửa/xoá.
+// DesmAITools.swift — công cụ CHỈ ĐỌC cho AI riêng: danh mục API DESM, truy vấn có tham số, đọc màn đang mở.
+// An toàn: chỉ cho gọi các endpoint "get/select" nằm trong danh mục dưới đây (không có save/delete/update). Chưa build/chưa thử trên máy thật.
 
 import Foundation
-
-struct AITool {
-    let name: String
-    let description: String
-    let parameters: [String: Any]   // JSON Schema (object)
-}
+import WebKit
 
 struct DesmEndpoint {
     let path: String
+    let desc: String
     let keys: [String]
-    let about: String
+    var defaults: [String: String] = [:]
 }
 
 enum DesmAITools {
-    /// Các API đọc đã biết (lấy từ các màn native của app). Khoá để trống = không lọc.
+    // MARK: Danh mục endpoint (tham số lấy từ các màn native của app)
     static let catalog: [DesmEndpoint] = [
-        DesmEndpoint(path: "/getDesmRsiViewList.do", keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "RSI_NO", "RSI_NAME", "SUBCONTRACTOR", "ATTRIBUTE10", "MATERIAL_CODE", "START_REQUEST_DATE", "END_REQUEST_DATE", "BALANCE_QTY", "TYPE", "CATEGORY", "SUB_CATEGORY", "PACKING_LIST_NO", "PACKAGE_NO", "ITEM_DESC", "MASTER_SHOP_UNIT", "MASTER_SHOP_BLDG", "SHOP_UNIT", "SHOP_BLDG"], about: "RSI (phiếu yêu cầu xuất hàng) đang mở/theo ngày yêu cầu. Lọc: RSI_NO, PACKAGE_NO, MATERIAL_CODE, START_REQUEST_DATE/END_REQUEST_DATE (yyyy/MM/dd)…"),
-        DesmEndpoint(path: "/getDesmRsiOutGoingList.do", keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "START_HANDOVER_DATE", "END_HANDOVER_DATE", "PACKAGE_NO", "SUBCONTRACTOR", "RSI_NO", "MATERIAL_CODE", "ATTRIBUTE10", "RSI_NAME", "TYPE", "CATEGORY", "SUB_CATEGORY", "COMMENTS", "PACKING_LIST_NO", "PENDING", "RECEIVER_REMARK", "MASTER_SHOP_UNIT", "MASTER_SHOP_BLDG", "SHOP_UNIT", "SHOP_BLDG"], about: "RSI đã bàn giao (xuất hàng). Lọc: RSI_NO, PACKAGE_NO, START_HANDOVER_DATE/END_HANDOVER_DATE…"),
-        DesmEndpoint(path: "/getMrfSummaryList.do", keys: ["PROJECT_NO", "RSI_NO", "RSI_NAME", "SUBCONTRACTOR", "MATERIAL_CODE", "RSI_START_REQUEST_DATE", "RSI_END_REQUEST_DATE", "ZIM_ATTRIBUTE10", "RSI_BALANCE_QTY", "TYPE", "CATEGORY", "SUB_CATEGORY", "PACKING_LIST_NO", "MRF_NO", "MRF_NAME", "PACKAGE_NO", "ITEM_DESC", "RETURN_TYPE", "MRF_BALANCE_QTY"], about: "MRF (phiếu trả hàng) tổng hợp. Lọc: MRF_NO, RSI_NO, PACKAGE_NO, MATERIAL_CODE…"),
-        DesmEndpoint(path: "/getDesmMrfReturnList.do", keys: ["PROJECT_NO", "START_HANDOVER_DATE", "END_HANDOVER_DATE", "PACKAGE_NO", "SUBCONTRACTOR", "MRF_NO", "MATERIAL_CODE", "ATTRIBUTE10", "MRF_NAME", "TYPE", "CATEGORY"], about: "MRF đã trả. Lọc: MRF_NO, PACKAGE_NO, START_HANDOVER_DATE/END_HANDOVER_DATE…"),
-        DesmEndpoint(path: "/getIdsmOsSummaryList.do", keys: ["PROJECT_NO", "PACKAGE_LIST_NO", "PACKAGE_NO", "DESCRIPTION", "IS_CONFIRM_MATERIAL", "RECEIPTED", "ATTRIBUTE10", "REMARK", "VENDOR", "LOCATION", "START_RECEIPT_DATE", "END_RECEIPT_DATE", "MRR_VISUAL_CHECK", "MRR_RECEIVED", "START_MRR_RECEIVED_DATE", "END_MRR_RECEIVED_DATE", "CUSTOMS_YN", "MIR_CATEGORY", "PACKAGE_STATUS"], about: "Danh sách PACKAGE (kiện hàng) kèm vị trí, MRR. Lọc: PACKAGE_NO, PACKAGE_LIST_NO (packing list), DESCRIPTION, LOCATION, VENDOR…"),
-        DesmEndpoint(path: "/getIdsmOsDetailList.do", keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "PACKAGE_LIST_NO", "PACKAGE_NO", "DESCRIPTION", "DRAWING_NO", "TAG_NO", "QTY_TYPE", "QTY", "KEY1", "VALUE1", "LOCATION", "SEQUENCE", "VENDOR", "ATTRIBUTE10", "TYPE", "CATEGORY", "SUB_CATEGORY", "COMMENTS"], about: "HẠNG MỤC CHI TIẾT (Detail Item) của kiện. Lọc: PACKAGE_NO, PACKAGE_LIST_NO, DESCRIPTION, DRAWING_NO, TAG_NO, LOCATION, KEY1=material|reamrks|size + VALUE1=<giá trị> để tra theo Material Code/ghi chú/kích thước."),
-        DesmEndpoint(path: "/getDesmPlDetailEditLogList.do", keys: ["PROJECT_NO", "TRK_ITEM_NAME", "MATERIAL_CODE"], about: "Nhật ký chỉnh sửa (Edit Log) của một hạng mục. Cần TRK_ITEM_NAME và MATERIAL_CODE (lấy từ kết quả hạng mục chi tiết)."),
-        DesmEndpoint(path: "/getDesmOutGoingCreationList.do", keys: ["PROJECT_NO", "PACKING_LIST_NO", "PACKAGE_NO", "RSI_NO", "MATERIAL_CODE", "REQUEST_START_DATE", "ATTRIBUTE10", "REQUEST_END_DATE", "DESCRIPTION", "DRAWING_NO", "TAG_NO", "RSI_NAME", "TYPE", "CATEGORY", "SUBCON", "PENDING", "MASTER_SHOP_UNIT", "MASTER_SHOP_BLDG", "SHOP_UNIT", "SHOP_BLDG"], about: "Danh sách hạng mục có thể tạo phiếu xuất (outgoing). Lọc: PACKAGE_NO, RSI_NO, MATERIAL_CODE…"),
-        DesmEndpoint(path: "/getDesmReturnCreationList.do", keys: ["PROJECT_NO", "PACKAGE_NO", "MRF_NO", "MATERIAL_CODE", "REQUEST_START_DATE", "ATTRIBUTE10", "REQUEST_END_DATE", "TYPE", "CATEGORY"], about: "Danh sách hạng mục có thể tạo phiếu trả (MRF return). Lọc: PACKAGE_NO, MRF_NO, MATERIAL_CODE…"),
-        DesmEndpoint(path: "/material/getPlWipCreationList.do", keys: ["PROJECT_NO", "PACKING_LIST_NO", "PACKAGE_NO", "RSI_NO", "RSI_NAME", "SUBCON", "MATERIAL_CODE", "ATTRIBUTE10", "DESCRIPTION", "DRAWING_NO", "TAG_NO", "TYPE", "CATEGORY", "SUB_CATEGORY", "SHOP_UNIT", "SHOP_BLDG"], about: "WIP Completion (hoàn thành gia công). Lọc: PACKAGE_NO, RSI_NO, MATERIAL_CODE…"),
-        DesmEndpoint(path: "/vessel/getVesselFinderList.do", keys: ["PROJECT_NO"], about: "Danh sách tàu/chuyến hàng của dự án."),
-        DesmEndpoint(path: "/selectDesmShippingStatusList.do", keys: ["PROJECT_NO", "VOYAGE_NO", "INVOICE_NO", "SHIPPING_STATUS", "DATA_CREATED_YN"], about: "Tình trạng vận chuyển theo chuyến/invoice."),
-        DesmEndpoint(path: "/dashboard/getHomeSummary.do", keys: ["PROJECT_NO", "DAY_TERM"], about: "Tóm tắt trang chủ: packing list/invoice/shipment gần đây (DAY_TERM = số ngày)."),
-        DesmEndpoint(path: "/getNotice.do", keys: ["jobCode"], about: "Danh sách thông báo DESM (jobCode để trống) hoặc một thông báo theo jobCode."),
-        DesmEndpoint(path: "/getNoticeContents.do", keys: ["jobCode"], about: "Nội dung chi tiết một thông báo (jobCode = mã thông báo)."),
-        DesmEndpoint(path: "/getRealTimeNotice.do", keys: [], about: "Thông báo thời gian thực."),
+        DesmEndpoint(path: "/getIdsmOsSummaryList.do",
+                     desc: "Danh sách KIỆN HÀNG (Package). Có STORAGE_LOCATION (vị trí kho), trạng thái, ngày nhận, người cập nhật vị trí (LOC_UPDATED_BY, LOC_UPDATE_DATE), xác nhận (CONFIRM_DATE, CONFIRMED_BY), DESCRIPTION. Lọc theo PACKAGE_NO (số kiện, vd 0009-001), PACKAGE_LIST_NO, DESCRIPTION, VENDOR, LOCATION, START_RECEIPT_DATE/END_RECEIPT_DATE (yyyy/MM/dd), PACKAGE_STATUS.",
+                     keys: ["PROJECT_NO", "PACKAGE_LIST_NO", "PACKAGE_NO", "DESCRIPTION", "IS_CONFIRM_MATERIAL", "RECEIPTED", "ATTRIBUTE10", "REMARK", "VENDOR", "LOCATION", "START_RECEIPT_DATE", "END_RECEIPT_DATE", "MRR_VISUAL_CHECK", "MRR_RECEIVED", "START_MRR_RECEIVED_DATE", "END_MRR_RECEIVED_DATE", "CUSTOMS_YN", "MIR_CATEGORY", "PACKAGE_STATUS"],
+                     defaults: ["MRR_VISUAL_CHECK": "All"]),
+        DesmEndpoint(path: "/getIdsmOsDetailList.do",
+                     desc: "HẠNG MỤC CHI TIẾT (Detail Item List) của kiện: MATERIAL_CODE, DESCRIPTION, LOCATION (vị trí từng hạng mục), UNIT, IN_QTY, REMAIN_QTY, REMARKS, TRK_ITEM_NAME... Lọc theo PACKAGE_NO, DESCRIPTION, DRAWING_NO, TAG_NO, VENDOR. Tìm theo mã vật tư: KEY1=material và VALUE1=<Material Code>.",
+                     keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "PACKAGE_LIST_NO", "PACKAGE_NO", "DESCRIPTION", "DRAWING_NO", "TAG_NO", "QTY_TYPE", "QTY", "KEY1", "VALUE1", "LOCATION", "SEQUENCE", "VENDOR", "ATTRIBUTE10", "TYPE", "CATEGORY", "SUB_CATEGORY", "COMMENTS"],
+                     defaults: ["PAGE_NUM": "1", "PAGE_CNT": "300", "QTY_TYPE": "rsi"]),
+        DesmEndpoint(path: "/getDesmPlDetailEditLogList.do",
+                     desc: "LỊCH SỬ CHỈNH SỬA (Edit Log) của MỘT hạng mục: đổi vị trí, số lượng, ghi chú... Bắt buộc TRK_ITEM_NAME và MATERIAL_CODE (lấy từ kết quả /getIdsmOsDetailList.do).",
+                     keys: ["PROJECT_NO", "TRK_ITEM_NAME", "MATERIAL_CODE"]),
+        DesmEndpoint(path: "/getDesmRsiViewList.do",
+                     desc: "RSI (phiếu yêu cầu vật tư) theo ngày yêu cầu START_REQUEST_DATE/END_REQUEST_DATE (yyyy/MM/dd). Lọc RSI_NO, RSI_NAME, SUBCONTRACTOR, MATERIAL_CODE, PACKAGE_NO, ITEM_DESC. Có REQ_QTY, HANDOVER_QTY, BALANCE_QTY, STATUS.",
+                     keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "RSI_NO", "RSI_NAME", "SUBCONTRACTOR", "ATTRIBUTE10", "MATERIAL_CODE", "START_REQUEST_DATE", "END_REQUEST_DATE", "BALANCE_QTY", "TYPE", "CATEGORY", "SUB_CATEGORY", "PACKING_LIST_NO", "PACKAGE_NO", "ITEM_DESC", "MASTER_SHOP_UNIT", "MASTER_SHOP_BLDG", "SHOP_UNIT", "SHOP_BLDG"],
+                     defaults: ["PAGE_NUM": "1", "PAGE_CNT": "1000"]),
+        DesmEndpoint(path: "/getDesmRsiOutGoingList.do",
+                     desc: "RSI ĐÃ BÀN GIAO (Outgoing) theo ngày bàn giao START_HANDOVER_DATE/END_HANDOVER_DATE (yyyy/MM/dd). Lọc RSI_NO, PACKAGE_NO, SUBCONTRACTOR, MATERIAL_CODE, RSI_NAME.",
+                     keys: ["PAGE_NUM", "PAGE_CNT", "PROJECT_NO", "START_HANDOVER_DATE", "END_HANDOVER_DATE", "PACKAGE_NO", "SUBCONTRACTOR", "RSI_NO", "MATERIAL_CODE", "ATTRIBUTE10", "RSI_NAME", "TYPE", "CATEGORY", "SUB_CATEGORY", "COMMENTS", "PACKING_LIST_NO", "PENDING", "RECEIVER_REMARK", "MASTER_SHOP_UNIT", "MASTER_SHOP_BLDG", "SHOP_UNIT", "SHOP_BLDG"],
+                     defaults: ["PAGE_NUM": "1", "PAGE_CNT": "1000"]),
+        DesmEndpoint(path: "/getMrfSummaryList.do",
+                     desc: "MRF (phiếu trả vật tư) đã tạo. Lọc MRF_NO, MRF_NAME, RSI_NO, PACKAGE_NO, SUBCONTRACTOR, MATERIAL_CODE. Có MRF_REQ_RETURN_QTY, MRF_RETURN_QTY, MRF_BALANCE_QTY, STATUS, RETURN_REQ_DATE.",
+                     keys: ["PROJECT_NO", "RSI_NO", "RSI_NAME", "SUBCONTRACTOR", "MATERIAL_CODE", "RSI_START_REQUEST_DATE", "RSI_END_REQUEST_DATE", "ZIM_ATTRIBUTE10", "RSI_BALANCE_QTY", "TYPE", "CATEGORY", "SUB_CATEGORY", "PACKING_LIST_NO", "MRF_NO", "MRF_NAME", "PACKAGE_NO", "ITEM_DESC", "RETURN_TYPE", "MRF_BALANCE_QTY"]),
+        DesmEndpoint(path: "/getDesmMrfReturnList.do",
+                     desc: "MRF ĐÃ TRẢ theo ngày START_HANDOVER_DATE/END_HANDOVER_DATE (yyyy/MM/dd). Lọc MRF_NO, MRF_NAME, PACKAGE_NO, SUBCONTRACTOR, MATERIAL_CODE.",
+                     keys: ["PROJECT_NO", "START_HANDOVER_DATE", "END_HANDOVER_DATE", "PACKAGE_NO", "SUBCONTRACTOR", "MRF_NO", "MATERIAL_CODE", "ATTRIBUTE10", "MRF_NAME", "TYPE", "CATEGORY"]),
+        DesmEndpoint(path: "/vessel/getVesselFinderList.do",
+                     desc: "Danh sách TÀU / lô hàng của dự án (vị trí, tình trạng vận chuyển).",
+                     keys: ["PROJECT_NO"]),
+        DesmEndpoint(path: "/getNotice.do",
+                     desc: "Danh sách THÔNG BÁO của DESM (để jobCode trống).",
+                     keys: ["jobCode"]),
     ]
 
-    static func defs() -> [AITool] {
-        func obj(_ props: [String: Any], required: [String] = []) -> [String: Any] {
-            var o: [String: Any] = ["type": "object", "properties": props]
-            if !required.isEmpty { o["required"] = required }
-            return o
+    static func catalogText(filter: String) -> String {
+        let f = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var out = "Chỉ đọc. Gọi bằng desm_query(endpoint, params_json, max_rows). PROJECT_NO tự điền nếu bỏ trống. Ngày dạng yyyy/MM/dd. Tham số bỏ trống = không lọc.\n"
+        for e in catalog {
+            if !f.isEmpty && !(e.path.lowercased().contains(f) || e.desc.lowercased().contains(f)) { continue }
+            let ks = e.keys.map { (k: String) -> String in
+                if let d = e.defaults[k] { return k + "(mặc định " + d + ")" }
+                return k
+            }
+            out += "\n• " + e.path + " — " + e.desc + "\n  Tham số: " + ks.joined(separator: ", ") + "\n"
         }
-        return [
-            AITool(name: "desm_list_endpoints",
-                   description: "Liệt kê các API đọc của DESM mà desm_query dùng được (đường dẫn, mô tả, tên tham số lọc). Gọi trước khi tra nếu chưa chắc.",
-                   parameters: obj([:])),
-            AITool(name: "desm_query",
-                   description: "Tra dữ liệu DESM (CHỈ ĐỌC) bằng một API trong danh mục. Dùng cho kiện hàng (/getIdsmOsSummaryList.do), hạng mục chi tiết của kiện (/getIdsmOsDetailList.do), RSI, MRF, WIP, tàu, thông báo… PROJECT_NO tự điền nếu bỏ trống. Kết quả có thể bị cắt: hãy lọc hẹp bằng params (PACKAGE_NO, MATERIAL_CODE, RSI_NO, DESCRIPTION, LOCATION, ngày yyyy/MM/dd…).",
-                   parameters: obj([
-                       "endpoint": ["type": "string", "description": "Đường dẫn, ví dụ /getIdsmOsDetailList.do"],
-                       "params_json": ["type": "string", "description": "Chuỗi JSON object các tham số lọc, ví dụ {\"PACKAGE_NO\":\"ABC123\"}. Để {} nếu không lọc."],
-                       "max_rows": ["type": "integer", "description": "Số dòng tối đa trả về (mặc định 100, tối đa 500)."]
-                   ], required: ["endpoint"])),
-            AITool(name: "desm_recorded_endpoints",
-                   description: "Liệt kê các API .do mà app đã ghi lại khi người dùng dùng web (cần bật Ghi API trong Cài đặt nâng cao), kèm mẫu tham số, để tra thêm các mục sâu ngoài danh mục.",
-                   parameters: obj([:])),
-            AITool(name: "desm_read_open_page",
-                   description: "Đọc nội dung trang DESM đang mở trên màn hình (mọi khung, các dòng lưới đã tải, ô lọc).",
-                   parameters: obj(["limit": ["type": "integer", "description": "Số ký tự tối đa (mặc định 30000)."]]))
-        ]
-    }
-
-    // MARK: Thực thi
-    @MainActor
-    static func run(_ name: String, _ args: [String: Any], model: BrowserModel) async -> String {
-        switch name {
-        case "desm_list_endpoints":
-            return catalog.map { "\($0.path) — \($0.about) | tham số: \($0.keys.joined(separator: ", "))" }.joined(separator: "\n")
-        case "desm_recorded_endpoints":
-            return recorded()
-        case "desm_read_open_page":
-            let n = min(max((args["limit"] as? Int) ?? Int((args["limit"] as? String) ?? "") ?? 30000, 2000), 120000)
-            let t = await model.fetchScreenTextForAI(limit: n)
-            return t.isEmpty ? "Không đọc được trang đang mở (có thể chưa mở DESM hoặc đang ở trang đăng nhập)." : t
-        case "desm_query":
-            return await query(args, model: model)
-        default:
-            return "Công cụ không tồn tại: \(name)"
-        }
-    }
-
-    private static let readPattern = #"^/([A-Za-z0-9_]+/)*(get|select|search|list|find|view|query)[A-Za-z0-9_]*\.do$"#
-    private static let writeWords = ["save", "delete", "remove", "update", "insert", "approve", "reject", "submit",
-                                     "upload", "reset", "cancel", "execute", "modify", "send", "write"]
-
-    private static func isReadOnly(_ path: String) -> Bool {
-        guard path.range(of: readPattern, options: .regularExpression) != nil else { return false }
-        let last = (path as NSString).lastPathComponent.lowercased()
-        return !writeWords.contains { last.contains($0) }
-    }
-
-    private static func enc(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
-    }
-
-    private static func parseParams(_ args: [String: Any]) -> [String: String] {
-        var raw: [String: Any] = [:]
-        if let d = args["params"] as? [String: Any] { raw = d }
-        else if let s = args["params_json"] as? String, let d = s.data(using: .utf8),
-                let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] { raw = o }
-        var out: [String: String] = [:]
-        for (k, v) in raw { out[k] = (v is NSNull) ? "" : "\(v)" }
         return out
     }
 
-    /// "Ảnh chụp" dữ liệu DESM để gửi sẵn cho AI: kiện (mọi kiện của dự án), hạng mục chi tiết từng kiện (tối đa 40 kiện),
-    /// RSI, MRF, tàu, thông báo. Chỉ ĐỌC. Cắt theo `budget` ký tự; phần nào không tải được thì bỏ qua và ghi chú.
-    @MainActor
-    static func snapshotAll(model: BrowserModel, budget: Int, status: @escaping (String) -> Void) async -> String {
-        let stamp = DateFormatter()
-        stamp.dateFormat = "HH:mm dd/MM/yyyy"
-        var out: [String] = ["[DỮ LIỆU DESM TẢI SẴN lúc \(stamp.string(from: Date())) — chỉ đọc; mỗi dòng JSON là một bản ghi]"]
-        var used = out[0].count
-        var cut = false
-        let deadline = Date().addingTimeInterval(30)   // tối đa 30 giây cho cả ảnh chụp
-        func late() -> Bool { Date() > deadline || Task.isCancelled }
-        func add(_ title: String, _ body: String) {
-            let s = "\n=== \(title) ===\n" + body
-            if used + s.count > budget { cut = true; return }
-            out.append(s); used += s.count
-        }
-        func run(_ endpoint: String, _ params: [String: String], _ rows: Int) async -> String {
-            let pj = (try? JSONSerialization.data(withJSONObject: params)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-            return await query(["endpoint": endpoint, "params_json": pj, "max_rows": rows], model: model)
-        }
+    // MARK: Định nghĩa công cụ gửi cho AI
+    static let toolDefs: [AIToolDef] = [
+        AIToolDef(name: "desm_list_endpoints",
+                  description: "Liệt kê các API DESM được phép tra cứu (chỉ đọc) kèm ý nghĩa và tham số lọc. Gọi trước khi dùng desm_query nếu chưa chắc endpoint/tham số.",
+                  schema: ["type": "object",
+                           "properties": ["filter": ["type": "string", "description": "Từ khoá lọc danh mục (tuỳ chọn), ví dụ rsi, mrf, kiện"]]]),
+        AIToolDef(name: "desm_query",
+                  description: "Tra dữ liệu thật từ DESM (chỉ đọc) bằng một endpoint trong danh mục. Trả về các dòng dạng JSON.",
+                  schema: ["type": "object",
+                           "properties": [
+                               "endpoint": ["type": "string", "description": "Đường dẫn endpoint, ví dụ /getIdsmOsSummaryList.do"],
+                               "params_json": ["type": "string", "description": "Chuỗi JSON các tham số lọc, ví dụ {\"PACKAGE_NO\":\"0009-001\"}. Bỏ trống nếu không lọc."],
+                               "max_rows": ["type": "integer", "description": "Số dòng tối đa trả về (mặc định 40, tối đa 300)."],
+                           ],
+                           "required": ["endpoint"]]),
+        AIToolDef(name: "desm_read_open_page",
+                  description: "Đọc nội dung màn DESM đang mở trên app (lưới, ô lọc, chữ trên trang, màn chi tiết kiện). Dùng khi người dùng hỏi về 'màn này', 'trang này', 'đang hiển thị'.",
+                  schema: ["type": "object",
+                           "properties": ["limit": ["type": "integer", "description": "Số ký tự tối đa (mặc định 12000, tối đa 40000)."]]]),
+    ]
 
-        status("Đang tải danh sách kiện…")
-        let pk = await run("/getIdsmOsSummaryList.do", ["MRR_VISUAL_CHECK": "All"], 500)
-        add("KIỆN HÀNG (/getIdsmOsSummaryList.do)", pk)
-        let nos = (NSOrderedSet(array: matches(pk, #""PACKAGE_NO":"([^"]+)""#)).array as? [String]) ?? []
-
-        let others: [(String, String, [String: String])] = [
-            ("RSI (/getDesmRsiViewList.do)", "/getDesmRsiViewList.do", [:]),
-            ("MRF (/getMrfSummaryList.do)", "/getMrfSummaryList.do", [:]),
-            ("TÀU (/vessel/getVesselFinderList.do)", "/vessel/getVesselFinderList.do", [:]),
-            ("THÔNG BÁO (/getNotice.do)", "/getNotice.do", [:]),
-        ]
-        for (t, p, prm) in others {
-            if used >= budget || late() { cut = true; break }
-            status("Đang tải \(t.components(separatedBy: " (")[0])…")
-            add(t, await run(p, prm, 300))
-        }
-        // Tải hạng mục các kiện song song từng đợt 5 kiện cho nhanh
-        let pick = Array(nos.prefix(25))
-        var idx = 0
-        while idx < pick.count {
-            if used >= budget || late() { cut = true; break }
-            let batch = Array(pick[idx..<min(idx + 5, pick.count)])
-            status("Đang tải hạng mục kiện \(idx + 1)–\(idx + batch.count)/\(pick.count)…")
-            let handles = batch.map { no in
-                (no, Task { @MainActor in await run("/getIdsmOsDetailList.do", ["PACKAGE_NO": no, "QTY_TYPE": "rsi"], 200) })
-            }
-            for (no, h) in handles {
-                add("HẠNG MỤC CỦA KIỆN \(no) (/getIdsmOsDetailList.do)", await h.value)
-            }
-            idx += 5
-        }
-        if nos.count > 25 { out.append("\n[Chỉ tải hạng mục của 25/\(nos.count) kiện đầu; các kiện còn lại dùng công cụ desm_query nếu được bật.]") }
-        if cut { out.append("\n[ĐÃ CẮT vì vượt giới hạn dữ liệu gửi AI; có thể thiếu một số mục.]") }
-        return out.joined(separator: "\n")
+    // MARK: Tiện ích
+    static func str(_ v: Any) -> String {
+        if let s = v as? String { return s }
+        if let n = v as? NSNumber { return n.stringValue }
+        return ""
     }
 
-    // Bộ nhớ đệm trên đĩa: mở lại app vẫn dùng được ngay dữ liệu lần trước (không phải chờ tải lại)
-    private static var snapshotURL: URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("desm_ai_snapshot.txt")
+    static func int(_ v: Any?) -> Int? {
+        if let n = v as? NSNumber { return n.intValue }
+        if let s = v as? String { return Int(s.trimmingCharacters(in: .whitespaces)) }
+        return nil
     }
 
-    static func saveSnapshot(_ text: String) {
-        guard let u = snapshotURL else { return }
-        try? text.write(to: u, atomically: true, encoding: .utf8)
-    }
+    static let maxChars = 22000
 
-    static func loadSnapshot() -> (text: String, at: Date)? {
-        guard let u = snapshotURL,
-              let text = try? String(contentsOf: u, encoding: .utf8), !text.isEmpty,
-              let at = (try? FileManager.default.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date else { return nil }
-        return (text, at)
-    }
+    /// Số dự án mặc định đã lấy (dùng lại 10 phút, chỉ truy cập từ luồng chính).
+    static var projectCache: (no: String, at: Date)? = nil
 
-    private static func matches(_ s: String, _ pattern: String) -> [String] {
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let ns = s as NSString
-        return re.matches(in: s, range: NSRange(location: 0, length: ns.length)).compactMap {
-            $0.numberOfRanges > 1 ? ns.substring(with: $0.range(at: 1)) : nil
-        }
-    }
-
-    @MainActor
-    private static func query(_ args: [String: Any], model: BrowserModel) async -> String {
-        guard var path = args["endpoint"] as? String else { return "Thiếu tham số endpoint." }
-        path = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !path.hasPrefix("/") { path = "/" + path }
-        if let q = path.firstIndex(of: "?") { path = String(path[..<q]) }
-        let known = catalog.first { $0.path == path }
-        guard known != nil || isReadOnly(path) else {
-            return "Từ chối: chỉ gọi được API đọc (tên bắt đầu get/select/search/list/find/view/query và không chứa lệnh ghi). Dùng desm_list_endpoints để xem danh mục."
-        }
-        let maxRows = min(max((args["max_rows"] as? Int) ?? Int("\(args["max_rows"] ?? "")") ?? 100, 1), 500)
-        var vals = parseParams(args)
-        var order: [String] = known?.keys ?? []
-        for k in vals.keys.sorted() where !order.contains(k) { order.append(k) }
-        if order.contains("PAGE_NUM"), vals["PAGE_NUM"] == nil { vals["PAGE_NUM"] = "1" }
-        if order.contains("PAGE_CNT"), vals["PAGE_CNT"] == nil { vals["PAGE_CNT"] = "1000" }
-        if order.contains("PROJECT_NO"), (vals["PROJECT_NO"] ?? "").isEmpty {
-            do { vals["PROJECT_NO"] = try await model.desmProjectNo() }
-            catch { return "Lỗi: \(error.localizedDescription)" }
-        }
-        let body = order.map { "\($0)=\(enc(vals[$0] ?? ""))" }.joined(separator: "&")
-        do {
-            let rows = try await model.desmQueryAsync(path, body: body)
-            return format(rows, maxRows: maxRows, charBudget: 24000, path: path)
-        } catch {
-            return "Lỗi khi gọi \(path): \(error.localizedDescription)"
-        }
-    }
-
-    private static func clean(_ v: Any) -> String? {
-        if v is NSNull { return nil }
-        var s = "\(v)"
-        if s.contains("<") { s = s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression) }
-        s = s.replacingOccurrences(of: "&nbsp;", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.isEmpty { return nil }
-        return s.count > 100 ? String(s.prefix(100)) + "…" : s
-    }
-
-    private static func format(_ rows: [[String: Any]], maxRows: Int, charBudget: Int, path: String) -> String {
-        var lines: [String] = []
-        var used = 0
+    static func format(_ rows: [[String: Any]], maxRows: Int, ignored: [String]) -> String {
+        var head = "Tổng \(rows.count) dòng"
+        if rows.count > maxRows { head += ", chỉ hiện \(maxRows) dòng đầu (thu hẹp bộ lọc hoặc tăng max_rows)" }
+        if !ignored.isEmpty { head += ". Đã bỏ qua tham số không có trong endpoint: " + ignored.joined(separator: ", ") }
+        var out = head + ":\n"
         for r in rows.prefix(maxRows) {
-            var o: [String: String] = [:]
-            for (k, v) in r { if let c = clean(v) { o[k] = c } }
-            guard let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]),
-                  let s = String(data: d, encoding: .utf8) else { continue }
-            if used + s.count > charBudget { break }
-            used += s.count + 1
-            lines.append(s)
+            var o: [String: Any] = [:]
+            for (k, v) in r {
+                if let s = v as? String {
+                    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { o[k] = t }
+                } else if v is NSNumber {
+                    o[k] = v
+                }
+            }
+            if let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]), let s = String(data: d, encoding: .utf8) {
+                out += s + "\n"
+            }
+            if out.utf8.count > maxChars { out += "…(đã cắt vì quá dài, hãy thu hẹp bộ lọc)\n"; break }
         }
-        var head = "\(path): tổng \(rows.count) dòng, trả về \(lines.count)."
-        if lines.count < rows.count {
-            head += " ĐÃ CẮT — hãy lọc hẹp hơn (ví dụ PACKAGE_NO, MATERIAL_CODE, ngày) hoặc tăng max_rows."
+        return out
+    }
+}
+
+extension BrowserModel {
+    /// Chạy một công cụ AI xin gọi; luôn trả chuỗi (lỗi cũng là chuỗi để AI tự xử lý).
+    @MainActor
+    func runDesmTool(_ name: String, _ args: [String: Any]) async -> String {
+        switch name {
+        case "desm_list_endpoints":
+            return DesmAITools.catalogText(filter: DesmAITools.str(args["filter"] ?? ""))
+        case "desm_read_open_page":
+            let limit = min(max(DesmAITools.int(args["limit"]) ?? 12000, 1000), 40000)
+            return await readOpenPageText(limit: limit)
+        case "desm_query":
+            return await desmToolQuery(args)
+        default:
+            return "Công cụ không tồn tại: " + name
         }
-        if rows.isEmpty { head += " Không có dòng nào khớp bộ lọc." }
-        return ([head] + lines).joined(separator: "\n")
     }
 
-    private static func recorded() -> String {
-        var seen: [String: (method: String, body: String, n: Int)] = [:]
-        for e in NetLogStore.entries() {
-            let url = NetLogStore.str(e, "url")
-            guard let u = URL(string: url), u.path.hasSuffix(".do") else { continue }
-            let p = u.path
-            let body = NetLogStore.str(e, "body")
-            if var x = seen[p] { x.n += 1; seen[p] = x }
-            else { seen[p] = (NetLogStore.str(e, "method"), NetLogStore.cut(body, 300), 1) }
+    @MainActor
+    private func desmToolQuery(_ a: [String: Any]) async -> String {
+        let ep = DesmAITools.str(a["endpoint"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = ep.hasPrefix("/") ? ep : "/" + ep
+        guard let e = DesmAITools.catalog.first(where: { $0.path == path }) else {
+            return "Endpoint không nằm trong danh mục cho phép (chỉ đọc). Gọi desm_list_endpoints để xem danh sách."
         }
-        if seen.isEmpty { return "Chưa có API nào được ghi. Người dùng cần bật Cài đặt > Nâng cao > Ghi lại các request API rồi duyệt các màn trên web." }
-        return seen.keys.sorted().prefix(120).map { p in
-            let x = seen[p]!
-            return "\(p) [\(x.method), \(x.n) lần]\(isReadOnly(p) ? "" : " (KHÔNG gọi được: có vẻ là API ghi)") mẫu body: \(x.body)"
-        }.joined(separator: "\n")
+        var obj: [String: Any] = [:]
+        if let s = a["params_json"] as? String {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty {
+                guard let o = (try? JSONSerialization.jsonObject(with: Data(t.utf8))) as? [String: Any] else {
+                    return "params_json không phải JSON hợp lệ. Ví dụ: {\"PACKAGE_NO\":\"0009-001\"}"
+                }
+                obj = o
+            }
+        } else if let o = a["params_json"] as? [String: Any] {
+            obj = o
+        }
+        var given: [String: String] = [:]
+        var ignored: [String] = []
+        for (k, v) in obj {
+            if e.keys.contains(k) { given[k] = DesmAITools.str(v) } else { ignored.append(k) }
+        }
+        let maxRows = min(max(DesmAITools.int(a["max_rows"]) ?? 40, 1), 300)
+
+        var project = ""
+        if e.keys.contains("PROJECT_NO") {
+            if let g = given["PROJECT_NO"], !g.isEmpty { project = g }
+            else if let c = DesmAITools.projectCache, Date().timeIntervalSince(c.at) < 600 { project = c.no }
+            else {
+                do {
+                    project = try await desmProjectNo()
+                    DesmAITools.projectCache = (no: project, at: Date())
+                } catch {
+                    AILog.add("✗ Không lấy được số dự án: " + error.localizedDescription)
+                    return "Không lấy được số dự án (phiên DESM có thể đã hết hạn): " + error.localizedDescription
+                }
+            }
+        }
+        var parts: [String] = []
+        for k in e.keys {
+            var v = given[k] ?? e.defaults[k] ?? ""
+            if k == "PROJECT_NO" { v = project }
+            parts.append(k + "=" + BrowserModel.enc(v))
+        }
+        do {
+            let rows = try await desmQueryAsync(e.path, body: parts.joined(separator: "&"))
+            let t1 = Date()
+            let box = DesmRowsBox(isJSON: true, rows: rows)
+            let text = await Task.detached(priority: .userInitiated) { () -> String in
+                return DesmAITools.format(box.rows ?? [], maxRows: maxRows, ignored: ignored)
+            }.value
+            AILog.add("Định dạng " + String(rows.count) + " dòng → " + String(text.utf8.count / 1024) + " KB mất " + String(format: "%.2f", Date().timeIntervalSince(t1)) + "s")
+            return text
+        } catch {
+            AILog.add("✗ " + e.path + ": " + error.localizedDescription)
+            return "Lỗi gọi " + e.path + ": " + error.localizedDescription
+        }
+    }
+
+    /// Đọc chữ của màn đang mở (dùng hàm `__desmDodo.pageText` do DodoBubble.swift tiêm vào trang).
+    /// evaluateJavaScript có thể không bao giờ gọi lại (trang đang bận/đang chuyển trang) nên có hạn 12 giây; callback chỉ được dùng đúng một lần.
+    @MainActor
+    func readOpenPageText(limit: Int) async -> String {
+        guard let wv = webView else { return "Không có trang nào đang mở." }
+        let js = "(function(){try{return (window.__desmDodo && window.__desmDodo.pageText) ? String(window.__desmDodo.pageText(\(limit)) || '') : '';}catch(e){return '';}})()"
+        let t0 = Date()
+        AILog.add("Đọc trang đang mở (tối đa " + String(limit) + " ký tự)…")
+        let res: String? = await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            let gate = AIGate()
+            wv.evaluateJavaScript(js) { r, _ in
+                if gate.claim() { c.resume(returning: (r as? String) ?? "") }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                if gate.claim() { c.resume(returning: nil) }
+            }
+        }
+        let secs = String(format: "%.1f", Date().timeIntervalSince(t0))
+        guard let t = res else {
+            AILog.add("✗ Đọc trang QUÁ THỜI GIAN sau " + secs + "s (trang bận hoặc đang chuyển trang)")
+            return "Trang không phản hồi sau 12 giây (có thể đang tải hoặc đang bận). Hãy bảo người dùng chờ trang tải xong rồi hỏi lại."
+        }
+        AILog.add("← Đọc trang xong sau " + secs + "s, " + String(t.utf8.count / 1024) + " KB")
+        return t.isEmpty ? "Không đọc được nội dung trang (trang trống hoặc chưa tải xong)." : t
     }
 }

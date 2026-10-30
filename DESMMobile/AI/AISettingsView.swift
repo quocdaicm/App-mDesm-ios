@@ -1,246 +1,168 @@
-// AISettingsView.swift — màn chọn nhà cung cấp AI, nhập key, dò model, tự chọn model dùng được.
-// Chuyển từ SettingsView/QuickModelSheet của LiveTranslate (đã đổi sang iOS 16, giao diện sáng theo DESM).
+// AISettingsView.swift — Cài đặt "AI riêng": chọn nhà AI, nhập khoá, dò/chọn model, kiểm tra kết nối, bật/tắt tra cứu dữ liệu DESM.
+// Chưa build/chưa thử trên máy thật.
 
 import SwiftUI
 
-/// Danh sách nhà cung cấp: chạm vào để nhập key / chọn model; kéo để đổi thứ tự ưu tiên.
 struct AIProviderListView: View {
-    @State private var order = AIStore.order()
-    @State private var tick = 0
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(order) { p in
-                    NavigationLink { AIProviderDetail(p).onDisappear { tick += 1 } } label: {
-                        AIProviderRow(provider: p, tick: tick)
-                    }
-                }
-                .onMove { from, to in
-                    order.move(fromOffsets: from, toOffset: to)
-                    AIStore.saveOrder(order)
-                }
-            } header: {
-                Text("Nhà cung cấp AI")
-            } footer: {
-                Text("Nhà ở trên được dùng trước; nếu lỗi, app tự chuyển sang nhà kế tiếp đã có key. Bấm Sửa để kéo đổi thứ tự.")
-            }
-        }
-        .id(tick)
-        .navigationTitle("AI riêng (API key)")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { EditButton() }
-    }
-}
-
-struct AIProviderRow: View {
-    let provider: AIProvider
-    let tick: Int
-
-    var body: some View {
-        let active = AIStore.config(provider) != nil
-        let hasKey = !AIStore.key(provider).isEmpty || provider == .custom
-        HStack(spacing: 12) {
-            Image(systemName: provider.icon)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(provider.color.gradient))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(provider.name).font(.system(.body, design: .rounded).weight(.medium))
-                Text(active ? "Đang dùng • \(AIStore.model(provider))"
-                     : (hasKey ? "Đã tắt" : "Chưa nhập key"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            Circle().fill(active ? Color.green : Color.secondary.opacity(0.3)).frame(width: 9, height: 9)
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-struct AIProviderDetail: View {
-    let p: AIProvider
-    @State private var key: String
-    @State private var enabled: Bool
-    @State private var model: String
-    @State private var base: String
-    @State private var testResult = ""
-    @State private var testing = false
-    @State private var models: [String] = []
-    @State private var loadingModels = false
-    @State private var probing = false
-    @State private var showPicker = false
-    @State private var modelMsg = ""
-
-    init(_ p: AIProvider) {
-        self.p = p
-        _key = State(initialValue: AIStore.key(p))
-        _enabled = State(initialValue: AIStore.enabled(p))
-        _model = State(initialValue: AIStore.model(p))
-        _base = State(initialValue: AIStore.base(p))
-    }
+    @State private var active = AIStore.activeID
+    @State private var tools = AIStore.toolsOn
+    @State private var autoSwitch = AIStore.autoSwitch
 
     var body: some View {
         Form {
             Section {
-                Toggle("Bật nhà này", isOn: $enabled)
-            } footer: {
-                Text(p.note)
-            }
-
-            Section("API key") {
-                SecureField(p == .custom ? "API key (có thể để trống)" : "Dán API key", text: $key)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button { if let s = UIPasteboard.general.string { key = s } } label: {
-                    Label("Dán từ clipboard", systemImage: "doc.on.clipboard")
+                ForEach(AIProvider.all) { p in
+                    NavigationLink {
+                        AIProviderDetailView(provider: p, active: $active)
+                    } label: {
+                        HStack {
+                            Text(p.name)
+                            Spacer()
+                            if !AIStore.key(p.id).isEmpty { Text("có khoá").font(.caption).foregroundColor(.green) }
+                            if active == p.id { Text("đang dùng").font(.caption.bold()).foregroundColor(.blue) }
+                        }
+                    }
                 }
-                if let url = p.keyURL {
-                    Link(destination: url) { Label("Lấy API key", systemImage: "arrow.up.right.square") }
-                }
-            }
-
-            Section {
-                if p == .custom {
-                    TextField("Base URL (vd. https://…/v1)", text: $base)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                }
-                TextField("Model", text: $model)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button { fetchModels() } label: {
-                    Label(loadingModels ? "Đang dò…" : "Dò danh sách model", systemImage: "list.bullet.rectangle")
-                }
-                .disabled(loadingModels || probing || (key.isEmpty && p != .custom))
-                Button { autoPick() } label: {
-                    Label(probing ? "Đang thử từng model…" : "Tự chọn model dùng được", systemImage: "wand.and.stars")
-                }
-                .disabled(loadingModels || probing || (key.isEmpty && p != .custom))
-                if !modelMsg.isEmpty { Text(modelMsg).font(.footnote) }
             } header: {
-                Text("Model")
+                Text("Nhà AI")
             } footer: {
-                Text("Bấm \"Dò danh sách model\" để xem các model key này dùng được rồi chọn, hoặc để app tự thử và chọn một model chạy được.")
+                Text("Mỗi nhà cần khoá API của chính bạn (lưu trong Keychain của máy này). Chọn một nhà làm mặc định ở màn chi tiết.")
             }
-
             Section {
-                Button { test() } label: {
-                    Label(testing ? "Đang thử…" : "Thử kết nối", systemImage: "bolt.horizontal.circle")
-                }
-                .disabled(testing || (key.isEmpty && p != .custom))
-                if !testResult.isEmpty { Text(testResult).font(.footnote) }
+                Toggle("Tự chuyển sang AI khác khi lỗi", isOn: $autoSwitch)
+            } footer: {
+                Text("Nhà đang chọn lỗi, hết hạn mức hoặc quá 60 giây không trả lời thì app tự thử nhà kế tiếp đã có khoá (tối đa 4 nhà; nhà vừa lỗi được cho nghỉ 5 phút). Lưu ý: câu hỏi và dữ liệu DESM tra được sẽ đi tới nhà AI được thử.")
+            }
+            Section {
+                NavigationLink("Nhật ký AI (tìm chỗ bị treo)") { AILogView() }
+            } footer: {
+                Text("Ghi từng bước (gửi AI, tra DESM, đọc trang) kèm thời gian và cảnh báo khi giao diện bị đứng. Không chứa khoá API hay dữ liệu. Khi app treo: mở lại app, vào đây, bấm Chia sẻ file rồi gửi lại.")
+            }
+            Section {
+                Toggle("Cho AI tự tra dữ liệu DESM (chỉ đọc)", isOn: $tools)
+            } footer: {
+                Text("Bật: AI tự gọi các API DESM trong danh mục (kiện, hạng mục, RSI, MRF, tàu, thông báo) và đọc màn đang mở để trả lời; tuyệt đối không có công cụ ghi/sửa/xoá. Dữ liệu tra được SẼ ĐƯỢC GỬI tới nhà AI đã chọn — chỉ bật khi công ty cho phép. Tắt: AI chỉ trả lời kiến thức chung.")
             }
         }
-        .navigationTitle(p.shortName)
-        .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: key) { v in AIStore.setKey(p, v) }
-        .onChange(of: enabled) { v in AIStore.setEnabled(p, v) }
-        .onChange(of: model) { v in AIStore.setModel(p, v) }
-        .onChange(of: base) { v in AIStore.setBase(p, v) }
-        .sheet(isPresented: $showPicker) {
-            AIModelPicker(models: models, current: model) { model = $0 }
-        }
-    }
-
-    private func config(model m: String) -> AIConfig {
-        let b = base.trimmingCharacters(in: .whitespacesAndNewlines)
-        return AIConfig(id: p,
-                        key: key.trimmingCharacters(in: .whitespacesAndNewlines),
-                        model: m,
-                        base: p == .custom ? b : p.defaultBase)
-    }
-
-    private func fetchModels() {
-        loadingModels = true
-        modelMsg = ""
-        Task {
-            do {
-                models = try await AIClient.listModels(config(model: model))
-                showPicker = true
-            } catch {
-                modelMsg = "❌ Không dò được: \(error.localizedDescription)"
-            }
-            loadingModels = false
-        }
-    }
-
-    private func autoPick() {
-        probing = true
-        modelMsg = ""
-        Task {
-            do {
-                let r = try await AIClient.pickWorkingModel(config(model: model)) { m in
-                    Task { @MainActor in modelMsg = "Đang thử: \(m)" }
-                }
-                models = r.all
-                if let picked = r.picked {
-                    model = picked
-                    modelMsg = "✅ Đã chọn: \(picked)"
-                } else {
-                    modelMsg = "❌ Thử 8 model đều lỗi. Bấm \"Dò danh sách model\" để chọn thủ công."
-                }
-            } catch {
-                modelMsg = "❌ Không dò được: \(error.localizedDescription)"
-            }
-            probing = false
-        }
-    }
-
-    private func test() {
-        testing = true
-        testResult = ""
-        let m = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cfg = config(model: m.isEmpty ? p.defaultModel : m)
-        Task {
-            do {
-                let r = try await AIClient.complete(
-                    cfg, system: "Reply in one short sentence.",
-                    messages: [(role: "user", text: "Say hello in Vietnamese.")],
-                    temperature: nil, timeout: 20)
-                testResult = "✅ OK: \(r)"
-            } catch {
-                testResult = "❌ \(error.localizedDescription)"
-            }
-            testing = false
-        }
+        .navigationTitle("AI riêng")
+        .onChange(of: tools) { v in AIStore.toolsOn = v }
+        .onChange(of: autoSwitch) { v in AIStore.autoSwitch = v }
+        .onAppear { active = AIStore.activeID; tools = AIStore.toolsOn; autoSwitch = AIStore.autoSwitch }
     }
 }
 
-struct AIModelPicker: View {
-    let models: [String]
-    let current: String
-    let onPick: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var search = ""
+struct AIProviderDetailView: View {
+    let provider: AIProvider
+    @Binding var active: String
 
-    private var shown: [String] {
-        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return q.isEmpty ? models : models.filter { $0.lowercased().contains(q) }
-    }
+    @State private var key = ""
+    @State private var model = ""
+    @State private var base = ""
+    @State private var models: [String] = []
+    @State private var info = ""
+    @State private var busy = false
 
     var body: some View {
-        NavigationStack {
-            List(shown, id: \.self) { m in
-                Button {
-                    onPick(m)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(m).font(.system(.callout, design: .monospaced)).foregroundStyle(.primary)
-                        Spacer()
-                        if m == current { Image(systemName: "checkmark").foregroundStyle(.green) }
-                    }
+        Form {
+            Section {
+                SecureField("Dán khoá API", text: $key)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+            } header: {
+                Text("Khoá API")
+            } footer: {
+                Text(provider.keyHelp)
+            }
+            if provider.id == "custom" {
+                Section {
+                    TextField("https://máy-chủ/v1", text: $base)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .keyboardType(.URL)
+                } header: {
+                    Text("Địa chỉ API (OpenAI-compatible)")
                 }
             }
-            .searchable(text: $search, prompt: "Tìm model")
-            .navigationTitle("Chọn model (\(models.count))")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Đóng") { dismiss() } } }
+            Section {
+                TextField("Tên model", text: $model)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                Button("Dò danh sách model") { listModels() }.disabled(busy)
+                ForEach(Array(models.prefix(80)), id: \.self) { m in
+                    Button {
+                        model = m
+                    } label: {
+                        HStack {
+                            Text(m).foregroundColor(.primary)
+                            Spacer()
+                            if m == model { Image(systemName: "checkmark").foregroundColor(.blue) }
+                        }
+                    }
+                }
+            } header: {
+                Text("Model")
+            } footer: {
+                Text("Để trống = dùng model mặc định của nhà. Model phải hỗ trợ gọi công cụ (function calling) thì AI mới tự tra được dữ liệu DESM.")
+            }
+            Section {
+                Button("Kiểm tra kết nối") { testNow() }.disabled(busy)
+                Button(active == provider.id ? "Đang dùng nhà này" : "Dùng nhà này") {
+                    save()
+                    active = provider.id
+                    AIStore.activeID = provider.id
+                }
+                if busy { ProgressView() }
+                if !info.isEmpty { Text(info).font(.footnote) }
+            }
+        }
+        .navigationTitle(provider.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            key = AIStore.key(provider.id)
+            model = AIStore.model(provider)
+            base = AIStore.baseURL(provider)
+        }
+        .onDisappear { save() }
+    }
+
+    private func save() {
+        AIStore.setKey(key, for: provider.id)
+        AIStore.setModel(model, for: provider.id)
+        if provider.id == "custom" { AIStore.setCustomBase(base) }
+    }
+
+    private func listModels() {
+        save()
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if k.isEmpty { info = "Hãy nhập khoá API trước."; return }
+        busy = true
+        info = "Đang dò model…"
+        let p = provider
+        Task {
+            do {
+                let list = try await AIClient.listModels(p, key: k)
+                await MainActor.run {
+                    models = list
+                    info = list.isEmpty ? "Không thấy model nào." : "Tìm thấy \(list.count) model — chạm để chọn."
+                    busy = false
+                }
+            } catch {
+                await MainActor.run { info = "Lỗi: " + error.localizedDescription; busy = false }
+            }
+        }
+    }
+
+    private func testNow() {
+        save()
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if k.isEmpty { info = "Hãy nhập khoá API trước."; return }
+        busy = true
+        info = "Đang kiểm tra…"
+        let p = provider
+        let m = AIStore.model(p)
+        Task {
+            let r = await AIClient.test(p, key: k, model: m)
+            await MainActor.run { info = r; busy = false }
         }
     }
 }

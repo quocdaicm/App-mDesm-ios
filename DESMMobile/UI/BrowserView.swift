@@ -188,12 +188,12 @@ struct BrowserView: View {
             })
                 .desmSheet()
         }
-        .sheet(isPresented: $model.showSettings) {
-            SettingsView(model: model)
+        .sheet(isPresented: $model.showAIChat) {
+            AIChatView(model: model, onClose: { model.showAIChat = false })
                 .desmSheet()
         }
-        .sheet(isPresented: $model.showAIChat) {
-            AIChatView(model: model)
+        .sheet(isPresented: $model.showSettings) {
+            SettingsView(model: model)
                 .desmSheet()
         }
         .sheet(item: $model.shotItem) { item in

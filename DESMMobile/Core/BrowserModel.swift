@@ -74,34 +74,11 @@ final class BrowserModel: ObservableObject {
     @AppStorage("desmDodoSlow") var dodoSlow = false
     /// Gửi kèm dữ liệu kiện đang hiển thị (màn Package) trong câu hỏi gửi Dodo
     @AppStorage("desmDodoData") var dodoData = true
-    /// Trợ lý khi chạm bong bóng: "dodo" (Dodo của web DESM) hoặc "ai" (AI riêng bằng API key — xem AI/)
+    /// Tự tra dữ liệu DESM (chỉ đọc) theo số kiện trong câu hỏi rồi gửi kèm Dodo
+    @AppStorage("desmDodoAuto") var dodoAuto = true
+    /// Chạm bong bóng mở: "dodo" (Dodo của DESM) hoặc "ai" (AI riêng, xem AI/)
     @AppStorage("desmAIEngine") var aiEngine = "dodo"
-    /// Gửi kèm dữ liệu kiện đang hiển thị cho AI riêng (dữ liệu rời khỏi máy, tới nhà cung cấp bạn chọn) — mặc định TẮT
-    @AppStorage("desmAIData") var aiData = false
     @Published var showAIChat = false
-
-    /// Giới hạn số ký tự dữ liệu trang gửi kèm cho AI riêng (12000 gọn / 40000 vừa / 120000 tối đa)
-    @AppStorage("desmAILimit") var aiLimit = 40000
-
-    /// Đọc cả trang đang mở (mọi khung, toàn bộ dòng lưới đã tải, ô lọc, văn bản) để gửi cho AI riêng.
-    /// Cho AI riêng tự tra dữ liệu DESM qua công cụ chỉ đọc (kiện, hạng mục chi tiết, RSI, MRF, WIP, tàu, thông báo…) — mặc định TẮT
-    @AppStorage("desmAITools") var aiTools = false
-    /// Gửi sẵn "ảnh chụp" dữ liệu DESM (kiện + hạng mục từng kiện, RSI, MRF, tàu, thông báo) cho AI mỗi khi chat — mặc định TẮT
-    @AppStorage("desmAIAll") var aiAll = false
-
-    @MainActor func fetchScreenTextForAI(limit: Int? = nil) async -> String {
-        let lim = limit ?? aiLimit
-        guard let wv = webView else { return "" }
-        // Có hạn chờ 5 giây: nếu trang bận/không phản hồi thì bỏ qua, tránh treo khung chat AI
-        return await withCheckedContinuation { cont in
-            var done = false
-            func finish(_ s: String) { if done { return }; done = true; cont.resume(returning: s) }
-            wv.evaluateJavaScript("(window.__desmDodo && window.__desmDodo.pageText) ? window.__desmDodo.pageText(\(lim)) : ''") { r, _ in
-                DispatchQueue.main.async { finish((r as? String) ?? "") }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finish("") }
-        }
-    }
     /// Vào app / đăng nhập xong thì tự mở màn Package (Kiện hàng) làm màn hình chính
     @AppStorage("desmOpenPackage") var openPackageOnStart = true
     var pendingHomeTab = true

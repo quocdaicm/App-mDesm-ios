@@ -1,3 +1,5 @@
+> **LƯU Ý (2026-10-30, cập nhật): "AI riêng" đã được ĐƯA LẠI bằng bản viết lại gọn trong `DESMMobile/AI/` — xem mục cuối DEV_NOTES.md. Các mô tả bên dưới là bản cũ, chỉ để tham khảo.**
+
 # BÀN GIAO CHO AI KHÁC — DESM Mobile: thêm "AI riêng" cho bong bóng Dodo
 
 Người dùng nói tiếng Việt, làm app iOS (SwiftUI, iOS 16+), build bằng GitHub Actions (IPA không ký), KHÔNG có Xcode nên mọi code dưới đây **CHƯA được biên dịch**. Đọc thêm `DEV_NOTES.md` (cuối file có 3 mục AI mới).
@@ -49,3 +51,6 @@ Sửa file có sẵn (nhỏ):
 
 ## 7. Cập nhật lượt sau (2026-10-29)
 - Đã làm mục 5.3 (fallback `pageText(20000)` trong wrapper `fetch` của DodoBubble.swift) và vá `Task { @MainActor in }` trong `AIChatView.send()`. Mục 5.1 (build) vẫn chờ người dùng chạy GitHub Actions và gửi log lỗi.
+
+## 8. Cập nhật (2026-10-30, chống treo)
+- Xem mục "AI riêng: chống treo + nhật ký" cuối DEV_NOTES.md: thêm `AI/AILog.swift`, giới hạn thời gian mọi bước, parse JSON ngoài luồng chính, khung chat không còn theo dõi BrowserModel. Khi người dùng báo treo: nhờ họ gửi file từ Cài đặt > AI riêng > Nhật ký AI > Chia sẻ file.

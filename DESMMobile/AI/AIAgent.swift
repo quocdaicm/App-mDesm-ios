@@ -1,194 +1,136 @@
-// AIAgent.swift — vòng "AI gọi công cụ" (function calling) cho cả 3 kiểu API: Gemini, Claude, OpenAI-compatible.
-// AI hỏi công cụ → app chạy (chỉ đọc) → trả kết quả → AI trả lời. Tối đa 6 vòng.
+// AIAgent.swift — vòng lặp tra cứu: hỏi AI → AI xin gọi công cụ → app chạy công cụ (chỉ đọc) → trả kết quả cho AI → lặp (tối đa 6 vòng).
+// Model/nhà không hỗ trợ công cụ (HTTP 400/404/422 ở vòng đầu) thì lùi về hỏi đáp thường.
+// Chống treo: tổng thời gian cả lượt ≤ 180 giây, mỗi lần gọi AI ≤ 60 giây, mỗi công cụ ≤ 45 giây (aiRace), gọi trùng lệnh thì dùng lại kết quả,
+// dữ liệu tra cũ được rút gọn để mỗi vòng không phình to. Mọi bước ghi vào AILog. Chưa build/chưa thử trên máy thật.
 
 import Foundation
 
-extension AIClient {
-    typealias ToolExec = (String, [String: Any]) async -> String
+enum AIAgent {
+    static let maxRounds = 6
+    static let totalSeconds: Double = 180
+    static let requestSeconds: Double = 60
+    static let toolSeconds: Double = 45
+    static let toolBudgetChars = 90_000     // tổng dữ liệu tra gửi lại AI mỗi vòng; vượt thì rút gọn kết quả cũ
+    static let keepOldChars = 3_000
 
-    /// Như `run` nhưng cho phép AI gọi công cụ. Nhà nào không hỗ trợ công cụ thì tự lùi về hỏi đáp thường.
-    static func runAgent(_ providers: [AIConfig], system: String, messages: [Msg], tools: [AITool],
-                         exec: @escaping ToolExec, status: @escaping (String) -> Void,
-                         timeout: TimeInterval = 90) async throws -> (text: String, by: AIConfig) {
-        var last: Error?
-        for c in providers {
+    static func run(provider: AIProvider, key: String, model: String, system: String,
+                    history: [AIMsg], tools: [AIToolDef],
+                    exec: @escaping (String, [String: Any]) async -> String,
+                    status: @escaping (String) -> Void,
+                    budget: Double = 180) async throws -> String {
+        let t0 = Date()
+        var msgs = history
+        var useTools = !tools.isEmpty
+        var cache: [String: String] = [:]
+        AILog.step("Bắt đầu lượt hỏi: " + provider.name + " · " + model + " · công cụ " + (useTools ? "bật" : "tắt") + " · " + String(history.count) + " tin")
+
+        for round in 0..<maxRounds {
+            try Task.checkCancellation()
+            let remaining = budget - Date().timeIntervalSince(t0)
+            if remaining < 8 {
+                AILog.add("✗ Hết " + String(Int(budget)) + "s cho cả lượt hỏi")
+                throw AIError(message: "Quá " + String(Int(budget)) + " giây mà chưa có kết quả. Hãy hỏi gọn hơn, hoặc chọn model nhanh hơn ở đầu khung chat.")
+            }
+            let wait = min(requestSeconds, remaining)
+            AILog.step("Vòng " + String(round + 1) + "/" + String(maxRounds) + ": gửi " + String(msgs.count) + " tin cho " + provider.name)
+            status(round == 0 ? "Đang suy nghĩ…" : "AI đang đọc dữ liệu vừa tra…")
+
+            var got: AITurn? = nil
             do {
-                let t = try await agent(c, system, messages, tools, exec, status, timeout)
-                return (t, c)
-            } catch {
-                if Task.isCancelled { throw error }
-                // Nhà/model không hỗ trợ công cụ → thử hỏi đáp thường với cùng nhà
-                if case AIError.http(let code, _)? = error as? AIError, [400, 404, 422].contains(code) {
-                    status("Model này không hỗ trợ công cụ, trả lời không tra DESM…")
-                    if let t = try? await complete(c, system: system, messages: messages, temperature: 0.3, timeout: 60) {
-                        return (t + "\n\n(Model này không hỗ trợ gọi công cụ nên chưa tra dữ liệu DESM. Hãy chọn model khác, ví dụ Gemini/Claude/GPT.)", c)
-                    }
+                got = try await AIClient.chat(provider, key: key, model: model, system: system, msgs: msgs, tools: useTools ? tools : [], timeout: wait)
+            } catch let e as AIError {
+                if useTools && round == 0 && (e.status == 400 || e.status == 404 || e.status == 422) {
+                    useTools = false
+                    AILog.add("Model không nhận công cụ (HTTP " + String(e.status) + ") → hỏi đáp thường")
+                    status("Model này không hỗ trợ công cụ — chuyển sang hỏi đáp thường…")
+                    got = try await AIClient.chat(provider, key: key, model: model, system: system, msgs: msgs, tools: [], timeout: min(requestSeconds, max(10, remaining - 5)))
+                } else {
+                    throw e
                 }
-                last = AIProviderError(provider: c.id.shortName, underlying: error)
             }
-        }
-        throw last ?? AIError.badResponse
-    }
+            guard let turn = got else { throw AIError(message: "Không có phản hồi.") }
 
-    private static func agent(_ c: AIConfig, _ system: String, _ messages: [Msg], _ tools: [AITool],
-                              _ exec: @escaping ToolExec, _ status: @escaping (String) -> Void,
-                              _ timeout: TimeInterval) async throws -> String {
-        switch c.id.kind {
-        case .gemini:    return try await geminiAgent(c, system, messages, tools, exec, status, timeout)
-        case .anthropic: return try await anthropicAgent(c, system, messages, tools, exec, status, timeout)
-        case .openAI:    return try await openAIAgent(c, system, messages, tools, exec, status, timeout)
-        }
-    }
+            if turn.calls.isEmpty || !useTools {
+                let t = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                AILog.step("Xong sau " + String(format: "%.1f", Date().timeIntervalSince(t0)) + "s, " + String(round + 1) + " vòng, trả lời " + String(t.count) + " ký tự")
+                return t.isEmpty ? "(AI không trả lời nội dung nào.)" : t
+            }
 
-    private static let maxSteps = 6
-
-    private static func argsDict(_ any: Any?) -> [String: Any] {
-        if let d = any as? [String: Any] { return d }
-        if let s = any as? String, let d = s.data(using: .utf8),
-           let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] { return o }
-        return [:]
-    }
-
-    // MARK: OpenAI-compatible
-    private static func openAIAgent(_ c: AIConfig, _ system: String, _ messages: [Msg], _ tools: [AITool],
-                                    _ exec: @escaping ToolExec, _ status: @escaping (String) -> Void,
-                                    _ timeout: TimeInterval) async throws -> String {
-        var base = c.base
-        while base.hasSuffix("/") { base.removeLast() }
-        let full = base.hasSuffix("/chat/completions") ? base : base + "/chat/completions"
-        guard let url = URL(string: full) else { throw AIError.badResponse }
-        var headers: [String: String] = [:]
-        if !c.key.isEmpty { headers["Authorization"] = "Bearer \(c.key)" }
-
-        var msgs: [[String: Any]] = []
-        if !system.isEmpty { msgs.append(["role": "system", "content": system]) }
-        msgs += messages.map { ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text] }
-        openAIAttach(&msgs)
-        let defs: [[String: Any]] = tools.map {
-            ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.parameters]]
-        }
-
-        for step in 0..<maxSteps {
-            var body: [String: Any] = ["model": c.model, "messages": msgs]
-            if step < maxSteps - 1 { body["tools"] = defs }
-            let root = try await post(url, headers: headers, body: body, timeout: timeout)
-            guard let choices = root["choices"] as? [[String: Any]],
-                  let message = choices.first?["message"] as? [String: Any] else { throw AIError.badResponse }
-            if let calls = message["tool_calls"] as? [[String: Any]], !calls.isEmpty {
-                var a: [String: Any] = ["role": "assistant", "tool_calls": calls]
-                if let t = message["content"] as? String, !t.isEmpty { a["content"] = t }
-                msgs.append(a)
-                for call in calls {
-                    let fn = call["function"] as? [String: Any] ?? [:]
-                    let name = fn["name"] as? String ?? ""
-                    status("Đang tra DESM: \(name)…")
-                    let result = await exec(name, argsDict(fn["arguments"]))
-                    msgs.append(["role": "tool", "tool_call_id": call["id"] as? String ?? "", "content": result])
+            AILog.add("AI xin " + String(turn.calls.count) + " công cụ: " + turn.calls.map { $0.name }.joined(separator: ", "))
+            msgs.append(.assistant(turn))
+            var results: [AIToolResult] = []
+            for c in turn.calls {
+                try Task.checkCancellation()
+                let sig = c.name + "|" + canonical(c.args)
+                var out: String
+                if let hit = cache[sig] {
+                    AILog.add("↺ " + c.name + " gọi trùng lệnh cũ → dùng lại kết quả")
+                    out = "(Lệnh này đã gọi ở vòng trước, kết quả y hệt. Hãy dùng dữ liệu đã có hoặc đổi bộ lọc.)\n" + String(hit.prefix(2000))
+                } else {
+                    status("Đang tra DESM: " + c.name + "…")
+                    AILog.step("Công cụ " + c.name + " " + argSummary(c.args))
+                    let ts = Date()
+                    let timeoutMsg = "Công cụ " + c.name + " quá " + String(Int(toolSeconds)) + " giây không trả kết quả (DESM chậm hoặc trang đang bận). Hãy báo người dùng, hoặc thử lại với bộ lọc hẹp hơn."
+                    let name = c.name
+                    let args = c.args
+                    out = await aiRace(toolSeconds, fallback: timeoutMsg) { await exec(name, args) }
+                    let timedOut = (out == timeoutMsg)
+                    AILog.add("◀ " + c.name + (timedOut ? " ✗ QUÁ THỜI GIAN " : " xong ") + "sau " + String(format: "%.1f", Date().timeIntervalSince(ts)) + "s, trả " + String(out.utf8.count / 1024) + " KB")
+                    if !timedOut { cache[sig] = out }
                 }
-                continue
+                results.append(AIToolResult(call: c, output: out))
             }
-            let t = ((message["content"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { throw AIError.badResponse }
-            return t
+            msgs.append(.tools(results))
+            msgs = trimOldToolOutputs(msgs)
         }
-        throw AIError.badResponse
+        AILog.add("✗ Hết " + String(maxRounds) + " vòng mà AI vẫn xin tra thêm")
+        return "(Đã tra \(maxRounds) vòng mà chưa đủ dữ liệu để kết luận. Hãy hỏi cụ thể hơn, ví dụ nêu số kiện.)"
     }
 
-    // MARK: Anthropic
-    private static func anthropicAgent(_ c: AIConfig, _ system: String, _ messages: [Msg], _ tools: [AITool],
-                                       _ exec: @escaping ToolExec, _ status: @escaping (String) -> Void,
-                                       _ timeout: TimeInterval) async throws -> String {
-        guard let url = URL(string: c.base) else { throw AIError.badResponse }
-        let headers = ["x-api-key": c.key, "anthropic-version": "2023-06-01"]
-        var msgs: [[String: Any]] = messages.map {
-            ["role": $0.role == "model" ? "assistant" : "user", "content": $0.text]
-        }
-        anthropicAttach(&msgs)
-        let defs: [[String: Any]] = tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.parameters] }
-
-        for step in 0..<maxSteps {
-            var body: [String: Any] = ["model": c.model, "max_tokens": 4096, "messages": msgs]
-            if !system.isEmpty { body["system"] = system }
-            if step < maxSteps - 1 { body["tools"] = defs }
-            let root = try await post(url, headers: headers, body: body, timeout: timeout)
-            guard let content = root["content"] as? [[String: Any]] else { throw AIError.badResponse }
-            let uses = content.filter { ($0["type"] as? String) == "tool_use" }
-            if !uses.isEmpty {
-                msgs.append(["role": "assistant", "content": content])
-                var results: [[String: Any]] = []
-                for u in uses {
-                    let name = u["name"] as? String ?? ""
-                    status("Đang tra DESM: \(name)…")
-                    let r = await exec(name, argsDict(u["input"]))
-                    results.append(["type": "tool_result", "tool_use_id": u["id"] as? String ?? "", "content": r])
-                }
-                msgs.append(["role": "user", "content": results])
-                continue
-            }
-            let t = content.compactMap { $0["text"] as? String }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { throw AIError.badResponse }
-            return t
-        }
-        throw AIError.badResponse
+    /// Chuỗi chuẩn hoá của tham số (khoá sắp xếp) để nhận ra lệnh gọi trùng.
+    static func canonical(_ a: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(a),
+              let d = try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys]) else { return String(describing: a.keys.sorted()) }
+        return String(decoding: d, as: UTF8.self)
     }
 
-    // MARK: Gemini
-    private static func geminiAgent(_ c: AIConfig, _ system: String, _ messages: [Msg], _ tools: [AITool],
-                                    _ exec: @escaping ToolExec, _ status: @escaping (String) -> Void,
-                                    _ timeout: TimeInterval) async throws -> String {
-        var name = c.model
-        if name.hasPrefix("models/") { name = String(name.dropFirst(7)) }
-        guard let url = URL(string: "\(c.base)/models/\(name):generateContent") else { throw AIError.badResponse }
-        var contents: [[String: Any]] = messages.map { ["role": $0.role, "parts": [["text": $0.text]]] }
-        geminiAttach(&contents)
-        let decls: [[String: Any]] = tools.map { t in
-            var d: [String: Any] = ["name": t.name, "description": t.description]
-            // Gemini không nhận object rỗng không có properties
-            if let props = t.parameters["properties"] as? [String: Any], !props.isEmpty { d["parameters"] = t.parameters }
-            return d
+    /// Tóm tắt tham số để ghi nhật ký: chỉ tên endpoint / tên khoá lọc / số, KHÔNG ghi giá trị lọc (có thể là dữ liệu công ty).
+    static func argSummary(_ a: [String: Any]) -> String {
+        var parts: [String] = []
+        if let ep = a["endpoint"] as? String { parts.append(ep) }
+        if let pj = a["params_json"] as? String,
+           let o = (try? JSONSerialization.jsonObject(with: Data(pj.utf8))) as? [String: Any], !o.isEmpty {
+            parts.append("lọc theo " + o.keys.sorted().joined(separator: ","))
         }
+        if let n = a["max_rows"] as? NSNumber { parts.append("max_rows=" + n.stringValue) }
+        if let n = a["limit"] as? NSNumber { parts.append("limit=" + n.stringValue) }
+        return parts.joined(separator: " · ")
+    }
 
-        var noTools = false          // sau một lần rỗng/lỗi hàm: bắt trả lời thẳng, không dùng công cụ
-        var lastWhy = ""
-        for step in 0..<(maxSteps + 1) {
-            var body: [String: Any] = ["contents": contents, "generationConfig": ["temperature": 0.3]]
-            if !system.isEmpty { body["system_instruction"] = ["parts": [["text": system]]] }
-            if step < maxSteps - 1 && !noTools { body["tools"] = [["functionDeclarations": decls]] }
-            let root = try await post(url, headers: ["x-goog-api-key": c.key], body: body, timeout: timeout)
-            guard let cands = root["candidates"] as? [[String: Any]],
-                  let content = cands.first?["content"] as? [String: Any],
-                  let parts = content["parts"] as? [[String: Any]], !parts.isEmpty else {
-                lastWhy = geminiWhy(root)
-                if noTools { throw AIError.empty(lastWhy) }
-                noTools = true
-                status("Gemini trả rỗng (\(lastWhy)), thử lại không dùng công cụ…")
-                continue
+    /// Khi tổng dữ liệu tra vượt ngân sách: rút gọn các kết quả công cụ CŨ (giữ nguyên lượt tra mới nhất).
+    static func trimOldToolOutputs(_ msgs: [AIMsg]) -> [AIMsg] {
+        var total = 0
+        var lastIdx = -1
+        for (i, m) in msgs.enumerated() {
+            if case .tools(let rs) = m {
+                lastIdx = i
+                for r in rs { total += r.output.utf8.count }
             }
-            let calls = parts.filter { $0["functionCall"] != nil }
-            if !calls.isEmpty {
-                contents.append(["role": "model", "parts": parts])   // giữ nguyên (kể cả thoughtSignature)
-                var resp: [[String: Any]] = []
-                for p in calls {
-                    let fc = p["functionCall"] as? [String: Any] ?? [:]
-                    let n = fc["name"] as? String ?? ""
-                    status("Đang tra DESM: \(n)…")
-                    let r = await exec(n, argsDict(fc["args"]))
-                    resp.append(["functionResponse": ["name": n, "response": ["result": r]]])
-                }
-                contents.append(["role": "user", "parts": resp])
-                continue
-            }
-            let t = parts.filter { ($0["thought"] as? Bool) != true }.compactMap { $0["text"] as? String }
-                .joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            if t.isEmpty {
-                lastWhy = geminiWhy(root)
-                if noTools { throw AIError.empty(lastWhy) }
-                noTools = true
-                status("Gemini trả rỗng (\(lastWhy)), thử lại không dùng công cụ…")
-                continue
-            }
-            return t
         }
-        throw AIError.empty(lastWhy.isEmpty ? "hết số bước tra cứu" : lastWhy)
+        if total <= toolBudgetChars { return msgs }
+        var out: [AIMsg] = []
+        for (i, m) in msgs.enumerated() {
+            if case .tools(let rs) = m, i != lastIdx {
+                let shorter: [AIToolResult] = rs.map { (r: AIToolResult) -> AIToolResult in
+                    if r.output.utf8.count <= keepOldChars { return r }
+                    return AIToolResult(call: r.call, output: String(r.output.prefix(keepOldChars)) + "\n…(đã rút gọn dữ liệu cũ)")
+                }
+                out.append(.tools(shorter))
+            } else {
+                out.append(m)
+            }
+        }
+        AILog.add("Rút gọn dữ liệu tra cũ (tổng " + String(total / 1024) + " KB vượt ngân sách)")
+        return out
     }
 }
