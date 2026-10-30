@@ -69,7 +69,7 @@ extension BrowserModel {
 
 struct DesmOutLine: Identifiable {
     let id: String
-    var rsiNo = "", rsiName = "", subcon = "", reqDate = "", pkg = "", plist = "", desc = "", code = "", pending = "", project = ""
+    var rsiNo = "", rsiName = "", subcon = "", reqDate = "", pkg = "", plist = "", desc = "", code = "", pending = "", project = "", status = ""
     var req = 0.0, avail = 0.0
     var headerId: Any = NSNull()
     var lineId: Any = NSNull()
@@ -81,6 +81,10 @@ final class DesmOutgoingVM: ObservableObject {
     @Published var rsiName = ""
     @Published var pkg = ""
     @Published var code = ""
+    @Published var subconF = ""          // lọc nhà thầu khi tìm
+    @Published var fPkg = ""             // lọc ngay trong phiếu (không gọi máy chủ)
+    @Published var fCode = ""
+    @Published var showOpts = false
     @Published var lines: [DesmOutLine] = []
     @Published var selected = Set<String>()
     @Published var qty: [String: String] = [:]
@@ -100,7 +104,7 @@ final class DesmOutgoingVM: ObservableObject {
     }
     var allSelected: Bool { !lines.isEmpty && selected.count == lines.filter { $0.valid }.count }
 
-    func reset() { rsiNo = ""; rsiName = ""; pkg = ""; code = "" }
+    func reset() { rsiNo = ""; rsiName = ""; pkg = ""; code = ""; subconF = "" }
 
     func toggle(_ l: DesmOutLine) {
         guard l.valid else { return }
@@ -114,6 +118,11 @@ final class DesmOutgoingVM: ObservableObject {
         }
     }
     func setAll(_ on: Bool) { setGroup(lines, on: on) }
+
+    static func dayText(_ d: Date) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy/MM/dd"
+        return f.string(from: d)
+    }
 
     static func fmt(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%g", v) }
 
@@ -136,7 +145,7 @@ final class DesmOutgoingVM: ObservableObject {
             catch { self.loading = false; self.error = error.localizedDescription; return }
             self.project = pj
             let e = desmFormEnc
-            let body = "PROJECT_NO=\(e(pj))&PACKING_LIST_NO=&PACKAGE_NO=\(e(self.pkg))&RSI_NO=\(e(self.rsiNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&DESCRIPTION=&DRAWING_NO=&TAG_NO=&RSI_NAME=\(e(self.rsiName))&TYPE=&CATEGORY=&SUBCON=&PENDING=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+            let body = "PROJECT_NO=\(e(pj))&PACKING_LIST_NO=&PACKAGE_NO=\(e(self.pkg))&RSI_NO=\(e(self.rsiNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&DESCRIPTION=&DRAWING_NO=&TAG_NO=&RSI_NAME=\(e(self.rsiName))&TYPE=&CATEGORY=&SUBCON=\(e(self.subconF))&PENDING=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
             defer { self.loading = false; self.searched = true }
             let list: [[String: Any]]
             do { list = try await model.desmQueryAsync("/getDesmOutGoingCreationList.do", body: body) }
@@ -149,7 +158,7 @@ final class DesmOutgoingVM: ObservableObject {
                 l.rsiNo = Self.str(r, "RSI_NO"); l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR")
                 l.reqDate = Self.str(r, "REQUEST_DATE"); l.pkg = Self.str(r, "PACKAGE_NO"); l.plist = Self.str(r, "PACKING_LIST_NO")
                 l.desc = Self.str(r, "DESCRIPTION"); l.code = Self.str(r, "MATERIAL_CODE"); l.pending = Self.str(r, "PENDING")
-                l.project = Self.str(r, "PROJECT_NO")
+                l.project = Self.str(r, "PROJECT_NO"); l.status = Self.str(r, "STATUS")
                 l.req = Self.num(r, "REQ_QTY"); l.avail = Self.num(r, "HANDOVER_AVAILABLE_QTY")
                 l.headerId = r["RSI_HEADER_ID"] ?? NSNull(); l.lineId = lineId ?? NSNull()
                 l.valid = hasIds
@@ -169,7 +178,7 @@ final class DesmOutgoingVM: ObservableObject {
         let day = f.string(from: date)
         var list: [[String: Any]] = []
         for l in chosen {
-            let q = Double((qty[l.id] ?? "").replacingOccurrences(of: ",", with: ".")) ?? 0
+            let q = Double((qty[l.id] ?? Self.fmt(l.avail)).replacingOccurrences(of: ",", with: ".")) ?? 0
             if q <= 0 { error = "Số lượng xuất của \(l.code) phải lớn hơn 0."; return }
             if q > l.avail + 0.0005 { error = "\(l.code): số lượng xuất \(Self.fmt(q)) vượt quá số còn xuất được \(Self.fmt(l.avail))."; return }
             list.append(["RSI_HEADER_ID": l.headerId, "RSI_LINE_ID": l.lineId, "HANDOVER_DATE": day, "HANDOVER_QTY": q,
@@ -207,173 +216,298 @@ struct DesmOutgoingSheet: View {
     @StateObject private var vm = DesmOutgoingVM()
     @State private var showForm = true
     @State private var confirm = false
+    @State private var path: [String] = []
+    private let headBlue = Color(red: 0.33, green: 0.65, blue: 0.98)
+    private let bg = Color(red: 0.95, green: 0.97, blue: 0.99)
 
     func field(_ title: String, _ text: Binding<String>) -> some View {
         HStack(spacing: 10) {
-            Text(title).font(.system(size: 13, weight: .semibold)).frame(width: 96, alignment: .leading)
+            Text(title).font(.system(size: 14, weight: .bold)).frame(width: 110, alignment: .leading)
             TextField("", text: text)
                 .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                .submitLabel(.search).onSubmit { vm.search(model) }
+                .padding(.horizontal, 10).padding(.vertical, 9)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.35)))
+                .submitLabel(.search).onSubmit { vm.search(model); withAnimation { showForm = false } }
         }
     }
 
     func pill(_ title: String, _ symbol: String, _ color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: symbol).font(.system(size: 14, weight: .bold))
-                .frame(maxWidth: .infinity).padding(.vertical, 10)
-                .foregroundStyle(.white).background(color, in: RoundedRectangle(cornerRadius: 12))
+            Label(title, systemImage: symbol).font(.system(size: 15, weight: .bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 11)
+                .foregroundStyle(.white).background(color, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
     }
 
+    // MARK: Bước 1 — tìm số RSI, ra danh sách phiếu
     var searchCard: some View {
         VStack(spacing: 8) {
             if showForm {
                 field("RSI No.", $vm.rsiNo)
                 field("RSI Name", $vm.rsiName)
+                field("Subcontractor", $vm.subconF)
                 field("Package No.", $vm.pkg)
-                field("Material Code", $vm.code)
             }
             HStack(spacing: 8) {
-                pill(showForm ? "Ẩn" : "Bộ lọc", showForm ? "chevron.up.2" : "chevron.down.2", Color(red: 0.07, green: 0.70, blue: 0.62)) {
+                pill(showForm ? "Hide" : "Filter", showForm ? "chevron.up.2" : "chevron.down.2", Color(red: 0.07, green: 0.70, blue: 0.62)) {
                     withAnimation { showForm.toggle() }
                 }
-                pill("Đặt lại", "arrow.counterclockwise", Color(red: 0.42, green: 0.53, blue: 0.72)) { vm.reset() }
-                pill("Tìm", "magnifyingglass", Color.tabBlue) { vm.search(model); withAnimation { showForm = false } }
+                pill("Reset", "arrow.counterclockwise", Color(red: 0.42, green: 0.53, blue: 0.72)) { vm.reset() }
+                pill("Search", "magnifyingglass", Color(red: 0.12, green: 0.56, blue: 1.0)) { vm.search(model); withAnimation { showForm = false } }
             }
         }
         .padding(12)
-        .background(Color(red: 0.95, green: 0.97, blue: 1.0))
+        .background(bg)
     }
 
-    func lineRow(_ l: DesmOutLine) -> some View {
+    func voucherCard(_ g: (String, [DesmOutLine])) -> some View {
+        let f = g.1.first
+        let left = g.1.reduce(0.0) { $0 + $1.avail }
+        return Button { path.append(g.0) } label: {
+            HStack(spacing: 0) {
+                Rectangle().fill(headBlue).frame(width: 5)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(g.0).font(.system(size: 17, weight: .bold)).underline()
+                        Spacer()
+                        Text(f?.status ?? "").font(.system(size: 14))
+                    }
+                    HStack {
+                        Text(f?.rsiName ?? "").font(.system(size: 15))
+                        Spacer()
+                        Text(f?.subcon ?? "").font(.system(size: 15))
+                    }
+                    HStack {
+                        Text("\(g.1.count) dòng · còn xuất \(DesmOutgoingVM.fmt(left))").font(.system(size: 13)).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(f?.reqDate ?? "").font(.system(size: 15))
+                    }
+                }
+                .padding(12).foregroundStyle(.primary)
+            }
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+        }.buttonStyle(.plain)
+    }
+
+    var rootView: some View {
+        VStack(spacing: 0) {
+            searchCard
+            Divider()
+            if let e = vm.error {
+                Text(e).font(.system(size: 13)).foregroundStyle(.red).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.08))
+            }
+            if let n = vm.notice {
+                Text(n).font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.10))
+            }
+            if vm.loading && vm.lines.isEmpty {
+                Spacer(); ProgressView("Đang tìm…"); Spacer()
+            } else if vm.lines.isEmpty {
+                Spacer()
+                Text(vm.searched ? "Không có phiếu nào còn hàng chờ xuất theo điều kiện này (có thể đã xuất hết)."
+                                 : "Nhập số RSI (hoặc để trống) rồi bấm Search.")
+                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(vm.groups, id: \.0) { g in voucherCard(g) }
+                    }.padding(12)
+                }
+                .background(bg)
+            }
+        }
+    }
+
+    // MARK: Bước 2 — mở phiếu: tích dòng, chỉnh số lượng, bấm OUT.G
+    func matches(_ l: DesmOutLine) -> Bool {
+        let p = vm.fPkg.trimmingCharacters(in: .whitespaces).lowercased()
+        let c = vm.fCode.trimmingCharacters(in: .whitespaces).lowercased()
+        if !p.isEmpty && !l.pkg.lowercased().contains(p) { return false }
+        if !c.isEmpty && !(l.code.lowercased().contains(c) || l.desc.lowercased().contains(c)) { return false }
+        return true
+    }
+
+    func header(_ f: DesmOutLine?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(f?.rsiNo ?? "").font(.system(size: 22, weight: .semibold))
+                Text(f?.subcon ?? "").font(.system(size: 20))
+                Spacer(minLength: 4)
+                Text(f?.status ?? "").font(.system(size: 18))
+            }
+            HStack {
+                Text(f?.rsiName ?? "").font(.system(size: 20))
+                Spacer()
+                Text(f?.reqDate ?? "").font(.system(size: 18))
+            }
+            if vm.showOpts {
+                VStack(spacing: 8) {
+                    DatePicker("Ngày xuất", selection: $vm.date, displayedComponents: .date)
+                        .font(.system(size: 14, weight: .semibold))
+                    TextField("Người nhận / ghi chú (tuỳ chọn)", text: $vm.receiver)
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 8)).foregroundStyle(.black)
+                }
+                .padding(10).background(Color.white.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
+            }
+            HStack {
+                Text(vm.showOpts ? "" : "Ngày xuất: " + DesmOutgoingVM.dayText(vm.date)).font(.system(size: 13)).opacity(0.9)
+                Spacer()
+                Button { withAnimation { vm.showOpts.toggle() } } label: {
+                    Image(systemName: vm.showOpts ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 16, weight: .bold)).foregroundStyle(headBlue)
+                        .frame(width: 56, height: 34).background(Color.white, in: RoundedRectangle(cornerRadius: 6))
+                }.buttonStyle(.plain)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(headBlue)
+    }
+
+    func filterBar(_ shown: [DesmOutLine]) -> some View {
+        let valid = shown.filter { $0.valid }
+        let allOn = !valid.isEmpty && valid.allSatisfy { vm.selected.contains($0.id) }
+        return HStack(spacing: 8) {
+            Text("PKG.").font(.system(size: 14, weight: .bold))
+            TextField("", text: $vm.fPkg).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                .padding(.horizontal, 8).padding(.vertical, 8).frame(maxWidth: .infinity)
+                .background(Color(red: 0.95, green: 0.96, blue: 0.98), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3)))
+            Text("MÃ").font(.system(size: 14, weight: .bold))
+            TextField("", text: $vm.fCode).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                .padding(.horizontal, 8).padding(.vertical, 8).frame(maxWidth: .infinity)
+                .background(Color(red: 0.95, green: 0.96, blue: 0.98), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3)))
+            Button { vm.setGroup(shown, on: !allOn) } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: allOn ? "checkmark.square.fill" : "square").font(.system(size: 22)).foregroundStyle(Color.tabBlue)
+                    Text("ALL").font(.system(size: 15, weight: .bold)).foregroundStyle(.primary)
+                }
+            }.buttonStyle(.plain)
+            Button { if !vm.selected.isEmpty { confirm = true } } label: {
+                HStack(spacing: 4) {
+                    if vm.saving { ProgressView().tint(.white) }
+                    Text(vm.selected.isEmpty ? "OUT.G" : "OUT.G (\(vm.selected.count))").font(.system(size: 16, weight: .bold))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .foregroundStyle(.white)
+                .background(vm.selected.isEmpty ? Color.gray : Color(red: 0.12, green: 0.56, blue: 1.0), in: RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(.plain).disabled(vm.saving || vm.selected.isEmpty)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(Color.white)
+    }
+
+    func card(_ l: DesmOutLine) -> some View {
         let on = vm.selected.contains(l.id)
-        return HStack(alignment: .top, spacing: 10) {
-            Button { vm.toggle(l) } label: {
-                Image(systemName: on ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 24)).foregroundStyle(l.valid ? Color.tabBlue : Color.gray)
-            }.buttonStyle(.plain).disabled(!l.valid)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(l.code.isEmpty ? "(không có mã)" : l.code).font(.system(size: 14, weight: .bold))
+        let done = max(0, l.req - l.avail)
+        return HStack(spacing: 0) {
+            Rectangle().fill(l.valid ? headBlue : Color.gray).frame(width: 5)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    Text(l.pkg.isEmpty ? "(không có package)" : l.pkg).font(.system(size: 17, weight: .bold)).underline()
+                    Spacer()
+                    Button { vm.toggle(l) } label: {
+                        Image(systemName: on ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 26)).foregroundStyle(l.valid ? Color.tabBlue : Color.gray)
+                    }.buttonStyle(.plain).disabled(!l.valid)
+                }
+                HStack(alignment: .top) {
+                    Text(l.desc).font(.system(size: 16)).lineLimit(4)
+                    Spacer(minLength: 6)
+                    TextField("0", text: Binding(get: { vm.qty[l.id] ?? DesmOutgoingVM.fmt(l.avail) }, set: { vm.qty[l.id] = $0 }))
+                        .keyboardType(.decimalPad).multilineTextAlignment(.center)
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 70).padding(.vertical, 6)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.4)))
+                }
+                HStack(spacing: 4) {
+                    Text(l.code).font(.system(size: 16))
+                    Spacer(minLength: 4)
+                    Text(String(format: "%.3f", l.avail)).font(.system(size: 17, weight: .bold)).foregroundStyle(.red)
+                    Text("/").font(.system(size: 17, weight: .bold))
+                    Text(String(format: "%.3f", done)).font(.system(size: 17, weight: .bold)).foregroundStyle(Color.tabBlue)
+                }
+                HStack(spacing: 8) {
+                    Text("đỏ = còn xuất được · xanh = đã xuất").font(.system(size: 10)).foregroundStyle(.secondary)
                     if l.pending.uppercased() == "Y" {
                         Text("Chưa duyệt").font(.system(size: 10, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
                             .foregroundStyle(.orange).background(Color.orange.opacity(0.15), in: Capsule())
                     }
                 }
-                if !l.desc.isEmpty { Text(l.desc).font(.system(size: 13)).lineLimit(3) }
-                if !l.pkg.isEmpty { Label(l.pkg, systemImage: "shippingbox").font(.system(size: 12)) }
-                HStack(spacing: 10) {
-                    Text("Yêu cầu \(DesmOutgoingVM.fmt(l.req))")
-                    Text("Còn xuất được \(DesmOutgoingVM.fmt(l.avail))").foregroundStyle(l.avail > 0 ? Color.tabBlue : Color.red)
-                }.font(.system(size: 12, weight: .medium))
-                if !l.plist.isEmpty { Text(l.plist).font(.system(size: 11)).foregroundStyle(.secondary) }
-                if !l.valid { Text("Thiếu RSI_LINE_ID/RSI_HEADER_ID trong dữ liệu — không thể xuất dòng này.").font(.system(size: 11)).foregroundStyle(.red) }
+                if !l.valid { Text("Thiếu RSI_LINE_ID/RSI_HEADER_ID — không thể xuất dòng này.").font(.system(size: 11)).foregroundStyle(.red) }
             }
-            Spacer(minLength: 4)
-            if on {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("SL xuất").font(.system(size: 10)).foregroundStyle(.secondary)
-                    TextField("0", text: Binding(get: { vm.qty[l.id] ?? "" }, set: { vm.qty[l.id] = $0 }))
-                        .keyboardType(.decimalPad).multilineTextAlignment(.trailing)
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(.red)
-                        .frame(width: 78).padding(.horizontal, 8).padding(.vertical, 6)
-                        .background(Color(red: 1, green: 1, blue: 0.88), in: RoundedRectangle(cornerRadius: 8))
-                }
-            }
+            .padding(12)
         }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
+        .background(on ? Color(red: 0.90, green: 0.95, blue: 1.0) : Color.white, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
         .onTapGesture { vm.toggle(l) }
     }
 
-    var bottomBar: some View {
-        VStack(spacing: 8) {
-            HStack {
-                DatePicker("Ngày xuất", selection: $vm.date, displayedComponents: .date).font(.system(size: 14, weight: .semibold))
+    func detail(_ rsi: String) -> some View {
+        let all = vm.lines.filter { $0.rsiNo == rsi }
+        let shown = all.filter { matches($0) }
+        return VStack(spacing: 0) {
+            header(all.first)
+            filterBar(shown)
+            Divider()
+            if let e = vm.error {
+                Text(e).font(.system(size: 13)).foregroundStyle(.red).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.08))
             }
-            TextField("Người nhận / ghi chú (tuỳ chọn)", text: $vm.receiver)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-            Button { confirm = true } label: {
-                HStack {
-                    if vm.saving { ProgressView().tint(.white) }
-                    Text("Xuất kho \(vm.selected.count) dòng").font(.system(size: 16, weight: .bold))
+            if let n = vm.notice {
+                Text(n).font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.10))
+            }
+            if all.isEmpty {
+                Spacer()
+                if vm.loading { ProgressView("Đang tải…") }
+                else {
+                    VStack(spacing: 10) {
+                        Text("Phiếu \(rsi) không còn dòng nào chờ xuất (đã xuất hết).").font(.callout).multilineTextAlignment(.center)
+                        Button("Về danh sách") { path.removeAll() }.buttonStyle(.borderedProminent)
+                    }.padding(24)
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 13)
-                .foregroundStyle(.white).background(Color(red: 0.16, green: 0.65, blue: 0.40), in: RoundedRectangle(cornerRadius: 14))
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(shown) { l in card(l) }
+                        if shown.isEmpty { Text("Không có dòng khớp bộ lọc.").font(.footnote).foregroundStyle(.secondary).padding(20) }
+                    }.padding(12)
+                }
+                .background(bg)
             }
-            .buttonStyle(.plain).disabled(vm.saving)
         }
-        .padding(12)
-        .background(.regularMaterial)
+        .navigationTitle("RSI Detail")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                searchCard
-                Divider()
-                if let e = vm.error {
-                    Text(e).font(.system(size: 13)).foregroundStyle(.red).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.red.opacity(0.08))
+        NavigationStack(path: $path) {
+            rootView
+                .navigationTitle("Xuất kho")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
                 }
-                if let n = vm.notice {
-                    Text(n).font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.10))
-                }
-                if vm.loading && vm.lines.isEmpty {
-                    Spacer(); ProgressView("Đang tìm…"); Spacer()
-                } else if vm.lines.isEmpty {
-                    Spacer()
-                    Text(vm.searched ? "Không có dòng nào còn xuất được theo điều kiện này (phiếu có thể đã xuất hết)."
-                                     : "Nhập số RSI (hoặc để trống) rồi bấm Tìm.")
-                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
-                    Spacer()
-                } else {
-                    HStack {
-                        Button { vm.setAll(!vm.allSelected) } label: {
-                            Label(vm.allSelected ? "Bỏ chọn tất cả" : "Chọn tất cả (\(vm.lines.filter { $0.valid }.count))",
-                                  systemImage: vm.allSelected ? "square" : "checkmark.square")
-                                .font(.system(size: 14, weight: .semibold))
-                        }
-                        Spacer()
-                        Text("\(vm.selected.count) đã chọn").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    List {
-                        ForEach(vm.groups, id: \.0) { g in
-                            Section {
-                                ForEach(g.1) { l in lineRow(l) }
-                            } header: {
-                                let first = g.1.first
-                                let allOn = g.1.allSatisfy { vm.selected.contains($0.id) || !$0.valid }
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(g.0).font(.system(size: 14, weight: .bold)).foregroundStyle(.primary)
-                                        Text([first?.rsiName, first?.subcon, first?.reqDate].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button(allOn ? "Bỏ chọn phiếu" : "Chọn cả phiếu") { vm.setGroup(g.1, on: !allOn) }
-                                        .font(.system(size: 12, weight: .semibold)).textCase(nil)
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.insetGrouped)
-                }
-                if !vm.selected.isEmpty { bottomBar }
-            }
-            .navigationTitle("Xuất kho")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
-            }
+                .navigationDestination(for: String.self) { rsi in detail(rsi) }
         }
-        .desmAlert(isPresented: $confirm, icon: "exclamationmark.triangle.fill", title: "Xác nhận xuất kho",
-                   message: "Ghi xuất kho \(vm.selected.count) dòng lên DESM. Thao tác này không tự hoàn tác được.",
+        .onChange(of: path) { _ in
+            // Đổi phiếu: bỏ chọn/số lượng đã gõ/bộ lọc để không xuất nhầm dòng của phiếu khác
+            vm.selected.removeAll(); vm.qty.removeAll(); vm.fPkg = ""; vm.fCode = ""; vm.error = nil; vm.notice = nil
+        }
+        .desmAlert(isPresented: $confirm, icon: "exclamationmark.triangle.fill", title: "Xác nhận xuất kho (OUT.G)",
+                   message: "Ghi xuất kho \(vm.selected.count) dòng lên DESM ngày \(DesmOutgoingVM.dayText(vm.date)). Thao tác này không tự hoàn tác được.",
                    actions: [DesmDialogAction(title: "Xuất kho", kind: .destructive) { vm.save(model) },
                              DesmDialogAction(title: "Huỷ", kind: .cancel)])
         .onAppear { if !vm.searched { vm.search(model) } }
