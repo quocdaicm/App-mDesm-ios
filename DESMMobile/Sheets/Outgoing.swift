@@ -67,6 +67,53 @@ extension BrowserModel {
     }
 }
 
+/// Thông tin đầu phiếu RSI (Remarks, người yêu cầu/kiểm tra/xác nhận/duyệt + giờ) — lấy từ dòng đầu của getDesmRsiViewList.
+/// Tên trường CHƯA kiểm chứng: dò theo mẫu tên (…REQUEST…BY, …CHECK…BY, …CONFIRM…BY, …APPROV…BY, …DATE, REMARK) nên có trường nào hiện trường đó.
+struct DesmRsiInfo {
+    var remarks = ""
+    var stages: [(label: String, by: String, date: String)] = []
+    var extra: [(String, String)] = []
+    var isEmpty: Bool { remarks.isEmpty && stages.isEmpty && extra.isEmpty }
+
+    /// "2026/10/30 13:33:05" / "2026-10-30T13:33" / "2026/10/30" -> "13:33 30/10/26"; không nhận ra thì giữ nguyên.
+    static func prettyDate(_ raw: String) -> String {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard let re = try? NSRegularExpression(pattern: #"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?"#),
+              let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) else { return t }
+        func g(_ i: Int) -> String? { Range(m.range(at: i), in: t).map { String(t[$0]) } }
+        guard let y = g(1), let mo = g(2), let d = g(3) else { return t }
+        let date = String(format: "%02d/%02d/%@", Int(d) ?? 0, Int(mo) ?? 0, String(y.suffix(2)))
+        if let hh = g(4), let mm = g(5) { return String(format: "%02d:%@ ", Int(hh) ?? 0, mm) + date }
+        return date
+    }
+
+    static func parse(_ r: [String: Any]) -> DesmRsiInfo {
+        func val(_ k: String) -> String {
+            if let s = r[k] as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let n = r[k] as? NSNumber { return n.stringValue }
+            return ""
+        }
+        var info = DesmRsiInfo()
+        let keys = r.keys.sorted()
+        for k in ["RSI_REMARKS", "RSI_REMARK", "HEADER_REMARK", "REMARK", "REMARKS"] where info.remarks.isEmpty { info.remarks = val(k) }
+        let stages: [(String, [String])] = [("Requested", ["REQUEST", "PREPARED", "CREATED"]), ("Checked", ["CHECK"]),
+                                            ("Confirmed", ["CONFIRM"]), ("Approved", ["APPROV"])]
+        for (label, stems) in stages {
+            func has(_ k: String) -> Bool { stems.contains { k.contains($0) } }
+            let by = keys.first { k in
+                let u = k.uppercased(); return has(u) && (u.hasSuffix("_BY") || u.contains("_BY_") || u.hasSuffix("BY")) && !val(k).isEmpty
+            }.map { val($0) } ?? ""
+            let date = keys.first { k in
+                let u = k.uppercased()
+                return has(u) && u.contains("DATE") && !u.contains("START") && !u.contains("END") && !u.contains("HANDOVER") && !val(k).isEmpty
+            }.map { prettyDate(val($0)) } ?? ""
+            if !by.isEmpty || !date.isEmpty { info.stages.append((label, by, date)) }
+        }
+        for k in keys where k.uppercased().contains("CCB") && !val(k).isEmpty { info.extra.append((k, val(k))) }
+        return info
+    }
+}
+
 struct DesmOutLine: Identifiable {
     let id: String
     var rsiNo = "", rsiName = "", subcon = "", reqDate = "", pkg = "", plist = "", desc = "", code = "", pending = "", project = "", status = ""
@@ -95,7 +142,21 @@ final class DesmOutgoingVM: ObservableObject {
     @Published var searched = false
     @Published var error: String? = nil
     @Published var notice: String? = nil
+    @Published var infos: [String: DesmRsiInfo] = [:]   // thông tin đầu phiếu theo số RSI (tải khi mở phiếu)
     var project = ""
+
+    /// Tải thông tin đầu phiếu (cùng truy vấn getDesmRsiViewList đã dùng ở DocDetail); lỗi thì bỏ qua, không ảnh hưởng xuất kho.
+    func loadInfo(_ model: BrowserModel, rsi: String) {
+        if infos[rsi] != nil || rsi.isEmpty { return }
+        Task { @MainActor in
+            guard let pj = try? await model.desmProjectNo() else { return }
+            let e = desmFormEnc
+            let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(e(pj))&RSI_NO=\(e(rsi))&RSI_NAME=&SUBCONTRACTOR=&ATTRIBUTE10=&MATERIAL_CODE=&START_REQUEST_DATE=&END_REQUEST_DATE=&BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&PACKAGE_NO=&ITEM_DESC=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
+            guard let rows = try? await model.desmQueryAsync("/getDesmRsiViewList.do", body: body) else { return }
+            let row = rows.first { Self.str($0, "RSI_NO") == rsi } ?? rows.first
+            self.infos[rsi] = row.map { DesmRsiInfo.parse($0) } ?? DesmRsiInfo()
+        }
+    }
 
     var groups: [(String, [DesmOutLine])] {
         var order: [String] = []; var map: [String: [DesmOutLine]] = [:]
@@ -309,7 +370,7 @@ struct DesmOutgoingSheet: View {
             } else if vm.lines.isEmpty {
                 Spacer()
                 Text(vm.searched ? "Không có phiếu nào còn hàng chờ xuất theo điều kiện này (có thể đã xuất hết)."
-                                 : "Nhập số RSI (hoặc để trống) rồi bấm Search.")
+                                 : "Nhập số RSI (hoặc tên RSI) rồi bấm Search. Để trống sẽ tìm toàn bộ và có thể mất ~10 giây.")
                     .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
                 Spacer()
             } else {
@@ -332,7 +393,7 @@ struct DesmOutgoingSheet: View {
         return true
     }
 
-    func header(_ f: DesmOutLine?) -> some View {
+    func header(_ f: DesmOutLine?, info: DesmRsiInfo? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(f?.rsiNo ?? "").font(.system(size: 22, weight: .semibold))
@@ -344,6 +405,28 @@ struct DesmOutgoingSheet: View {
                 Text(f?.rsiName ?? "").font(.system(size: 20))
                 Spacer()
                 Text(f?.reqDate ?? "").font(.system(size: 18))
+            }
+            if vm.showOpts, let info = info, !info.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("REMARKS").font(.system(size: 15, weight: .bold))
+                    Text(info.remarks.isEmpty ? " " : info.remarks)
+                        .font(.system(size: 15)).foregroundStyle(.black)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading).padding(8)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                    ForEach(Array(info.stages.enumerated()), id: \.offset) { _, st in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(st.label) by :").font(.system(size: 14))
+                            Text(st.by.isEmpty ? "-" : st.by).font(.system(size: 14, weight: .semibold))
+                            Spacer(minLength: 4)
+                            Text(st.date).font(.system(size: 13))
+                        }
+                    }
+                    ForEach(Array(info.extra.enumerated()), id: \.offset) { _, kv in
+                        Text("\(kv.0) : \(kv.1)").font(.system(size: 13))
+                    }
+                }
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
             }
             if vm.showOpts {
                 VStack(spacing: 8) {
@@ -457,7 +540,7 @@ struct DesmOutgoingSheet: View {
         let all = vm.lines.filter { $0.rsiNo == rsi }
         let shown = all.filter { matches($0) }
         return VStack(spacing: 0) {
-            header(all.first)
+            header(all.first, info: vm.infos[rsi])
             filterBar(shown)
             Divider()
             if let e = vm.error {
@@ -490,6 +573,7 @@ struct DesmOutgoingSheet: View {
         }
         .navigationTitle("RSI Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { vm.loadInfo(model, rsi: rsi) }
     }
 
     var body: some View {
@@ -510,6 +594,7 @@ struct DesmOutgoingSheet: View {
                    message: "Ghi xuất kho \(vm.selected.count) dòng lên DESM ngày \(DesmOutgoingVM.dayText(vm.date)). Thao tác này không tự hoàn tác được.",
                    actions: [DesmDialogAction(title: "Xuất kho", kind: .destructive) { vm.save(model) },
                              DesmDialogAction(title: "Huỷ", kind: .cancel)])
-        .onAppear { if !vm.searched { vm.search(model) } }
+        // Không tự tìm khi mở tab: log API (2026-10-30) cho thấy getDesmOutGoingCreationList với bộ lọc TRỐNG mất ~9 s ở máy chủ
+        // (dù chỉ trả 7,6 KB), còn khi có bộ lọc thì ~0,4 s. Người dùng nhập RSI No / Name rồi bấm Search.
     }
 }

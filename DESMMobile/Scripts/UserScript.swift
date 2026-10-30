@@ -659,6 +659,394 @@ extension BrowserModel {
               onClose();
             });
           }
+          // Danh sách hạng mục có ô tích + số lượng + ALL + OUT.G / RETURN, dùng chung cho mọi màn RSI Detail / MRF Detail.
+          // RSI: /getDesmOutGoingCreationList.do + /saveDesmRsiOutSave.do (Sheets/Outgoing.swift) · MRF: /getDesmReturnCreationList.do + /saveDesmMrfReturnSave.do (Sheets/MrfReturn.swift)
+          function rsiTickList(win, doc, idoc, b, h, alive, noInfo) {
+              function el(tag, cls, text) { var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+              function dash(v) { return v ? v : '-'; }
+              function fnum(v) {
+                var t = String(v == null ? '' : v).replace(/,/g, ''), n = parseFloat(t);
+                if (t === '' || isNaN(n)) return '-';
+                return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+              }
+              function sameStr(a, b2) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b2 == null ? '' : b2).replace(/\s+/g, ' ').trim(); }
+              function rsiParam(over) {
+                var p = { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', ATTRIBUTE10: '', MATERIAL_CODE: '',
+                  START_REQUEST_DATE: '', END_REQUEST_DATE: '', BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '',
+                  PACKAGE_NO: '', ITEM_DESC: '', MASTER_SHOP_UNIT: '', MASTER_SHOP_BLDG: '', SHOP_UNIT: '', SHOP_BLDG: '' };
+                for (var k in over) p[k] = over[k];
+                if (!p.PROJECT_NO) p.PROJECT_NO = diProj(idoc);
+                return p;
+              }
+              // Thông tin đầu phiếu: Remarks + Requested/Checked/Confirmed/Approved by (+ giờ). Tên trường CHƯA kiểm chứng: dò theo mẫu tên.
+              var infoEl = el('div', 'desm-dcard desm-rsi-info'); infoEl.style.display = 'none'; if (!noInfo) b.appendChild(infoEl);
+              function prettyDate(v) {
+                var t = String(v == null ? '' : v).trim(), m = /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/.exec(t);
+                if (!m) return t;
+                function p2(n) { return ('0' + n).slice(-2); }
+                var d = p2(m[3]) + '/' + p2(m[2]) + '/' + m[1].slice(-2);
+                return m[4] != null ? p2(m[4]) + ':' + m[5] + ' ' + d : d;
+              }
+              function showInfo(r) {
+                if (noInfo || !r || !alive()) return;
+                var keys = Object.keys(r), rows = [], rem = '';
+                function val(k) { var v = r[k]; return v == null ? '' : String(v).trim(); }
+                ['RSI_REMARKS', 'RSI_REMARK', 'HEADER_REMARK', 'REMARK', 'REMARKS'].forEach(function(k) { if (!rem) rem = val(k); });
+                [['Requested', ['REQUEST', 'PREPARED', 'CREATED']], ['Checked', ['CHECK']], ['Confirmed', ['CONFIRM']], ['Approved', ['APPROV']]].forEach(function(st) {
+                  function has(k) { return st[1].some(function(x) { return k.indexOf(x) >= 0; }); }
+                  var by = '', dt = '';
+                  keys.forEach(function(k) {
+                    var u = k.toUpperCase(); if (!has(u) || !val(k)) return;
+                    if (!by && /BY$|_BY_/.test(u)) by = val(k);
+                    else if (!dt && u.indexOf('DATE') >= 0 && !/START|END|HANDOVER/.test(u)) dt = prettyDate(val(k));
+                  });
+                  if (by || dt) rows.push([st[0] + ' by :', by || '-', dt]);
+                });
+                keys.forEach(function(k) { if (/CCB/i.test(k) && val(k)) rows.push([k + ' :', val(k), '']); });
+                if (!rem && !rows.length) return;
+                infoEl.appendChild(el('div', 'desm-d-h', 'REMARKS'));
+                infoEl.appendChild(el('div', 'desm-d-l', rem || '-'));
+                rows.forEach(function(x) {
+                  var row = el('div', 'desm-rsi-row'); row.appendChild(el('span', '', x[0] + ' ' + x[1])); row.appendChild(el('span', '', x[2])); infoEl.appendChild(row);
+                });
+                infoEl.style.display = '';
+              }
+              var fb = el('div', 'desm-sub-filter');
+              var fp = doc.createElement('input'); fp.placeholder = 'PKG.'; fp.className = 'desm-sub-in';
+              var fs = doc.createElement('input'); fs.placeholder = 'SCH.'; fs.className = 'desm-sub-in';
+              fb.appendChild(fp); fb.appendChild(fs); b.appendChild(fb);
+              // Ngày xuất + người nhận (như phần tuỳ chọn của tab Xuất kho)
+              var ob = el('div', 'desm-sub-filter');
+              var od = doc.createElement('input'); od.type = 'date'; od.className = 'desm-sub-in';
+              var tdy = new Date(); od.value = tdy.getFullYear() + '-' + ('0' + (tdy.getMonth() + 1)).slice(-2) + '-' + ('0' + tdy.getDate()).slice(-2);
+              var orc = doc.createElement('input'); orc.placeholder = 'Người nhận / ghi chú'; orc.className = 'desm-sub-in';
+              ob.appendChild(od); ob.appendChild(orc); b.appendChild(ob);
+              // Thanh ALL + OUT.G
+              var bar = el('div', 'desm-ditems-bar desm-out-bar');
+              var allCb = doc.createElement('input'); allCb.type = 'checkbox'; allCb.className = 'desm-chk desm-out-chk';
+              var barTxt = el('span', 'desm-cards-count', 'ALL');
+              var outBtn = el('button', 'desm-out-btn', 'OUT.G'); outBtn.type = 'button'; outBtn.disabled = true;
+              bar.appendChild(allCb); bar.appendChild(barTxt); bar.appendChild(outBtn); b.appendChild(bar);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              var msg = el('div', 'desm-detail-note', '');
+              b.appendChild(msg); b.appendChild(rn); b.appendChild(rl);
+              var all = [], out = [], items = [], sel = {}, qty = {}, outOk = false, pending = 2, saving = false;
+              function nz(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toLowerCase(); }
+              function qn(v) { var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+              function fq(v) { return v === Math.round(v) ? String(Math.round(v)) : String(Math.round(v * 1000) / 1000); }
+              function say(t, c) { msg.textContent = t || ''; msg.style.color = c || ''; }
+              function validOut(o) { return o && o.RSI_LINE_ID != null && o.RSI_LINE_ID !== '' && o.RSI_HEADER_ID != null && o.RSI_HEADER_ID !== ''; }
+              // Ghép dòng của phiếu (getDesmRsiViewList) với dòng còn xuất được (getDesmOutGoingCreationList)
+              function build() {
+                var pool = {}, used = [], outs = out.filter(function(o) { return sameStr(o.RSI_NO, h.RSI_NO); });
+                outs.forEach(function(o) { var k = nz(o.PACKAGE_NO) + '|' + nz(o.MATERIAL_CODE); (pool[k] = pool[k] || []).push(o); });
+                items = all.map(function(r) {
+                  var o = null;
+                  if (r.RSI_LINE_ID != null && r.RSI_LINE_ID !== '') {
+                    for (var i = 0; i < outs.length; i++) if (used.indexOf(outs[i]) < 0 && String(outs[i].RSI_LINE_ID) === String(r.RSI_LINE_ID)) { o = outs[i]; break; }
+                  }
+                  if (!o) { var arr = pool[nz(r.PACKAGE_NO) + '|' + nz(r.MATERIAL_CODE)] || []; for (var j = 0; j < arr.length; j++) if (used.indexOf(arr[j]) < 0) { o = arr[j]; break; } }
+                  if (o) used.push(o);
+                  return { r: r, o: o, id: validOut(o) ? String(o.RSI_LINE_ID) : '' };
+                });
+                // Dòng còn xuất được nhưng không ghép được với danh sách phiếu: vẫn hiện để không bỏ sót
+                outs.forEach(function(o) { if (used.indexOf(o) < 0) items.push({ r: o, o: o, id: validOut(o) ? String(o.RSI_LINE_ID) : '' }); });
+                var ids = {}; items.forEach(function(it) { if (it.id) ids[it.id] = 1; });
+                for (var k in sel) if (!ids[k]) delete sel[k];
+              }
+              function shownItems() {
+                var p = fp.value.trim().toLowerCase(), s = fs.value.trim().toLowerCase();
+                return items.filter(function(it) {
+                  var r = it.r;
+                  return (!p || String(r.PACKAGE_NO || '').toLowerCase().indexOf(p) >= 0) &&
+                    (!s || (String(r.DESCRIPTION || '') + ' ' + String(r.MATERIAL_CODE || '')).toLowerCase().indexOf(s) >= 0);
+                });
+              }
+              function toggle(it) {
+                if (!it.id || saving) return;
+                if (sel[it.id]) delete sel[it.id];
+                else { sel[it.id] = 1; if (qty[it.id] == null || qty[it.id] === '') qty[it.id] = fq(qn(it.o.HANDOVER_AVAILABLE_QTY)); }
+                draw();
+              }
+              function refreshBar(shown) {
+                var n = Object.keys(sel).length, v = shown.filter(function(it) { return it.id; });
+                allCb.checked = v.length > 0 && v.every(function(it) { return sel[it.id]; });
+                outBtn.textContent = n ? 'OUT.G (' + n + ')' : 'OUT.G';
+                outBtn.disabled = saving || !n;
+                barTxt.textContent = 'ALL' + (v.length ? ' · ' + v.length + ' dòng xuất được' : '');
+              }
+              function draw() {
+                while (rl.firstChild) rl.removeChild(rl.firstChild);
+                var rows = shownItems();
+                rn.textContent = all.length || items.length ? rows.length + ' / ' + items.length + ' hạng mục' : 'RSI này không có hạng mục.';
+                if (!outOk && !pending) rn.textContent += ' · chưa tải được dữ liệu xuất kho nên chưa tích chọn được';
+                rows.forEach(function(it) {
+                  var r = it.r, on = !!(it.id && sel[it.id]);
+                  var c = el('div', 'desm-rsi-card' + (on ? ' desm-sel' : ''));
+                  var t1 = el('div', 'desm-rsi-top'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                  if (it.id) {
+                    var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk desm-out-chk'; cb.checked = on; t1.appendChild(cb);
+                  }
+                  c.appendChild(t1);
+                  var t2 = el('div', 'desm-rsi-top'); t2.appendChild(el('span', 'desm-ditem-l', dash(r.DESCRIPTION)));
+                  if (it.id) {
+                    var qi = doc.createElement('input'); qi.type = 'text'; qi.setAttribute('inputmode', 'decimal'); qi.className = 'desm-sub-in desm-out-qty';
+                    qi.value = qty[it.id] != null ? qty[it.id] : fq(qn(it.o.HANDOVER_AVAILABLE_QTY));
+                    qi.addEventListener('click', function(e) { e.stopPropagation(); });
+                    qi.addEventListener('input', (function(id) { return function() { qty[id] = qi.value; }; })(it.id));
+                    t2.appendChild(qi);
+                  }
+                  c.appendChild(t2);
+                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                  if (it.o) {
+                    var av = qn(it.o.HANDOVER_AVAILABLE_QTY), dn = Math.max(0, qn(it.o.REQ_QTY) - av);
+                    var q = el('span', ''); var a1 = el('b', 'desm-out-av', av.toFixed(3)), a2 = el('b', 'desm-out-done', dn.toFixed(3));
+                    q.appendChild(a1); q.appendChild(doc.createTextNode(' / ')); q.appendChild(a2); ft.appendChild(q);
+                  } else {
+                    ft.appendChild(el('span', '', fnum(r.REQ_QTY) + ' / ' + fnum(r.HANDOVER_QTY) + ' ' + (r.UNIT || '')));
+                  }
+                  c.appendChild(ft);
+                  if (it.o) {
+                    var hint = el('div', 'desm-ditem-l desm-out-hint', 'đỏ = còn xuất được · xanh = đã xuất' + (String(it.o.PENDING || '').toUpperCase() === 'Y' ? ' · Chưa duyệt' : ''));
+                    c.appendChild(hint);
+                  }
+                  c.addEventListener('click', function() { toggle(it); });
+                  rl.appendChild(c);
+                });
+                refreshBar(rows);
+              }
+              fp.addEventListener('input', draw); fs.addEventListener('input', draw);
+              allCb.addEventListener('click', function(e) { e.preventDefault(); });
+              bar.addEventListener('click', function(e) {
+                if (e.target === outBtn || saving) return;
+                var v = shownItems().filter(function(it) { return it.id; }), on = !(v.length && v.every(function(it) { return sel[it.id]; }));
+                v.forEach(function(it) {
+                  if (on) { sel[it.id] = 1; if (qty[it.id] == null || qty[it.id] === '') qty[it.id] = fq(qn(it.o.HANDOVER_AVAILABLE_QTY)); }
+                  else delete sel[it.id];
+                });
+                draw();
+              });
+              function settled() { if (!alive()) return; pending--; if (pending <= 0) { pending = 0; build(); draw(); } }
+              function loadOut(done) {
+                diAjax(idoc, '/getDesmOutGoingCreationList.do', { PROJECT_NO: h.PROJECT_NO || diProj(idoc), PACKING_LIST_NO: '', PACKAGE_NO: '', RSI_NO: h.RSI_NO,
+                  MATERIAL_CODE: '', REQUEST_START_DATE: '', ATTRIBUTE10: '', REQUEST_END_DATE: '', DESCRIPTION: '', DRAWING_NO: '', TAG_NO: '', RSI_NAME: '',
+                  TYPE: '', CATEGORY: '', SUBCON: '', PENDING: '', MASTER_SHOP_UNIT: '', MASTER_SHOP_BLDG: '', SHOP_UNIT: '', SHOP_BLDG: '' },
+                  function(list) { out = [].slice.call(list); outOk = true; done(); },
+                  function() { out = []; outOk = false; done(); });
+              }
+              // OUT.G: kiểm tra giống tab Xuất kho rồi POST /saveDesmRsiOutSave.do
+              outBtn.addEventListener('click', function() {
+                if (saving) return;
+                var chosen = items.filter(function(it) { return it.id && sel[it.id]; });
+                if (!chosen.length) return;
+                var day = od.value; if (!day) { say('Chọn ngày xuất.', '#dc2626'); return; }
+                day = day.replace(/-/g, '/');
+                var list = [], bad = '';
+                chosen.forEach(function(it) {
+                  var o = it.o, q = qn(qty[it.id]), av = qn(o.HANDOVER_AVAILABLE_QTY);
+                  if (bad) return;
+                  if (q <= 0) { bad = 'Số lượng xuất của ' + o.MATERIAL_CODE + ' phải lớn hơn 0.'; return; }
+                  if (q > av + 0.0005) { bad = o.MATERIAL_CODE + ': số lượng xuất ' + fq(q) + ' vượt quá số còn xuất được ' + fq(av) + '.'; return; }
+                  list.push({ RSI_HEADER_ID: o.RSI_HEADER_ID, RSI_LINE_ID: o.RSI_LINE_ID, HANDOVER_DATE: day, HANDOVER_QTY: q,
+                    MATERIAL_CODE: o.MATERIAL_CODE, PROJECT_NO: o.PROJECT_NO || h.PROJECT_NO || diProj(idoc), RECEIVER_NAME: orc.value.trim() });
+                });
+                if (bad) { say(bad, '#dc2626'); return; }
+                if (win.confirm && !win.confirm('Ghi xuất kho ' + list.length + ' dòng lên DESM ngày ' + day + '? Thao tác này không tự hoàn tác được.')) return;
+                saving = true; say('Đang lưu…', ''); refreshBar(shownItems());
+                var json = JSON.stringify(list);
+                function fin(text, color) { saving = false; say(text, color); refreshBar(shownItems()); }
+                mrrPost(win, '/saveDesmRsiOutSave.do', { updateList: json }, function(d) {
+                  if (!d || typeof d !== 'object') { fin('Phản hồi không rõ. Hãy kiểm tra trên web trước khi thử lại.', '#dc2626'); return; }
+                  if (d.error == null) {
+                    sel = {}; qty = {}; say('Đã xuất kho ' + list.length + ' dòng ✓', '#15803d'); saving = false;
+                    pending = 1; loadOut(settled);
+                  } else if (d.error === 'QTY') {
+                    fin('Vượt số lượng được xuất ở một dòng (còn xuất được: ' + (d.HANDOVER_AVAILABLE_QTY == null ? '?' : d.HANDOVER_AVAILABLE_QTY) + '). Tải lại màn hình để kiểm tra.', '#dc2626');
+                  } else fin(String(d.error), '#dc2626');
+                }, function(e) { fin('Không lưu được: ' + e + '. Kiểm tra trên web xem đã xuất chưa trước khi thử lại.', '#dc2626'); },
+                { label: 'Xuất kho (RSI Detail)', payload: json, before: '' });
+              });
+              diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PROJECT_NO: h.PROJECT_NO, RSI_NO: h.RSI_NO }), function(list) {
+                all = [].filter.call(list, function(r) { return sameStr(r.RSI_NO, h.RSI_NO); }); showInfo(all[0]); settled();
+              }, function() { if (alive()) { rn.textContent = 'Không tải được danh sách hạng mục của RSI.'; all = []; settled(); } });
+              loadOut(settled);
+          }
+          function mrfTickList(win, doc, idoc, b, h, unit, alive) {
+              function el(tag, cls, text) { var e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+              function dash(v) { return v ? v : '-'; }
+              function fnum(v) {
+                var t = String(v == null ? '' : v).replace(/,/g, ''), n = parseFloat(t);
+                if (t === '' || isNaN(n)) return '-';
+                return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+              }
+              function sameStr(a, b2) { return String(a == null ? '' : a).replace(/\s+/g, ' ').trim() === String(b2 == null ? '' : b2).replace(/\s+/g, ' ').trim(); }
+              function mrfParam(over) {
+                var p = { PROJECT_NO: '', RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
+                  ZIM_ATTRIBUTE10: '', RSI_BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '', MRF_NO: '', MRF_NAME: '',
+                  PACKAGE_NO: '', ITEM_DESC: '', RETURN_TYPE: '', MRF_BALANCE_QTY: '' };
+                for (var k in over) p[k] = over[k];
+                if (!p.PROJECT_NO) p.PROJECT_NO = diProj(idoc);
+                return p;
+              }
+              var fb = el('div', 'desm-sub-filter');
+              var fp = doc.createElement('input'); fp.placeholder = 'PKG.'; fp.className = 'desm-sub-in';
+              var fs = doc.createElement('input'); fs.placeholder = 'SCH.'; fs.className = 'desm-sub-in';
+              fb.appendChild(fp); fb.appendChild(fs); b.appendChild(fb);
+              var ob = el('div', 'desm-sub-filter');
+              var od = doc.createElement('input'); od.type = 'date'; od.className = 'desm-sub-in';
+              var tdy = new Date(); od.value = tdy.getFullYear() + '-' + ('0' + (tdy.getMonth() + 1)).slice(-2) + '-' + ('0' + tdy.getDate()).slice(-2);
+              ob.appendChild(od); b.appendChild(ob);
+              var bar = el('div', 'desm-ditems-bar desm-out-bar');
+              var allCb = doc.createElement('input'); allCb.type = 'checkbox'; allCb.className = 'desm-chk desm-out-chk';
+              var barTxt = el('span', 'desm-cards-count', 'ALL');
+              var outBtn = el('button', 'desm-out-btn', 'RETURN'); outBtn.type = 'button'; outBtn.disabled = true;
+              bar.appendChild(allCb); bar.appendChild(barTxt); bar.appendChild(outBtn); b.appendChild(bar);
+              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
+              var msg = el('div', 'desm-detail-note', '');
+              b.appendChild(msg); b.appendChild(rn); b.appendChild(rl);
+              var all = [], out = [], items = [], sel = {}, qty = {}, outOk = false, pending = 2, saving = false;
+              function nz(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toLowerCase(); }
+              function qn(v) { var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+              function fq(v) { return v === Math.round(v) ? String(Math.round(v)) : String(Math.round(v * 1000) / 1000); }
+              function say(t, c) { msg.textContent = t || ''; msg.style.color = c || ''; }
+              function has(v) { return v != null && v !== ''; }
+              function validOut(o) { return o && has(o.MRF_LINE_ID) && has(o.MRF_HEADER_ID); }
+              function oid(o) { return validOut(o) ? String(o.MRF_LINE_ID) + '-' + (has(o.RSI_LINE_ID) ? String(o.RSI_LINE_ID) : '') : ''; }
+              // Ghép dòng của MRF (getMrfSummaryList) với dòng còn trả được (getDesmReturnCreationList)
+              function build() {
+                var used = [], outs = out.filter(function(o) { return sameStr(o.MRF_NO, h.MRF_NO); });
+                function free(f) { for (var i = 0; i < outs.length; i++) if (used.indexOf(outs[i]) < 0 && f(outs[i])) return outs[i]; return null; }
+                items = all.map(function(r) {
+                  var o = null;
+                  if (has(r.MRF_LINE_ID)) o = free(function(x) { return String(x.MRF_LINE_ID) === String(r.MRF_LINE_ID) && (!has(r.RSI_LINE_ID) || !has(x.RSI_LINE_ID) || String(x.RSI_LINE_ID) === String(r.RSI_LINE_ID)); });
+                  if (!o) o = free(function(x) { return nz(x.PACKAGE_NO) === nz(r.PACKAGE_NO) && nz(x.MATERIAL_CODE) === nz(r.MATERIAL_CODE) && (!has(r.RSI_NO) || !has(x.RSI_NO) || nz(x.RSI_NO) === nz(r.RSI_NO)); });
+                  if (o) used.push(o);
+                  return { r: r, o: o, id: oid(o) };
+                });
+                // Dòng còn trả được nhưng không ghép được: vẫn hiện để không bỏ sót
+                outs.forEach(function(o) { if (used.indexOf(o) < 0) items.push({ r: o, o: o, id: oid(o) }); });
+                var ids = {}; items.forEach(function(it) { if (it.id) ids[it.id] = 1; });
+                for (var k in sel) if (!ids[k]) delete sel[k];
+              }
+              function shownItems() {
+                var p = fp.value.trim().toLowerCase(), s = fs.value.trim().toLowerCase();
+                return items.filter(function(it) {
+                  var r = it.r;
+                  return (!p || String(r.PACKAGE_NO || '').toLowerCase().indexOf(p) >= 0) &&
+                    (!s || (String(r.DESCRIPTION || r.RSI_DESCRIPTION || '') + ' ' + String(r.MATERIAL_CODE || '')).toLowerCase().indexOf(s) >= 0);
+                });
+              }
+              function avail(it) { return qn(it.o.RETURN_AVAILABLE_QTY); }
+              function toggle(it) {
+                if (!it.id || saving) return;
+                if (sel[it.id]) delete sel[it.id];
+                else { sel[it.id] = 1; if (qty[it.id] == null || qty[it.id] === '') qty[it.id] = fq(avail(it)); }
+                draw();
+              }
+              function refreshBar(shown) {
+                var n = Object.keys(sel).length, v = shown.filter(function(it) { return it.id; });
+                allCb.checked = v.length > 0 && v.every(function(it) { return sel[it.id]; });
+                outBtn.textContent = n ? 'RETURN (' + n + ')' : 'RETURN';
+                outBtn.disabled = saving || !n;
+                barTxt.textContent = 'ALL' + (v.length ? ' · ' + v.length + ' dòng trả được' : '');
+              }
+              function draw() {
+                while (rl.firstChild) rl.removeChild(rl.firstChild);
+                var rows = shownItems();
+                rn.textContent = items.length ? rows.length + ' / ' + items.length + ' dòng' : 'MRF này không có dòng nào.';
+                if (!outOk && !pending) rn.textContent += ' · chưa tải được dữ liệu trả hàng nên chưa tích chọn được';
+                rows.forEach(function(it) {
+                  var r = it.r, on = !!(it.id && sel[it.id]);
+                  var c = el('div', 'desm-rsi-card desm-mrf-card' + (on ? ' desm-sel' : ''));
+                  var t1 = el('div', 'desm-rsi-top'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO)));
+                  var tr = el('span', 'desm-mrf-type', dash(r.RETURN_TYPE || r.TYPE)); t1.appendChild(tr);
+                  if (it.id) {
+                    var cb = doc.createElement('input'); cb.type = 'checkbox'; cb.className = 'desm-chk desm-out-chk'; cb.checked = on; t1.appendChild(cb);
+                  }
+                  c.appendChild(t1);
+                  if (r.RSI_NAME) c.appendChild(el('div', 'desm-ditem-no', dash(r.RSI_NAME)));
+                  c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
+                  var t2 = el('div', 'desm-rsi-top'); t2.appendChild(el('span', 'desm-ditem-l', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
+                  if (it.id) {
+                    var qi = doc.createElement('input'); qi.type = 'text'; qi.setAttribute('inputmode', 'decimal'); qi.className = 'desm-sub-in desm-out-qty';
+                    qi.value = qty[it.id] != null ? qty[it.id] : fq(avail(it));
+                    qi.addEventListener('click', function(e) { e.stopPropagation(); });
+                    qi.addEventListener('input', (function(id) { return function() { qty[id] = qi.value; }; })(it.id));
+                    t2.appendChild(qi);
+                  }
+                  c.appendChild(t2);
+                  c.appendChild(el('div', 'desm-ditem-l', 'DWG : ' + (r.DRAWING_NO || 'N/A') + '   TAG : ' + (r.TAG_NO || 'N/A')));
+                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
+                  if (it.o) {
+                    var av = avail(it), dn = Math.max(0, qn(it.o.REQ_RETURN_QTY) - av);
+                    var q = el('span', ''); q.appendChild(el('b', 'desm-out-av', av.toFixed(3))); q.appendChild(doc.createTextNode(' / ')); q.appendChild(el('b', 'desm-out-done', dn.toFixed(3)));
+                    ft.appendChild(q);
+                  } else {
+                    ft.appendChild(el('span', 'desm-mrf-type', fnum(r.MRF_REQ_RETURN_QTY) + ' / ' + fnum(r.MRF_RETURN_QTY) + ' ' + (r.UNIT || unit || '')));
+                  }
+                  c.appendChild(ft);
+                  c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + '   Req : ' + dash(r.RETURN_REQ_DATE)));
+                  if (it.o) c.appendChild(el('div', 'desm-ditem-l desm-out-hint', 'đỏ = còn trả được · xanh = đã trả'));
+                  c.addEventListener('click', function() { toggle(it); });
+                  rl.appendChild(c);
+                });
+                refreshBar(rows);
+              }
+              fp.addEventListener('input', draw); fs.addEventListener('input', draw);
+              allCb.addEventListener('click', function(e) { e.preventDefault(); });
+              bar.addEventListener('click', function(e) {
+                if (e.target === outBtn || saving) return;
+                var v = shownItems().filter(function(it) { return it.id; }), on = !(v.length && v.every(function(it) { return sel[it.id]; }));
+                v.forEach(function(it) {
+                  if (on) { sel[it.id] = 1; if (qty[it.id] == null || qty[it.id] === '') qty[it.id] = fq(avail(it)); }
+                  else delete sel[it.id];
+                });
+                draw();
+              });
+              function settled() { if (!alive()) return; pending--; if (pending <= 0) { pending = 0; build(); draw(); } }
+              function loadOut(done) {
+                diAjax(idoc, '/getDesmReturnCreationList.do', { PROJECT_NO: h.PROJECT_NO || diProj(idoc), PACKAGE_NO: '', MRF_NO: h.MRF_NO, MATERIAL_CODE: '',
+                  REQUEST_START_DATE: '', ATTRIBUTE10: '', REQUEST_END_DATE: '', TYPE: '', CATEGORY: '' },
+                  function(list) { out = [].slice.call(list); outOk = true; done(); },
+                  function() { out = []; outOk = false; done(); });
+              }
+              // RETURN: kiểm tra giống tab Trả hàng rồi POST /saveDesmMrfReturnSave.do
+              outBtn.addEventListener('click', function() {
+                if (saving) return;
+                var chosen = items.filter(function(it) { return it.id && sel[it.id]; });
+                if (!chosen.length) return;
+                var day = od.value; if (!day) { say('Chọn ngày trả.', '#dc2626'); return; }
+                day = day.replace(/-/g, '/');
+                var list = [], bad = '';
+                chosen.forEach(function(it) {
+                  var o = it.o, q = qn(qty[it.id]), av = avail(it);
+                  if (bad) return;
+                  if (q <= 0) { bad = 'Số lượng trả của ' + o.MATERIAL_CODE + ' phải lớn hơn 0.'; return; }
+                  if (q > av + 0.0005) { bad = o.MATERIAL_CODE + ': số lượng trả ' + fq(q) + ' vượt quá số còn trả được ' + fq(av) + '.'; return; }
+                  list.push({ MRF_HEADER_ID: o.MRF_HEADER_ID, MRF_LINE_ID: o.MRF_LINE_ID, MATERIAL_CODE: o.MATERIAL_CODE,
+                    PROJECT_NO: o.PROJECT_NO || h.PROJECT_NO || diProj(idoc), RETURN_DATE: day, RETURN_QTY: q, RSI_LINE_ID: o.RSI_LINE_ID == null ? null : o.RSI_LINE_ID });
+                });
+                if (bad) { say(bad, '#dc2626'); return; }
+                if (win.confirm && !win.confirm('Ghi trả hàng ' + list.length + ' dòng lên DESM ngày ' + day + '? Thao tác này không tự hoàn tác được.')) return;
+                saving = true; say('Đang lưu…', ''); refreshBar(shownItems());
+                var json = JSON.stringify(list);
+                function fin(text, color) { saving = false; say(text, color); refreshBar(shownItems()); }
+                mrrPost(win, '/saveDesmMrfReturnSave.do', { updateList: json }, function(d) {
+                  if (!d || typeof d !== 'object') { fin('Phản hồi không rõ. Hãy kiểm tra trên web trước khi thử lại.', '#dc2626'); return; }
+                  if (d.error == null) {
+                    sel = {}; qty = {}; say('Đã trả hàng ' + list.length + ' dòng ✓', '#15803d'); saving = false;
+                    pending = 1; loadOut(settled);
+                  } else if (d.error === 'QTY') {
+                    fin('Vượt số lượng được trả ở một dòng (còn trả được: ' + (d.RETURN_AVAILABLE_QTY == null ? '?' : d.RETURN_AVAILABLE_QTY) + '). Tải lại màn hình để kiểm tra.', '#dc2626');
+                  } else fin(String(d.error), '#dc2626');
+                }, function(e) { fin('Không lưu được: ' + e + '. Kiểm tra trên web xem đã trả chưa trước khi thử lại.', '#dc2626'); },
+                { label: 'Trả hàng MRF (MRF Detail)', payload: json, before: '' });
+              });
+              diAjax(idoc, '/getMrfSummaryList.do', mrfParam({ PROJECT_NO: h.PROJECT_NO, MRF_NO: h.MRF_NO }), function(list) {
+                all = [].filter.call(list, function(r) { return sameStr(r.MRF_NO, h.MRF_NO); }); settled();
+              }, function() { if (alive()) { rn.textContent = 'Không tải được chi tiết MRF.'; all = []; settled(); } });
+              loadOut(settled);
+          }
           // Màn hình chi tiết một kiện hàng (mở khi chạm thẻ ở chế độ "Chạm: Chi tiết"). Dữ liệu đọc từ dòng TreeGrid tương ứng.
           function openDetail(idoc, G, rowId, no, onClose) {
             var win = idoc.defaultView, r = G.Rows[rowId]; if (!r) return;
@@ -1069,6 +1457,7 @@ extension BrowserModel {
               return p;
             }
             // Màn "MRF Detail": các dòng của một MRF (RSI, kiện, vật tư, số lượng trả, vị trí). Dữ liệu: /getMrfSummaryList.do
+            // Màn "MRF Detail" / "RSI Detail" (từ Detail Item): phần danh sách dùng chung mrfTickList / rsiTickList
             function openMrfDetail(h, unit) {
               var S = subScreen('MRF Detail', 'Detail Item'), b = S.body;
               var m = el('div', 'desm-dcard desm-mrf-head');
@@ -1077,28 +1466,8 @@ extension BrowserModel {
               m.appendChild(el('div', 'desm-d-l', dash(h.MRF_NAME)));
               if (h.RETURN_REQ_DATE) m.appendChild(el('div', 'desm-d-l', 'Ngày yêu cầu trả : ' + h.RETURN_REQ_DATE));
               b.appendChild(m);
-              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
-              b.appendChild(rn); b.appendChild(rl);
-              diAjax(idoc, '/getMrfSummaryList.do', mrfParam({ PROJECT_NO: h.PROJECT_NO, MRF_NO: h.MRF_NO }), function(list) {
-                if (!S.ov.parentNode) return;
-                var rows = [].filter.call(list, function(r) { return sameStr(r.MRF_NO, h.MRF_NO); });
-                rn.textContent = rows.length ? rows.length + ' dòng' : 'MRF này không có dòng nào.';
-                rows.forEach(function(r) {
-                  var c = el('div', 'desm-rsi-card desm-mrf-card');
-                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO)));
-                  t1.appendChild(el('span', 'desm-mrf-type', dash(r.RETURN_TYPE))); c.appendChild(t1);
-                  c.appendChild(el('div', 'desm-ditem-no', dash(r.RSI_NAME)));
-                  c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
-                  c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
-                  c.appendChild(el('div', 'desm-ditem-l', 'DWG : ' + (r.DRAWING_NO || 'N/A') + '   TAG : ' + (r.TAG_NO || 'N/A')));
-                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
-                  ft.appendChild(el('span', 'desm-mrf-type', fnum(r.MRF_REQ_RETURN_QTY) + ' / ' + fnum(r.MRF_RETURN_QTY) + ' ' + (r.UNIT || unit || ''))); c.appendChild(ft);
-                  c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + '   Req : ' + dash(r.RETURN_REQ_DATE)));
-                  rl.appendChild(c);
-                });
-              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được chi tiết MRF.'; });
+              mrfTickList(win, doc, idoc, b, h, unit, function() { return !!S.ov.parentNode; });
             }
-            // Màn "RSI Detail": các hạng mục thuộc một RSI, lọc theo PKG / SCH
             function openRsiDetail(h) {
               var S = subScreen('RSI Detail', 'Detail Item'), b = S.body;
               var m = el('div', 'desm-dcard');
@@ -1107,35 +1476,7 @@ extension BrowserModel {
               m.appendChild(el('div', 'desm-d-l', dash(h.RSI_NAME)));
               m.appendChild(el('div', 'desm-d-l', dash(h.RSI_APPROVED_DATE || h.REQUEST_DATE)));
               b.appendChild(m);
-              var fb = el('div', 'desm-sub-filter');
-              var fp = doc.createElement('input'); fp.placeholder = 'PKG.'; fp.className = 'desm-sub-in';
-              var fs = doc.createElement('input'); fs.placeholder = 'SCH.'; fs.className = 'desm-sub-in';
-              fb.appendChild(fp); fb.appendChild(fs); b.appendChild(fb);
-              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems'), all = [];
-              b.appendChild(rn); b.appendChild(rl);
-              function draw() {
-                while (rl.firstChild) rl.removeChild(rl.firstChild);
-                var p = fp.value.trim().toLowerCase(), s = fs.value.trim().toLowerCase();
-                var rows = all.filter(function(r) {
-                  return (!p || String(r.PACKAGE_NO || '').toLowerCase().indexOf(p) >= 0) &&
-                    (!s || (String(r.DESCRIPTION || '') + ' ' + String(r.MATERIAL_CODE || '')).toLowerCase().indexOf(s) >= 0);
-                });
-                rn.textContent = all.length ? rows.length + ' / ' + all.length + ' hạng mục' : 'RSI này không có hạng mục.';
-                rows.forEach(function(r) {
-                  var c = el('div', 'desm-rsi-card');
-                  c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
-                  c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION)));
-                  var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
-                  ft.appendChild(el('span', '', fnum(r.REQ_QTY) + ' / ' + fnum(r.HANDOVER_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
-                  rl.appendChild(c);
-                });
-              }
-              fp.addEventListener('input', draw); fs.addEventListener('input', draw);
-              diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PROJECT_NO: h.PROJECT_NO, RSI_NO: h.RSI_NO }), function(list) {
-                if (!S.ov.parentNode) return;
-                all = [].filter.call(list, function(r) { return sameStr(r.RSI_NO, h.RSI_NO); });
-                draw();
-              }, function() { if (S.ov.parentNode) rn.textContent = 'Không tải được danh sách hạng mục của RSI.'; });
+              rsiTickList(win, doc, idoc, b, h, function() { return !!S.ov.parentNode; });
             }
             function renderItems(rows) {
               while (dis.firstChild) dis.removeChild(dis.firstChild);
@@ -1518,6 +1859,7 @@ extension BrowserModel {
             var aid = au ? auditBegin(au.label, url, au.payload, au.before) : null;
             function end(s, r, e) { if (aid) auditEnd(aid, s, r, e); }
             var $j = null; try { $j = win.jQuery || win.$; } catch (e) {}
+            if (!$j || !$j.ajax) { try { $j = win.top.jQuery || win.top.$; } catch (e) {} }
             if (!$j || !$j.ajax) { end('notsent', '', 'không tìm thấy jQuery của trang'); bad('không tìm thấy jQuery của trang'); return; }
             try {
               $j.ajax({ url: url, data: data, timeout: 30000,
@@ -1685,46 +2027,15 @@ extension BrowserModel {
               body.appendChild(eb);
             }
             if (isRsi || isMrf) {
-              var rn = el('div', 'desm-detail-note', 'Đang tải…'), rl = el('div', 'desm-ditems');
-              body.appendChild(rn); body.appendChild(rl);
               var proj = it.r.PROJECT_NO || diProj(doc);
+              var hh = {}; for (var hk in it.r) hh[hk] = it.r[hk]; hh.PROJECT_NO = proj;
+              function alive() { return !!ov.parentNode; }
               if (isRsi) {
-                var rsiNo = it.r.RSI_NO != null && it.r.RSI_NO !== '' ? it.r.RSI_NO : it.title;
-                diAjax(doc, '/getDesmRsiViewList.do', { PAGE_NUM: 1, PAGE_CNT: 5000, PROJECT_NO: proj, RSI_NO: rsiNo, RSI_NAME: '', SUBCONTRACTOR: '', ATTRIBUTE10: '', MATERIAL_CODE: '',
-                  START_REQUEST_DATE: '', END_REQUEST_DATE: '', BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '',
-                  PACKAGE_NO: '', ITEM_DESC: '', MASTER_SHOP_UNIT: '', MASTER_SHOP_BLDG: '', SHOP_UNIT: '', SHOP_BLDG: '' }, function(list) {
-                  if (!ov.parentNode) return;
-                  var rows = [].filter.call(list, function(r) { return same(r.RSI_NO, rsiNo); });
-                  rn.textContent = rows.length ? rows.length + ' hạng mục' : 'RSI này không có hạng mục.';
-                  rows.forEach(function(r) {
-                    var c = el('div', 'desm-rsi-card');
-                    c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
-                    c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION)));
-                    var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
-                    ft.appendChild(el('span', '', fn(r.REQ_QTY) + ' / ' + fn(r.HANDOVER_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
-                    rl.appendChild(c);
-                  });
-                }, function() { if (ov.parentNode) rn.textContent = 'Không tải được danh sách hạng mục của RSI.'; });
+                hh.RSI_NO = it.r.RSI_NO != null && it.r.RSI_NO !== '' ? it.r.RSI_NO : it.title;
+                rsiTickList(win, doc, doc, body, hh, alive, true);
               } else {
-                var mrfNo = it.r.MRF_NO != null && it.r.MRF_NO !== '' ? it.r.MRF_NO : it.title;
-                diAjax(doc, '/getMrfSummaryList.do', { PROJECT_NO: proj, RSI_NO: '', RSI_NAME: '', SUBCONTRACTOR: '', MATERIAL_CODE: '', RSI_START_REQUEST_DATE: '', RSI_END_REQUEST_DATE: '',
-                  ZIM_ATTRIBUTE10: '', RSI_BALANCE_QTY: '', TYPE: '', CATEGORY: '', SUB_CATEGORY: '', PACKING_LIST_NO: '', MRF_NO: mrfNo, MRF_NAME: '',
-                  PACKAGE_NO: '', ITEM_DESC: '', RETURN_TYPE: '', MRF_BALANCE_QTY: '' }, function(list) {
-                  if (!ov.parentNode) return;
-                  var rows = [].filter.call(list, function(r) { return same(r.MRF_NO, mrfNo); });
-                  rn.textContent = rows.length ? rows.length + ' dòng' : 'MRF này không có dòng nào.';
-                  rows.forEach(function(r) {
-                    var c = el('div', 'desm-rsi-card desm-mrf-card');
-                    var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO)));
-                    t1.appendChild(el('span', 'desm-mrf-type', dash(r.RETURN_TYPE))); c.appendChild(t1);
-                    c.appendChild(el('div', 'desm-ditem-no', dash(r.PACKAGE_NO)));
-                    c.appendChild(el('div', 'desm-ditem-l', dash(r.DESCRIPTION || r.RSI_DESCRIPTION)));
-                    var ft = el('div', 'desm-rsi-row'); ft.appendChild(el('span', '', dash(r.MATERIAL_CODE)));
-                    ft.appendChild(el('span', 'desm-mrf-type', fn(r.MRF_REQ_RETURN_QTY) + ' / ' + fn(r.MRF_RETURN_QTY) + ' ' + (r.UNIT || ''))); c.appendChild(ft);
-                    c.appendChild(el('div', 'desm-ditem-l', '📍 ' + dash(r.LOCATION) + '   Req : ' + dash(r.RETURN_REQ_DATE)));
-                    rl.appendChild(c);
-                  });
-                }, function() { if (ov.parentNode) rn.textContent = 'Không tải được chi tiết MRF.'; });
+                hh.MRF_NO = it.r.MRF_NO != null && it.r.MRF_NO !== '' ? it.r.MRF_NO : it.title;
+                mrfTickList(win, doc, doc, body, hh, '', alive);
               }
             }
             doc.body.appendChild(ov);

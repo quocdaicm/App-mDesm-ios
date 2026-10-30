@@ -460,6 +460,16 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-rsi-row { display:flex; justify-content:space-between; gap:8px; font-size:16px; line-height:1.5; }
     html.desm-mobile-mode .desm-sub-filter { display:flex; gap:8px; margin-bottom:8px; }
     html.desm-mobile-mode .desm-sub-in { flex:1; min-width:0; height:42px; border:1px solid #cbd5e1; border-radius:10px; padding:0 12px; font-size:16px; background:#fff; color:#111827; }
+    html.desm-mobile-mode .desm-rsi-card.desm-sel { outline:2px solid #2878e5; outline-offset:-2px; background:#eef5ff; }
+    html.desm-mobile-mode .desm-rsi-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+    html.desm-mobile-mode .desm-out-chk { pointer-events:none; }
+    html.desm-mobile-mode .desm-out-bar { justify-content:flex-start; }
+    html.desm-mobile-mode .desm-out-btn { margin-left:auto; border:0; border-radius:8px; padding:10px 14px; font-size:16px; font-weight:700; color:#fff; background:#1f8fff; }
+    html.desm-mobile-mode .desm-out-btn:disabled { background:#9ca3af; }
+    html.desm-mobile-mode .desm-out-qty { flex:0 0 76px; width:76px; height:38px; text-align:center; padding:0 4px; font-size:16px; font-weight:600; }
+    html.desm-mobile-mode .desm-out-av { color:#dc2626; }
+    html.desm-mobile-mode .desm-out-done { color:#2878e5; }
+    html.desm-mobile-mode .desm-out-hint { font-size:11px; color:#6b7280; }
     html.desm-mobile-mode .desm-mrr-in { display:block; width:100%; box-sizing:border-box; margin:0 0 8px; }
     html.desm-mobile-mode .desm-fqty { margin-top:-4px; }
     html.desm-mobile-mode .desm-fqty input.desm-sub-in { width:100%; height:38px; text-align:center; padding:0 4px; font-size:15px; }

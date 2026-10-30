@@ -450,3 +450,31 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 
 ## Trả hàng MRF kiểu MRF Detail (2026-10-30) — `Sheets/MrfReturn.swift`
 - Giống Xuất kho kiểu RSI Detail: Search MRF → thẻ phiếu (MRF, loại, tên, nhà thầu, ngày, số dòng/còn trả) → "MRF Detail": header xanh (▼ mở Ngày trả), PKG./MÃ lọc tại chỗ, ALL, **RETURN** (xác nhận rồi POST `/saveDesmMrfReturnSave.do`), thẻ dòng có ô số lượng (mặc định = RETURN_AVAILABLE_QTY), đỏ = còn trả được, xanh = đã trả (= REQ_RETURN_QTY − còn trả; CHƯA đối chiếu với web). Đổi phiếu thì bỏ chọn/số lượng/bộ lọc. Lệnh lưu vẫn CHƯA thử trên DESM thật.
+
+## RSI Detail (màn JS trong Detail Item) có ô tích + OUT.G (2026-10-30)
+- `openRsiDetail` (`Scripts/UserScript.swift`) làm giống tab Xuất kho (`Sheets/Outgoing.swift`): ô tích từng dòng, ALL, ô số lượng, ngày xuất, người nhận, nút OUT.G.
+- Dữ liệu: danh sách phiếu `getDesmRsiViewList.do` ghép với dòng còn xuất được `getDesmOutGoingCreationList.do` (khoá RSI_LINE_ID, nếu không có thì Package No + Material Code). Dòng không ghép được = đã xuất hết, không có ô tích.
+- Lưu: `mrrPost(win, '/saveDesmRsiOutSave.do', {updateList})` — cùng payload với Outgoing.swift (RSI_HEADER_ID, RSI_LINE_ID, HANDOVER_DATE yyyy/MM/dd, HANDOVER_QTY, MATERIAL_CODE, PROJECT_NO, RECEIVER_NAME), có ghi Nhật ký thao tác ghi. Kiểm tra: số lượng > 0 và ≤ còn xuất được; hỏi xác nhận trước khi gửi; xong thì tải lại danh sách.
+- CHƯA thử trên máy thật; đây là thao tác GHI — nên thử một dòng nhỏ trước. JS đã qua `node --check`.
+
+## MRF Detail có ô tích + RETURN, dùng chung với RSI Detail (2026-10-30)
+- Hai hàm dùng chung `rsiTickList` / `mrfTickList` (`Scripts/UserScript.swift`, ngay trước `openDetail`) dựng toàn bộ phần danh sách: lọc PKG/SCH, ngày, ALL, ô tích, ô số lượng, nút OUT.G / RETURN.
+- Được gọi từ 3 chỗ: `openRsiDetail` / `openMrfDetail` (từ Detail Item) và `genDetail` (thẻ RSI/MRF ở các tab web như Outgoing Control) — không còn mã nhân đôi.
+- MRF: đọc dòng còn trả được `getDesmReturnCreationList.do` (MRF_NO, ...), ghép với `getMrfSummaryList.do` theo MRF_LINE_ID (+RSI_LINE_ID), nếu không có thì Package No + Material Code (+RSI_NO). Lưu: `saveDesmMrfReturnSave.do` với updateList [{MRF_HEADER_ID, MRF_LINE_ID, MATERIAL_CODE, PROJECT_NO, RETURN_DATE yyyy/MM/dd, RETURN_QTY, RSI_LINE_ID}] — đúng payload của `MrfReturn.swift`.
+- `mrrPost` thêm đường lui lấy jQuery của cửa sổ top.
+- CHƯA thử máy thật; thao tác GHI — thử một dòng nhỏ trước.
+
+## Tìm phiếu chậm (Xuất kho / Trả hàng) — 2026-10-30
+- Mỗi lần tìm gọi 2 request nối tiếp: `getInitDefailProject.do` (lấy số dự án) rồi `getDesmOutGoingCreationList.do`. Đã thêm nhớ đệm 30 phút cho số dự án (`DesmProjectCache`, `Networking/DesmAPI.swift`) -> bỏ được lượt đầu.
+- Phần còn lại là chờ máy chủ: lần tự tìm khi mở tab chạy với bộ lọc trống nên trả TOÀN BỘ dòng còn xuất được của dự án (không gửi PAGE_NUM/PAGE_CNT). Xem thời gian thật ở nhật ký AI: dòng "← /getDesmOutGoingCreationList.do ... mạng X s, phân tích Y s".
+
+## Thông tin đầu phiếu RSI (Remarks, Requested/Checked/Confirmed/Approved by) — 2026-10-30
+- Native: `DesmRsiInfo` + `DesmOutgoingVM.loadInfo` (`Sheets/Outgoing.swift`) — tải dòng đầu của `getDesmRsiViewList.do` (cùng body với DocDetail), hiện trong phần mở rộng (nút ˅) của màn RSI Detail. JS: `showInfo` trong `rsiTickList` (`Scripts/UserScript.swift`), hiện ngay dưới thẻ đầu phiếu; `genDetail` không dùng vì đã liệt kê mọi cột.
+- Tên trường CHƯA kiểm chứng: dò theo mẫu tên (…REQUEST/PREPARED/CREATED…BY, …CHECK…BY, …CONFIRM…BY, …APPROV…BY, …DATE, REMARK(S), CCB). Nếu `getDesmRsiViewList` không có các trường này, cần ghi API popup RSI của web (Nâng cao > Nhật ký API) để biết endpoint/trường đúng (có thể giống MRR: `getDesmMrrInfoList` → `headerList[0]`).
+- CHƯA làm nút Check / Reject (chuyển trạng thái, là thao tác ghi; chưa có API).
+
+## Đo tốc độ tìm phiếu Xuất kho (log API 2026-10-30)
+- `getDesmOutGoingCreationList.do` bộ lọc trống: 8 973 ms, 7 642 B (12 dòng) -> chậm ở MÁY CHỦ, không phải mạng/phân tích. Có lọc `RSI_NAME`: 432 ms. `getInitDefailProject.do` chỉ ~200 ms (nhớ đệm chỉ tiết kiệm được chừng đó).
+- Đã bỏ tự tìm khi mở tab Xuất kho (`DesmOutgoingSheet`). `MrfReturn.swift` (getDesmReturnCreationList) chưa đo, vẫn tự tìm.
+- Trường của getDesmOutGoingCreationList đã xác nhận: RSI_HEADER_ID, RSI_LINE_ID, REQ_QTY, HANDOVER_QTY, HANDOVER_AVAILABLE_QTY, HANDOVER_DATE, STATUS, REQUEST_DATE, PENDING, PACKING_LIST_NO... KHÔNG có Remarks/Requested/Checked/Approved by.
+- Log/dump ngày này chỉ là màn Outgoing Control (MENU_SEQ=376). Màn có Remarks + Check/Reject là "RSI Creation" (MENU_SEQ=336) — cần ghi API ở màn đó.

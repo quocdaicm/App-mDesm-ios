@@ -165,11 +165,19 @@ extension BrowserModel {
     }
 
     /// Số dự án mặc định (SEGMENT1 của getInitDefailProject.do) — hầu hết màn hình cần nó trước.
+    /// Có nhớ đệm 30 phút: trước đây MỖI lần tìm đều gọi thêm một request này trước request chính (hai lượt mạng nối tiếp).
     @MainActor
     func desmProjectNo() async throws -> String {
-        let rows = try await desmQueryAsync("/getInitDefailProject.do", body: "")
-        guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { throw DesmAPIError.noProject }
-        return no
+        if let c = DesmProjectCache.value, Date().timeIntervalSince(c.at) < 1800 { return c.no }
+        do {
+            let rows = try await desmQueryAsync("/getInitDefailProject.do", body: "")
+            guard let no = rows.first?["SEGMENT1"] as? String, !no.isEmpty else { throw DesmAPIError.noProject }
+            DesmProjectCache.value = (no, Date())
+            return no
+        } catch {
+            DesmProjectCache.value = nil   // lỗi/hết phiên: lần sau hỏi lại
+            throw error
+        }
     }
 
     /// Bản callback cũ (giữ để các màn hình chưa chuyển sang async vẫn chạy). `done` luôn được gọi trên main.
@@ -180,3 +188,6 @@ extension BrowserModel {
         }
     }
 }
+
+/// Nhớ số dự án mặc định để các màn hình không phải hỏi máy chủ lại ở mỗi lần tìm.
+enum DesmProjectCache { @MainActor static var value: (no: String, at: Date)? = nil }
