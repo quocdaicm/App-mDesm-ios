@@ -272,6 +272,10 @@ extension BrowserModel {
             for (var gi = 0; gi < list.length; gi++) {
               var G = list[gi];
               if (!G || !G.Cols || !G.Rows || !G.Rows.Header || G.__desmFail) continue;
+              if (!G.Cols.STORAGE_LOCATION) {
+                var fe0 = null; try { fe0 = win.frameElement; } catch (e) {}
+                if (!fe0 || fe0.id !== 'desmDetailFrame') continue;   // màn khác (vd Tổng hợp RSI) hiện đủ cột dạng thẻ
+              }
               var keep = {}, found = 0;
               for (var c in G.Cols) {
                 var tx = gridText(G, G.Rows.Header, c);
@@ -421,12 +425,8 @@ extension BrowserModel {
           }
           // Mở sẵn khung ẩn "Hạng mục chi tiết" ngay khi màn hình Package hiện, để lúc mở kiện không phải chờ nạp trang
           function diWarm(idoc) {
-            try {
-              var top = diTop(idoc);
-              if (top.__desmDIwarm) return;
-              top.__desmDIwarm = 1;
-              setTimeout(function() { diFrame(top, function() {}); }, 1200);
-            } catch (e) {}
+            // TẮT (2026-10-30): mở sẵn khung ẩn làm DESM hiện thêm vòng xoay "đang nạp" sau khi màn Package đã hiện xong.
+            // Khung ẩn giờ chỉ nạp khi người dùng mở một kiện (diFrame được gọi theo yêu cầu).
           }
           // n = số hạng mục dự kiến (từ cột A/O "4/0"): đủ n dòng là xong ngay, khỏi đợi lưới "ổn định".
           // skippable = true: nếu trong lúc chờ hàng đợi có yêu cầu mới hơn thì bỏ qua yêu cầu cũ.
@@ -1492,12 +1492,8 @@ extension BrowserModel {
                 var g = win.TGGrids[i];
                 if (!g || !g.Cols || !g.Rows || !g.Rows.Header || !g.MainTag) continue;
                 if (g.Cols.PACKAGE_NO && g.Cols.STORAGE_LOCATION) continue; // lưới Package đã có cardView riêng
-                if (g.Cols.MATERIAL_CODE && g.Cols.PACKAGE_NO) continue;     // lưới Hạng mục chi tiết
-                var hit = /(^|[\s_])(RSI|MRR|MRF|MPR)(_|\s|$)/i.test(Object.keys(g.Cols).join(' '));
-                if (!hit) {
-                  for (var c in g.Cols) { if (/(^|\W)(RSI|MRR|MRF|MPR)(\W|$)/i.test(gridText(g, g.Rows.Header, c))) { hit = true; break; } }
-                }
-                if (!hit) continue;
+                // Lưới Hạng mục chi tiết nằm trong khung ẩn desmDetailFrame (genericCards đã bỏ qua khung đó); màn hiện ra như
+                // "RSI Summary" cũng có PACKAGE_NO + MATERIAL_CODE nên vẫn dựng thẻ. Bỏ điều kiện từ khoá RSI/MRR/MRF/MPR: mọi lưới còn lại đều thành thẻ.
                 var h = 0; try { h = g.MainTag.offsetHeight || 0; } catch (e) {}
                 if (h > bh) { best = g; bh = h; }
               }
@@ -1810,10 +1806,27 @@ extension BrowserModel {
               else restCols.push(x);
             });
             if (!titleCol && restCols.length) titleCol = restCols.shift();
+            // Lưới có Package No.: thẻ hiện Package No. + Location trước; chạm thẻ = mở thông tin kiện đó (màn Package)
+            var pkgCol = null, locCol = null;
+            if (G.Cols.PACKAGE_NO) {
+              cols.forEach(function(x) {
+                if (x.c === 'PACKAGE_NO') pkgCol = x;
+                else if (!locCol && (x.c === 'STORAGE_LOCATION' || x.c === 'LOCATION' || /^location$/i.test(x.h))) locCol = x;
+              });
+            }
+            if (pkgCol) {
+              [statCols, dateCols, restCols].forEach(function(arr) {
+                [pkgCol, locCol].forEach(function(x) { var k = x ? arr.indexOf(x) : -1; if (k >= 0) arr.splice(k, 1); });
+              });
+              if (titleCol && titleCol !== pkgCol) restCols.unshift(titleCol);
+              titleCol = pkgCol;
+              if (locCol) restCols.unshift(locCol);
+            }
             var rows = diRows(G), qv = pkgNorm(box.__q.value);
             var items = rows.map(function(r) {
               var o = { r: r, id: r.id, sel: isSel(r), all: cols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }) };
               o.title = titleCol ? gridText(G, r, titleCol.c) : '';
+              o.pkg = pkgCol ? gridText(G, r, 'PACKAGE_NO') : '';
               o.stat = statCols.map(function(x) { return gridText(G, r, x.c); }).filter(function(v) { return v; })[0] || '';
               o.dates = dateCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
               o.rest = restCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
@@ -1872,12 +1885,22 @@ extension BrowserModel {
                 });
                 more.appendChild(eb);
               }
+              if (it.pkg) {
+                var ac = el('button', 'desm-detail-list desm-gall-cols', 'Xem tất cả cột của dòng này'); ac.type = 'button';
+                ac.addEventListener('click', function(ev) { ev.stopPropagation(); genDetail(win, doc, G, it); });
+                card.appendChild(ac);
+              }
               card.appendChild(more);
               card.addEventListener('click', function(ev) {
                 if (ev.target && ev.target.classList && ev.target.classList.contains('desm-card-hit')) {
                   try { G.SelectRow(it.r, it.sel ? 0 : 1); } catch (e) {}
                 } else {
                   // Chạm thẻ = vào xem chi tiết bên trong (chạm ô vuông bên trái = chọn dòng)
+                  if (it.pkg && win.__desmFindPkg && !(ev.target && ev.target.classList && ev.target.classList.contains('desm-gall-cols'))) {
+                    // Có Package No.: mở thông tin kiện (chuyển sang màn Package, tìm đúng kiện rồi mở chi tiết)
+                    win.__desmFindPkg({ term: it.pkg, key: it.pkg, open: true });
+                    return;
+                  }
                   genDetail(win, doc, G, it);
                   return;
                 }
@@ -2245,19 +2268,35 @@ extension BrowserModel {
             })();
           }
           // Footer 5 tab: bấm mục menu bên trái theo tên (Anh/Việt). id = id thẻ <a> nếu biết (vd '196' = Kiện hàng). Trả 1 nếu bấm được.
-          w.__desmOpenMenu = function(id, pattern) {
+          w.__desmOpenMenu = function(id, pattern, soft) {
             var D; try { D = diTop(document).document; } catch (e) { D = document; }
+            // soft = mở tự động lúc vào app: màn Package đã hiện (hoặc đã bấm 1 lần) thì KHÔNG bấm lại, tránh nạp lại trang nhiều lần
+            if (soft) {
+              try { if (pkgDoc(document, 0)) return 1; } catch (e) {}
+              if (w.__desmSoftOpened && Date.now() - w.__desmSoftOpened < 20000) return 1;
+            }
+            var rx = null; try { rx = pattern ? new RegExp(pattern, 'i') : null; } catch (e) {}
+            function txt(x) { return ((x && x.textContent) || '').replace(/\s+/g, ' ').trim(); }
             var a = id ? D.getElementById(id) : null;
-            if (!a && pattern) {
-              var rx = new RegExp(pattern, 'i'), L = D.querySelectorAll('#accordionSidebar a');
+            // id chưa kiểm chứng có thể trỏ nhầm mục: tên mục không khớp thì bỏ, tìm theo tên
+            if (a && rx && id !== '196' && !rx.test(txt(a))) a = null;
+            if (!a && rx) {
+              var L = D.querySelectorAll('#accordionSidebar a, .sidebar a, nav a');
               for (var i = 0; i < L.length; i++) {
                 if (L[i].hasAttribute('data-toggle')) continue;
-                var tx = (L[i].textContent || '').replace(/\s+/g, ' ').trim();
+                var tx = txt(L[i]);
                 if (tx && rx.test(tx)) { a = L[i]; break; }
               }
             }
+            // Mục nằm trong nhóm menu đang thu gọn: mở nhóm cha trước khi bấm
+            if (a) {
+              try {
+                var pc = a.closest ? a.closest('.collapse') : null;
+                while (pc) { pc.classList.add('show'); pc = pc.parentElement && pc.parentElement.closest ? pc.parentElement.closest('.collapse') : null; }
+              } catch (e) {}
+            }
             if (!a) return 0;
-            try { a.click(); D.documentElement.classList.remove('desm-nav-open'); return 1; } catch (e) { return 0; }
+            try { if (soft) w.__desmSoftOpened = Date.now(); a.click(); D.documentElement.classList.remove('desm-nav-open'); return 1; } catch (e) { return 0; }
           };
           // Quay lại trong DESM: đóng lớp phủ (cập nhật vị trí / chi tiết kiện / menu) trước; trả 1 nếu đã xử lý
           w.__desmBack = function() {

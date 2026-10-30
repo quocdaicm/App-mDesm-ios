@@ -376,7 +376,7 @@ Người dùng báo hỏi vài câu thì AI riêng đứng/treo. Chưa tái hi�
 - `AIAgent.swift`: tối đa 6 vòng; HTTP 400/404/422 ở vòng đầu → lùi về hỏi đáp thường. Không tự chuyển nhà khi lỗi (bản cũ có).
 - `DesmAITools.swift`: công cụ CHỈ ĐỌC `desm_list_endpoints`, `desm_query(endpoint, params_json, max_rows)`, `desm_read_open_page`. Chỉ cho gọi endpoint trong danh mục (kiện `/getIdsmOsSummaryList.do`, hạng mục `/getIdsmOsDetailList.do`, edit log, RSI `/getDesmRsiViewList.do`, RSI bàn giao, MRF, MRF đã trả, tàu, thông báo); tham số lấy từ các màn native; `PROJECT_NO` tự điền; cắt 300 dòng / ~22.000 ký tự.
 - `AIChatView.swift`: khung chat native, lịch sử gửi lại chỉ gồm câu hỏi + câu trả lời chữ (tối đa 12 tin), nút dừng, đổi nhà AI ở đầu khung. Cố ý không dùng textSelection/AsyncImage/animation cuộn/LazyVStack (từng nghi gây treo).
-- Nối dây: `BrowserModel` (`aiEngine`, `showAIChat`), `DodoBubble.swift` (`__desmDodoEngine`; engine 'ai' thì chạm bong bóng gửi message `desmAI`), `WebView.swift` (handler `desmAI`), `BrowserView.swift` (sheet `AIChatView`), `SettingsView.swift` (Picker "Chạm bong bóng mở" + link `AIProviderListView`). `LegacyAICleanup.runOnce()` giờ là hàm rỗng (không xoá khoá nữa).
+- Nối dây: `BrowserModel` (`aiEngine`, `showAIChat`), `DodoBubble.swift` (`__desmDodoEngine`; engine 'ai' thì chạm bong bóng gửi message `desmAI`), `WebView.swift` (handler `desmAI`), `BrowserView.swift` (sheet `AIChatView`), `SettingsView.swift` (Picker "Chạm bong bóng mở" + link `AIProviderListView`). `LegacyAICleanup` đã bị xoá (2026-10-30: file không có trong project.pbxproj nên build lỗi "cannot find LegacyAICleanup").
 - CHƯA build, CHƯA thử máy thật. Dễ lỗi biên dịch: closure `async` trong `AIChatSession.send`, `Task { @MainActor in }`, literal từ điển lồng nhau trong `DesmAITools.toolDefs`, `onChange` 1 tham số (iOS 16). Chưa biết: model free có hỗ trợ công cụ không; tên model mặc định còn đúng không (dùng "Dò danh sách model"); `getNotice` cần `jobCode` trống đúng không.
 - Quyền riêng tư: bật AI riêng + tra DESM = dữ liệu DESM tra được đi tới nhà AI ngoài; chỉ bật khi công ty cho phép (đã ghi trong Cài đặt và khung chat). Không thêm công cụ ghi/sửa/xoá.
 
@@ -404,3 +404,22 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 - Lịch sử hội thoại giờ chỉ lưu chữ (`AIPlainTurn`) và dựng lại theo định dạng của từng nhà (`plainMsgs(kind:)`), vì định dạng tin nhắn khác nhau giữa OpenAI/Claude/Gemini nên không dùng lẫn được.
 - Quyền riêng tư: khi chuyển nhà, câu hỏi và dữ liệu DESM đã tra sẽ được gửi tới nhà mới (đã ghi ở chú thích công tắc).
 - CHƯA build/chưa thử máy thật. Chưa có: kéo đổi thứ tự dự phòng (hiện theo thứ tự danh sách).
+
+## Sửa: màn Package nạp lại nhiều lần lúc vào app (2026-10-30)
+- `__desmOpenMenu(id, pattern, soft)`: tham số `soft` (chỉ `openHomeTab` truyền true) — nếu màn Package đã hiện hoặc đã tự bấm trong 20 giây thì không bấm lại menu 196. Bấm footer thủ công vẫn như cũ.
+- `diWarm` đã TẮT hẳn (video 10:17 cho thấy vòng xoay nạp thừa sau khi Package hiện xong do khung ẩn Hạng mục chi tiết tự nạp). Khung ẩn chỉ nạp khi mở một kiện, nên lần mở kiện đầu tiên chậm hơn một chút.
+- CHƯA thử trên máy thật; nếu vẫn nạp lại nhiều lần, bật "Ghi lại các request API" rồi gửi nhật ký để xem request nào lặp.
+
+## Gỡ mục 'Thu thập mẫu API' khỏi Cài đặt (2026-10-30)
+- /loginStatus.do trả 404 và /getMessageProperties.do trả {"properties":{}} nên mục này vô ích; đã xoá khỏi SettingsView (hàm model.fetchResource vẫn giữ).
+
+## Sửa: nút Tổng hợp RSI (tab Báo cáo) không mở (2026-10-30)
+- `__desmOpenMenu`: id `436` chưa từng kiểm chứng nên nếu tên mục trong menu không khớp pattern thì bỏ id, tìm theo tên (`RSI Summary`/`Tổng hợp RSI`); mở nhóm menu cha đang thu gọn (`.collapse` + `show`) trước khi bấm. CHƯA thử trên máy thật; nếu vẫn không mở, dùng 'Mã nguồn trang này' ở màn chính để gửi cấu trúc menu trái (#accordionSidebar).
+
+## Tổng hợp RSI dùng giao diện thẻ như Package (2026-10-30)
+- Ảnh người dùng: tab 'RSI Summary' vẫn hiện bảng TreeGrid xanh cũ với 2 cột Package No./Location + nút 'Cột: Gọn'. Nguyên nhân (suy từ code, chưa xác nhận trên máy thật): lưới có PACKAGE_NO + MATERIAL_CODE nên `genGridOf` loại như 'Hạng mục chi tiết', và `compactGrid` ẩn hết cột trừ Package No./Location.
+- `genGridOf`: bỏ loại trừ PACKAGE_NO+MATERIAL_CODE và bỏ điều kiện từ khoá RSI/MRR/MRF/MPR (khung ẩn desmDetailFrame vẫn bị `genericCards` bỏ qua). Mọi lưới không phải Package đều dựng thẻ.
+- `compactGrid`: chỉ áp cho lưới Package (có STORAGE_LOCATION) hoặc khung ẩn desmDetailFrame; màn khác hiện đủ cột để thẻ có dữ liệu.
+
+## Thẻ có Package No.: hiện kiện + vị trí trước, chạm để mở thông tin kiện (2026-10-30)
+- `genericCards`: nếu lưới có cột PACKAGE_NO thì tiêu đề thẻ = Package No., dòng đầu = Location (STORAGE_LOCATION/LOCATION), các cột khác sau. Chạm thẻ gọi `__desmFindPkg({term, key, open:true})` (cùng đường với quét QR): chuyển sang màn Package, tìm kiện, đúng 1 kiện thì mở chi tiết. Nút 'Xem tất cả cột của dòng này' mở `genDetail` như cũ. Thẻ không có PACKAGE_NO giữ hành vi cũ. JS đã node --check, CHƯA thử máy thật.

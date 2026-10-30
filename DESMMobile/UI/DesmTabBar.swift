@@ -47,7 +47,7 @@ enum DesmTab: CaseIterable, Identifiable {
         case .package: return "^(Package|Kiện hàng)$"
         case .inbound: return "^(Material Receiving|Nhận vật tư)$"
         case .outbound: return "^(Outgoing Control|Kiểm soát xuất kho)$"
-        case .report: return "^(RSI Summary|Tổng hợp RSI)$"
+        case .report: return "^(RSI ?Summary|Tổng hợp ?RSI)$"
         case .more: return ""
         }
     }

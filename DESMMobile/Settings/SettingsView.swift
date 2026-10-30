@@ -295,31 +295,6 @@ struct SettingsView: View {
             }
 
             Section {
-                Button("Thu thập mẫu API (loginStatus + chuỗi giao diện)…") {
-                    let specs = ["GET /loginStatus.do",
-                                 "POST /getMessageProperties.do",
-                                 "GET /getMessageProperties.do"]
-                    var out = "DESM — mẫu API (loginStatus, getMessageProperties)\n"
-                    func next(_ i: Int) {
-                        if i >= specs.count { shareText(out, prefix: "desm-api-sample", ext: "txt"); return }
-                        model.fetchResource(specs[i]) { r, err in
-                            out += "\n===== \(specs[i]) =====\n"
-                            if let r = r {
-                                let body = r.text.count > 200_000 ? String(r.text.prefix(200_000)) + "\n…(cắt bớt)" : r.text
-                                out += "HTTP \(r.status) · \(r.contentType) · \(r.text.count) ký tự\n\(body)\n"
-                            } else { out += "LỖI: \(err)\n" }
-                            next(i + 1)
-                        }
-                    }
-                    next(0)
-                }
-            } header: {
-                Text("Thu thập mẫu API")
-            } footer: {
-                Text("Cần đang ở DESM và đã đăng nhập. Gọi /loginStatus.do và /getMessageProperties.do rồi lưu một file để gửi lại cho tác giả. Nội dung phản hồi có thể chứa thông tin nội bộ, hãy xem trước khi chia sẻ.")
-            }
-
-            Section {
                 TextField("Địa chỉ, vd /resources/scripts/…js", text: $fetchPath)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("Tải nội dung địa chỉ và lưu file…") {
