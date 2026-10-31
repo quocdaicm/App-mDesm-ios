@@ -188,6 +188,7 @@ struct WebView: UIViewRepresentable {
         content.add(context.coordinator, name: "desmAudit")
         content.add(context.coordinator, name: "desmAI")
         content.add(context.coordinator, name: "desmReady")
+        content.add(context.coordinator, name: "desmExport")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -218,6 +219,7 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAudit")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAI")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmReady")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmExport")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -306,6 +308,16 @@ struct WebView: UIViewRepresentable {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
                 DispatchQueue.main.async { if !self.model.reconnecting { self.model.reconnectSession(reason: "page") } }
+                return
+            }
+            if message.name == "desmExport" {
+                // Xuất danh sách kiện ra CSV (UTF-8 có BOM để Excel đọc đúng tiếng Việt) rồi mở share sheet
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any], let csv = d["csv"] as? String, !csv.isEmpty else { return }
+                var base = ((d["name"] as? String) ?? "kien-hang").replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "-", options: .regularExpression)
+                if base.isEmpty { base = "kien-hang" }
+                DispatchQueue.main.async { self.model.shareCSV(csv, baseName: base) }
                 return
             }
             if message.name == "desmReady" {

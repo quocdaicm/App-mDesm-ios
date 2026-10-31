@@ -1,6 +1,6 @@
 // BackgroundRefresh.swift — kiểm tra DESM ở nền (BGAppRefreshTask) và báo bằng thông báo cục bộ khi app đã đóng.
 //
-// Báo 2 loại: (1) thông báo DESM mới; (2) tàu sắp đến (ETA trong 7 ngày, `DesmVessel.arrivingSoon`).
+// Báo 3 loại: (1) thông báo DESM mới; (2) tàu sắp đến (ETA trong 7 ngày, `DesmVessel.arrivingSoon`); (3) RSI mới, MRF mới/đã trả (công tắc desmBgRsi / desmBgMrf).
 // Dùng desmQueryAsync không cần WebView: cookie lấy từ Keychain (SessionStore.storedCookies).
 // iOS KHÔNG đảm bảo giờ chạy (thường vài lần/ngày, ít khi nếu ít mở app, tắt "Làm mới ứng dụng nền" thì không chạy).
 // Cần thông báo đúng lúc thì phải có backend đẩy tin (APNs). Hết phiên DESM thì lượt kiểm tra đó bỏ qua, không báo lỗi.
@@ -16,6 +16,9 @@ enum BackgroundRefresh {
     static let taskId = "com.desm.mobile.refresh"
     static let notifiedNoticesKey = "desmNotifiedNotices"
     static let notifiedVesselsKey = "desmNotifiedVessels"
+    static let notifiedDocsKey = "desmNotifiedDocs"
+    static var rsiEnabled: Bool { UserDefaults.standard.object(forKey: "desmBgRsi") as? Bool ?? true }
+    static var mrfEnabled: Bool { UserDefaults.standard.object(forKey: "desmBgMrf") as? Bool ?? true }
 
     static var enabled: Bool { UserDefaults.standard.object(forKey: "desmBgNotify") as? Bool ?? true }
 
@@ -104,6 +107,37 @@ enum BackgroundRefresh {
         } catch DesmAPIError.expired, DesmAPIError.noSession {
             return true
         } catch { ok = false }
+
+        // 3) RSI mới tạo, MRF mới / MRF đã trả hàng (cùng truy vấn với màn "Hoạt động", 3 ngày gần nhất)
+        var kinds = Set<DesmActivityKind>()
+        if rsiEnabled { kinds.insert(.rsiNew) }
+        if mrfEnabled { kinds.insert(.mrfNew); kinds.insert(.mrfReturn) }
+        if !kinds.isEmpty {
+            let r = await model.fetchActivityAsync(days: 3, only: kinds)
+            // Có lỗi (mạng/hết phiên) thì bỏ qua cả bước, KHÔNG đổi mốc — nếu không lần sau sẽ báo dồn phiếu cũ
+            if r.errors.isEmpty {
+                let ids = r.items.map { $0.id }
+                if let old = ud.array(forKey: notifiedDocsKey) as? [String] {
+                    let known = Set(old)
+                    let fresh = r.items.filter { !known.contains($0.id) }
+                    if canAlert {
+                        for a in fresh.prefix(4) {
+                            let head: String
+                            switch a.kind {
+                            case .rsiNew: head = "RSI mới"
+                            case .mrfNew: head = "MRF mới (yêu cầu trả hàng)"
+                            default: head = "MRF đã trả hàng"
+                            }
+                            await post(id: "doc-\(a.id)", title: head, body: [a.title, a.detail].filter { !$0.isEmpty }.joined(separator: " · "))
+                        }
+                        if fresh.count > 4 { await post(id: "doc-more", title: "DESM có phiếu mới", body: "Và \(fresh.count - 4) phiếu khác — mở mục Hoạt động để xem.") }
+                    }
+                    ud.set(Array(known.union(ids)).suffix(800).map { $0 }, forKey: notifiedDocsKey)
+                } else {
+                    ud.set(ids, forKey: notifiedDocsKey)      // lần đầu: chỉ ghi mốc, không báo dồn
+                }
+            }
+        }
         return ok
     }
 

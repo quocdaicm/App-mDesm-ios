@@ -1094,7 +1094,11 @@ extension BrowserModel {
             lines.appendChild(el('span', 'desm-d-red', isNaN(nLines) ? '-' : String(nLines)));
             m.appendChild(lines);
             var tri = el('div', 'desm-d-tri');
-            tri.appendChild(el('span', '', g('PACKAGE_STATUS') || 'N/A'));
+            var stDone = (function() {
+              var pr = g('OUT_STATUS_QTY').split('/').map(function(x) { return parseFloat(String(x).replace(/,/g, '')); });
+              return pr.length > 1 && !isNaN(pr[0]) && !isNaN(pr[1]) && pr[0] > 0 && pr[0] - pr[1] <= 0;
+            })();
+            tri.appendChild(el('span', '', g('PACKAGE_STATUS') || (stDone ? 'CLOSE' : 'N/A')));
             tri.appendChild(el('span', '', ao || '-'));
             tri.appendChild(el('span', '', pair('OUT_STATUS_QTY') || '-'));
             m.appendChild(tri);
@@ -1847,6 +1851,8 @@ extension BrowserModel {
               };
               box.addEventListener('scroll', function() {
                 var y = box.scrollTop, dy = y - pLastY; pLastY = y;
+                // Đang chụp toàn trang (cuộn-ghép): giữ nguyên bố cục, không ẩn/hiện thanh trên — nếu không vùng thẻ đổi chiều cao giữa các đoạn → ghép lệch, mất/che kiện
+                try { if (win.top.__desmShotBusy || win.__desmShotBusy) return; } catch (e) { if (win.__desmShotBusy) return; }
                 if (y <= 8) { box.__setHidden(false); return; }
                 if (dy > 8) box.__setHidden(true);
                 else if (dy < -8) box.__setHidden(false);
@@ -1874,6 +1880,12 @@ extension BrowserModel {
                 var v = parseFloat(String(x).replace(/,/g, '')); return isNaN(v) ? String(x).trim() : String(v);
               }).join('/');
             }
+            function stockOf(t) { // 'open' = còn hàng (tổng - đã xuất > 0), 'done' = đã xuất hết, '' = không đọc được
+              var pr = String(t || '').split('/').map(function(x) { return parseFloat(String(x).replace(/,/g, '')); });
+              if (pr.length < 2 || isNaN(pr[0]) || isNaN(pr[1])) return '';
+              if (pr[0] - pr[1] > 0) return 'open';
+              return pr[0] > 0 ? 'done' : '';
+            }
             function remOf(t) { // "1,060.000/60.000" -> 1000 (tổng - đã xuất); không đọc được -> ''
               var pr = String(t || '').split('/').map(function(x) { return parseFloat(String(x).replace(/,/g, '')); });
               if (pr.length < 2 || isNaN(pr[0]) || isNaN(pr[1]) || pr[1] <= 0) return '';   // chưa xuất gì -> không hiện Remaining
@@ -1881,10 +1893,10 @@ extension BrowserModel {
             }
             var allItems = rows.map(function(r) {
               return {
-                id: r.id, sel: isSel(r),
+                id: r.id, sel: isSel(r), locDate: gridText(G, r, 'LOC_UPDATE_DATE'),
                 no: gridText(G, r, 'PACKAGE_NO'), desc: gridText(G, r, 'DESCRIPTION'),
                 type: gridText(G, r, 'PACKAGE_TYPE'), list: gridText(G, r, 'PACKAGE_LIST_NO'),
-                ao: gridText(G, r, 'OUT_STATUS'), qty: pairQ(gridText(G, r, 'OUT_STATUS_QTY')), rem: remOf(gridText(G, r, 'OUT_STATUS_QTY')), loc: gridText(G, r, 'STORAGE_LOCATION'),
+                ao: gridText(G, r, 'OUT_STATUS'), qty: pairQ(gridText(G, r, 'OUT_STATUS_QTY')), rem: remOf(gridText(G, r, 'OUT_STATUS_QTY')), stk: stockOf(gridText(G, r, 'OUT_STATUS_QTY')), st: gridText(G, r, 'PACKAGE_STATUS'), loc: gridText(G, r, 'STORAGE_LOCATION'),
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
@@ -1897,14 +1909,36 @@ extension BrowserModel {
             });
             var listSel = box.__listSel || '';
             if (listSel && !listCnt[listSel]) { listSel = ''; box.__listSel = ''; }
-            var items = listSel ? allItems.filter(function(i) { return (i.list || '(trống)') === listSel; }) : allItems;
+            var byList = listSel ? allItems.filter(function(i) { return (i.list || '(trống)') === listSel; }) : allItems;
+            var stockSel = box.__stockSel || '';
+            var nOpen = 0, nDone = 0;
+            byList.forEach(function(i) { if (i.stk === 'open') nOpen++; else if (i.stk === 'done') nDone++; });
+            if (stockSel && !(nOpen + nDone)) { stockSel = ''; box.__stockSel = ''; }
+            var items = stockSel ? byList.filter(function(i) { return i.stk === stockSel; }) : byList;
+            // Lọc "chưa có vị trí" + sắp xếp (Số kiện A→Z / Z→A / cập nhật vị trí mới nhất). Chỉ đổi cách hiển thị, không đổi dữ liệu lưới.
+            var locSel = box.__locSel || '';
+            var nNoLoc = items.filter(function(i) { return !i.loc; }).length;
+            if (locSel === 'none' && !nNoLoc) { locSel = ''; box.__locSel = ''; }
+            if (locSel === 'none') items = items.filter(function(i) { return !i.loc; });
+            var sortSel = box.__sortSel || '';
+            if (sortSel) {
+              items = items.slice();
+              var nat = function(a, b) { return String(a.no).localeCompare(String(b.no), undefined, { numeric: true, sensitivity: 'base' }); };
+              if (sortSel === 'no_asc') items.sort(nat);
+              else if (sortSel === 'no_desc') items.sort(function(a, b) { return nat(b, a); });
+              else if (sortSel === 'date_desc') items.sort(function(a, b) {
+                if (!a.locDate && !b.locDate) return nat(a, b);
+                if (!a.locDate) return 1; if (!b.locDate) return -1;
+                return a.locDate < b.locDate ? 1 : (a.locDate > b.locDate ? -1 : nat(a, b));
+              });
+            }
             try { win.__desmItems = { t: Date.now(), items: allItems }; } catch (e) {}   // Dodo: dữ liệu đang hiển thị trên màn hình
             // Mặc định ẩn nút Xóa vị trí / Cập nhật vị trí; chỉ hiện khi đã tích chọn ít nhất một kiện
             if (tb) tb.classList.toggle('desm-tb-nosel', !allItems.some(function(i) { return i.sel; }));
             // Thanh nút đổi chiều cao (thu/mở) nên tính lại chiều cao vùng thẻ cho vừa màn hình
             try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
             try { diWarm(box.ownerDocument); } catch (e) {}
-            var sig = listSel + '@' + items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.qty, i.rem, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
+            var sig = listSel + '@' + stockSel + '@' + locSel + '@' + sortSel + '@' + items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.qty, i.rem, i.st, i.stk, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
             if (box.__sig === sig && (!tb || doc.getElementById('desmSelAllChip'))) return;
             box.__sig = sig;
             var keep = box.scrollTop;
@@ -1943,7 +1977,7 @@ extension BrowserModel {
                   ev.preventDefault(); ev.stopPropagation();
                   if (key) {
                     allItems.forEach(function(it) {
-                      if ((it.list || '(trống)') === key) return;
+                      if ((it.list || '(trống)') === key && (!stockSel || it.stk === stockSel) && (locSel !== 'none' || !it.loc)) return;
                       var r = G.Rows[it.id];
                       if (r && isSel(r)) { try { G.SelectRow(r, 0); } catch (e) {} }
                     });
@@ -1956,12 +1990,70 @@ extension BrowserModel {
               listOrder.forEach(function(lk) { addChip(lk + ' (' + listCnt[lk] + ')', lk); });
               box.appendChild(lrow);
             }
+            // Lọc theo tồn: Tất cả / Còn hàng / Đã xuất hết. Chọn một nhóm thì BỎ CHỌN các kiện bị ẩn (Location Delete/Update chạy trên kiện đã chọn)
+            if (nOpen + nDone > 0) {
+              var srow = el('div', 'desm-cards-lists desm-cards-stock');
+              var addSt = function(label, key) {
+                var b = el('button', 'desm-list-chip' + (key ? ' stk-' + key : '') + (stockSel === key ? ' on' : ''), label); b.type = 'button';
+                b.addEventListener('click', function(ev) {
+                  ev.preventDefault(); ev.stopPropagation();
+                  allItems.forEach(function(it) {
+                    var shown = (!listSel || (it.list || '(trống)') === listSel) && (!key || it.stk === key) && (locSel !== 'none' || !it.loc);
+                    if (shown) return;
+                    var r = G.Rows[it.id];
+                    if (r && isSel(r)) { try { G.SelectRow(r, 0); } catch (e) {} }
+                  });
+                  box.__stockSel = key; box.__sig = null; cardView(doc);
+                });
+                srow.appendChild(b);
+              };
+              addSt('Tất cả (' + byList.length + ')', '');
+              addSt('Còn hàng (' + nOpen + ')', 'open');
+              addSt('Đã xuất hết (' + nDone + ')', 'done');
+              box.appendChild(srow);
+            }
+            // Hàng công cụ: lọc vị trí, sắp xếp, xuất CSV
+            var trow = el('div', 'desm-cards-lists desm-cards-tools');
+            var addTool = function(label, cls, fn) {
+              var b = el('button', 'desm-list-chip' + (cls ? ' ' + cls : ''), label); b.type = 'button';
+              b.addEventListener('click', function(ev) { ev.preventDefault(); ev.stopPropagation(); fn(); });
+              trow.appendChild(b);
+            };
+            if (nNoLoc > 0 || locSel) {
+              addTool('Chưa có vị trí (' + nNoLoc + ')', locSel === 'none' ? 'on stk-open' : 'stk-open', function() {
+                var key = locSel === 'none' ? '' : 'none';
+                if (key === 'none') {   // ẩn kiện có vị trí -> bỏ chọn chúng (Location Delete/Update chạy trên kiện đã chọn)
+                  allItems.forEach(function(it) {
+                    if (!it.loc) return;
+                    var r = G.Rows[it.id]; if (r && isSel(r)) { try { G.SelectRow(r, 0); } catch (e) {} }
+                  });
+                }
+                box.__locSel = key; box.__sig = null; cardView(doc);
+              });
+            }
+            [['', 'Thứ tự gốc'], ['no_asc', 'Số kiện ↑'], ['no_desc', 'Số kiện ↓'], ['date_desc', 'Mới cập nhật']].forEach(function(o) {
+              addTool(o[1], sortSel === o[0] ? 'on' : '', function() { box.__sortSel = o[0]; box.__sig = null; cardView(doc); });
+            });
+            addTool('⬇ Xuất CSV (' + (nSel || items.length) + ')', '', function() {
+              var out = nSel ? items.filter(function(i) { return i.sel; }) : items;
+              if (!out.length) return;
+              var q = function(v) { v = String(v == null ? '' : v); return /[",;\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+              var head = ['Package No', 'Mô tả', 'Loại', 'Packing List', 'Trạng thái', 'Tồn kho', 'SL tổng', 'SL đã xuất', 'Vị trí', 'Cập nhật vị trí', 'Đã xác nhận'];
+              var lines = [head.map(q).join(',')];
+              out.forEach(function(it) {
+                var pr = String(it.qty || '').split('/');
+                lines.push([it.no, it.desc, it.type, it.list, it.st, it.stk === 'open' ? 'Còn hàng' : (it.stk === 'done' ? 'Đã xuất hết' : ''),
+                            pr[0] || '', pr[1] || '', it.loc, it.locDate, it.ok ? 'Y' : ''].map(q).join(','));
+              });
+              try { win.webkit.messageHandlers.desmExport.postMessage({ name: 'kien-hang' + (listSel ? '-' + listSel : ''), csv: lines.join('\r\n') }); } catch (e) {}
+            });
+            box.appendChild(trow);
             var pkgSeen = {}, nUniq = 0;
             items.forEach(function(i) { if (i.no && !pkgSeen[i.no]) { pkgSeen[i.no] = 1; nUniq++; } });
             if (items.length && nUniq < items.length) {
               box.appendChild(el('div', 'desm-cards-note', items.length + ' dòng = ' + nUniq + ' kiện khác nhau'));
             }
-            if (!items.length) box.appendChild(el('div', 'desm-cards-empty', 'Chưa có kiện hàng nào. Hãy nhập điều kiện lọc rồi bấm Search.'));
+            if (!items.length) box.appendChild(el('div', 'desm-cards-empty', allItems.length ? 'Không có kiện nào khớp bộ lọc này.' : 'Chưa có kiện hàng nào. Hãy nhập điều kiện lọc rồi bấm Search.'));
             var tapDetail = !!win.__desmTapDetail;
             items.forEach(function(it, idx) {
               var card = el('div', 'desm-card' + (it.sel ? ' desm-sel' : '') + (it.ok ? ' desm-ok' : ''));
@@ -1974,7 +2066,9 @@ extension BrowserModel {
               if (sub) card.appendChild(el('div', 'desm-card-sub', sub));
               var foot = el('div', 'desm-card-foot');
               var stats = el('span', 'desm-card-stats');
-              stats.appendChild(el('span', 'desm-card-ao', it.ao ? 'A/O : ' + it.ao : ''));
+              // Nhãn = trạng thái kiện như màn chi tiết: CLOSE khi đã xuất hết, còn lại N/A (hoặc giá trị PACKAGE_STATUS của DESM)
+              var stLbl = (it.st && String(it.st).trim()) || (it.stk === 'done' ? 'CLOSE' : 'N/A');
+              stats.appendChild(el('span', 'desm-card-ao' + (/^close/i.test(stLbl) ? ' desm-st-close' : ''), it.ao ? stLbl + ' : ' + it.ao : stLbl));
               if (it.qty) stats.appendChild(el('span', 'desm-card-qty', it.qty));   // vd 1060/0: giống dòng số lượng trong chi tiết kiện
               foot.appendChild(stats);
               // Còn lại: viên thuốc ở góc phải hàng A/O (cam = còn hàng, xanh = đã xuất hết)
@@ -2513,6 +2607,16 @@ extension BrowserModel {
               if (norm && pkgNorm(t).indexOf(norm) >= 0) return true;
               return !!rawT && t.toLowerCase().indexOf(rawT) >= 0;
             }
+            // Cột tổng yêu cầu (RSI/MRF Q'ty...) để biết đã xuất/trả một phần chưa; Remaining = cột *BALANCE_QTY, chỉ hiện khi tổng ≠ còn lại
+            var qtyTotCol = null;
+            ['RSI_QTY', 'MRF_QTY', 'MPR_QTY', 'REQ_QTY', 'REQUEST_QTY', 'REQ_RETURN_QTY', 'RETURN_REQ_QTY'].some(function(k) { if (G.Cols[k]) { qtyTotCol = k; return true; } return false; });
+            if (!qtyTotCol) cols.forEach(function(x) { if (!qtyTotCol && /(rsi|mrf|mpr|req|request).*q'?ty/i.test(x.h) && !/bal|cancel|remain/i.test(x.h + ' ' + x.c)) qtyTotCol = x.c; });
+            function remOfRow(r) {
+              if (!fBal || !qtyTotCol) return '';
+              var tot = parseFloat(String(gridText(G, r, qtyTotCol) || '').replace(/,/g, '')), bal = parseFloat(String(gridText(G, r, fBal) || '').replace(/,/g, ''));
+              if (isNaN(tot) || isNaN(bal) || tot - bal <= 0) return '';
+              return bal;
+            }
             var rows = diRows(G), qv = pkgNorm(box.__q.value);
             var items = rows.map(function(r) {
               var o = { r: r, id: r.id, sel: isSel(r), all: cols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }) };
@@ -2522,6 +2626,7 @@ extension BrowserModel {
               o.dates = dateCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
               o.rest = restCols.map(function(x) { return { h: x.h, v: gridText(G, r, x.c) }; }).filter(function(d) { return d.v; });
               o.hay = pkgNorm(o.all.map(function(d) { return d.v; }).join(' '));
+              o.rem = remOfRow(r);
               return o;
             }).filter(function(o) {
               if (qv && o.hay.indexOf(qv) < 0) return false;
@@ -2562,11 +2667,17 @@ extension BrowserModel {
               it.rest.slice(0, 3).forEach(function(d) {
                 var kv = el('div', 'desm-gkv'); kv.appendChild(el('span', 'desm-gk', d.h)); kv.appendChild(el('span', 'desm-gv', d.v)); card.appendChild(kv);
               });
+              var foot = null;
               if (it.dates.length) {
-                var foot = el('div', 'desm-card-foot');
+                foot = el('div', 'desm-card-foot');
                 it.dates.slice(0, 2).forEach(function(d) { foot.appendChild(el('span', 'desm-card-ao', d.h + ': ' + d.v)); });
-                card.appendChild(foot);
               }
+              if (it.rem !== '') {
+                if (!foot) foot = el('div', 'desm-card-foot');
+                foot.appendChild(el('span', 'desm-card-rem ' + (it.rem > 0 ? 'desm-d-rem-open' : 'desm-d-rem-done'),
+                  'Remaining ' + Number(it.rem).toLocaleString('en-US', { maximumFractionDigits: 3 })));
+              }
+              if (foot) card.appendChild(foot);
               var more = el('div', 'desm-gmore');
               it.all.forEach(function(d) {
                 if (!d.v) return;

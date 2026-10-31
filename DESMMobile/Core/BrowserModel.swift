@@ -81,8 +81,8 @@ final class BrowserModel: ObservableObject {
     @AppStorage("desmDodoData") var dodoData = true
     /// Tự tra dữ liệu DESM (chỉ đọc) theo số kiện trong câu hỏi rồi gửi kèm Dodo
     @AppStorage("desmDodoAuto") var dodoAuto = true
-    /// Chạm bong bóng mở: "dodo" (Dodo của DESM) hoặc "ai" (AI riêng, xem AI/)
-    @AppStorage("desmAIEngine") var aiEngine = "dodo"
+    /// Chạm bong bóng mở: "ai" (AI riêng, xem AI/ — MẶC ĐỊNH từ 2026-10-31) hoặc "dodo" (Dodo của DESM)
+    @AppStorage("desmAIEngine") var aiEngine = "ai"
     @Published var showAIChat = false
     /// Vào app / đăng nhập xong thì tự mở màn Package (Kiện hàng) làm màn hình chính
     @AppStorage("desmOpenPackage") var openPackageOnStart = true

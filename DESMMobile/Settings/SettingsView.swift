@@ -17,6 +17,8 @@ struct SettingsView: View {
     @AppStorage("desmAutofill") private var autofill = true
     @AppStorage("desmAutoReconnect") private var autoReconnect = true
     @AppStorage("desmBgNotify") private var bgNotify = true
+    @AppStorage("desmBgRsi") private var bgRsi = true
+    @AppStorage("desmBgMrf") private var bgMrf = true
     @AppStorage("desmExportStripScripts2") private var stripScripts = false
     @AppStorage("desmScanOpenDetail") private var scanOpenDetail = true
     @AppStorage("desmNetLogOn") private var netLogOn = false
@@ -176,8 +178,12 @@ struct SettingsView: View {
             Toggle("Ghi nhớ phiên đăng nhập", isOn: $rememberLogin)
             Toggle("Tự điền tài khoản ở trang đăng nhập", isOn: $autofill)
             Toggle("Tự đăng nhập lại khi hết phiên", isOn: $autoReconnect)
-            Toggle("Thông báo khi app đóng (thông báo mới, tàu sắp đến)", isOn: $bgNotify)
+            Toggle("Thông báo khi app đóng (thông báo mới, tàu sắp đến, RSI, MRF)", isOn: $bgNotify)
                 .onChange(of: bgNotify) { on in if on { BackgroundRefresh.requestAuthorization(); BackgroundRefresh.schedule() } else { BackgroundRefresh.schedule() } }
+            if bgNotify {
+                Toggle("Báo RSI mới", isOn: $bgRsi)
+                Toggle("Báo MRF mới / đã trả hàng", isOn: $bgMrf)
+            }
             Button("Xóa tài khoản và phiên đã lưu", role: .destructive) {
                 CredStore.clear()
                 SessionStore.clear()
@@ -194,6 +200,12 @@ struct SettingsView: View {
 
     var advancedForm: some View {
         Form {
+            Section {
+                NavigationLink("Chẩn đoán giao diện") { DesmDiagView(model: model) }
+            } footer: {
+                Text("Khi một màn hình hiển thị sai: mở màn hình đó, vào đây xem khung nào thiếu script/CSS, rồi sao chép báo cáo gửi cho người sửa.")
+            }
+
             Section {
                 TextEditor(text: $model.customCSS)
                     .font(.system(.footnote, design: .monospaced))

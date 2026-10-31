@@ -16,6 +16,8 @@ import UserNotifications
 // không phải toàn bộ Edit Log (chưa bắt được API Edit Log).
 // "Phiếu mới tạo" suy từ ngày yêu cầu (REQUEST_DATE / RETURN_REQ_DATE) nên chỉ chính xác theo ngày, không theo giờ.
 
+private struct SkipKind: Error {}
+
 enum DesmActivityKind: String {
     case packingUpload, rsiNew, rsiHandover, mrfNew, mrfReturn, locationUpdate, pkgConfirm
     var label: String {
@@ -71,7 +73,9 @@ struct DesmActivity: Identifiable {
 
 extension BrowserModel {
     @MainActor
-    func fetchActivityAsync(days: Int) async -> (items: [DesmActivity], errors: [String]) {
+    /// `only`: chỉ lấy các loại này (nil = tất cả). Chạy nền (không có WebView) chỉ nên truyền loại gọi thẳng API, không có `.packingUpload`.
+    func fetchActivityAsync(days: Int, only: Set<DesmActivityKind>? = nil) async -> (items: [DesmActivity], errors: [String]) {
+        func want(_ ks: DesmActivityKind...) -> Bool { guard let o = only else { return true }; return ks.contains { o.contains($0) } }
         let P: String
         do { P = Self.enc(try await desmProjectNo()) } catch { return ([], [error.localizedDescription]) }
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy/MM/dd"
@@ -84,6 +88,7 @@ extension BrowserModel {
         var out: [DesmActivity] = []
         var errs: [String] = []
 
+        if want(.packingUpload) {
         // Packing List đã tải lên
         let (plList, plErr): ([PackingUploadRecord]?, String) = await withCheckedContinuation { cont in
             self.fetchPackingHistory(days: days) { list, e in cont.resume(returning: (list, e)) }
@@ -95,9 +100,11 @@ extension BrowserModel {
                                         detail: join([r.file, r.result, r.user]), date: r.created))
             }
         } else { errs.append("Packing List: \(plErr)") }
+        }
 
         // RSI mới tạo (theo ngày yêu cầu)
         do {
+            guard want(.rsiNew) else { throw SkipKind() }
             let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&ATTRIBUTE10=&MATERIAL_CODE=&START_REQUEST_DATE=\(Self.enc(cutoff))&END_REQUEST_DATE=\(Self.enc(today))&BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&PACKAGE_NO=&ITEM_DESC=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
             let rows = try await desmQueryAsync("/getDesmRsiViewList.do", body: body)
             for g in Self.groups(rows, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "STATUS", extra: "SUBCONTRACTOR",
@@ -105,10 +112,11 @@ extension BrowserModel {
                 out.append(DesmActivity(id: "rsi-new-\(g.id)", kind: .rsiNew, title: g.id,
                                         detail: join([g.name, g.extra, "\(g.lines) dòng", "SL \(num(g.qty))", g.status]), date: g.date))
             }
-        } catch { errs.append("RSI: \(error.localizedDescription)") }
+        } catch is SkipKind {} catch { errs.append("RSI: \(error.localizedDescription)") }
 
         // RSI đã bàn giao
         do {
+            guard want(.rsiHandover) else { throw SkipKind() }
             let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(P)&START_HANDOVER_DATE=\(Self.enc(cutoff))&END_HANDOVER_DATE=\(Self.enc(today))&PACKAGE_NO=&SUBCONTRACTOR=&RSI_NO=&MATERIAL_CODE=&ATTRIBUTE10=&RSI_NAME=&TYPE=&CATEGORY=&SUB_CATEGORY=&COMMENTS=&PACKING_LIST_NO=&PENDING=&RECEIVER_REMARK=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
             let rows = try await desmQueryAsync("/getDesmRsiOutGoingList.do", body: body)
             for g in Self.groups(rows, doc: "RSI_NO", name: "RSI_NAME", date: "REQUEST_DATE", status: "", extra: "SUBCONTRACTOR",
@@ -116,10 +124,11 @@ extension BrowserModel {
                 out.append(DesmActivity(id: "rsi-out-\(g.id)-\(g.closeDate)", kind: .rsiHandover, title: g.id,
                                         detail: join([g.name, g.extra, "Bàn giao SL \(num(g.done))"]), date: g.closeDate))
             }
-        } catch { errs.append("RSI bàn giao: \(error.localizedDescription)") }
+        } catch is SkipKind {} catch { errs.append("RSI bàn giao: \(error.localizedDescription)") }
 
         // MRF mới tạo (máy chủ không lọc ngày ở truy vấn này nên lọc phía máy khách)
         do {
+            guard want(.mrfNew) else { throw SkipKind() }
             let body = "PROJECT_NO=\(P)&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&MATERIAL_CODE=&RSI_START_REQUEST_DATE=&RSI_END_REQUEST_DATE=&ZIM_ATTRIBUTE10=&RSI_BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&MRF_NO=&MRF_NAME=&PACKAGE_NO=&ITEM_DESC=&RETURN_TYPE=&MRF_BALANCE_QTY="
             let rows = try await desmQueryAsync("/getMrfSummaryList.do", body: body)
             for g in Self.groups(rows, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "STATUS", extra: "RETURN_TYPE",
@@ -127,10 +136,11 @@ extension BrowserModel {
                 out.append(DesmActivity(id: "mrf-new-\(g.id)", kind: .mrfNew, title: g.id,
                                         detail: join([g.name, g.extra, "\(g.lines) dòng", "SL \(num(g.qty))", g.status]), date: g.date))
             }
-        } catch { errs.append("MRF: \(error.localizedDescription)") }
+        } catch is SkipKind {} catch { errs.append("MRF: \(error.localizedDescription)") }
 
         // MRF đã trả
         do {
+            guard want(.mrfReturn) else { throw SkipKind() }
             let body = "PROJECT_NO=\(P)&START_HANDOVER_DATE=\(Self.enc(cutoff))&END_HANDOVER_DATE=\(Self.enc(today))&PACKAGE_NO=&SUBCONTRACTOR=&MRF_NO=&MATERIAL_CODE=&ATTRIBUTE10=&MRF_NAME=&TYPE=&CATEGORY="
             let rows = try await desmQueryAsync("/getDesmMrfReturnList.do", body: body)
             for g in Self.groups(rows, doc: "MRF_NO", name: "MRF_NAME", date: "RETURN_REQ_DATE", status: "", extra: "RETURN_TYPE",
@@ -138,11 +148,12 @@ extension BrowserModel {
                 out.append(DesmActivity(id: "mrf-ret-\(g.id)-\(g.closeDate)", kind: .mrfReturn, title: g.id,
                                         detail: join([g.name, g.extra, "Đã trả SL \(num(g.done))"]), date: g.closeDate))
             }
-        } catch { errs.append("MRF đã trả: \(error.localizedDescription)") }
+        } catch is SkipKind {} catch { errs.append("MRF đã trả: \(error.localizedDescription)") }
 
         // Đổi vị trí / xác nhận kiện: lấy từ danh sách Package (LOC_UPDATE_DATE, LOC_UPDATED_BY, CONFIRM_DATE, CONFIRMED_BY).
         // Chỉ có LẦN CẬP NHẬT CUỐI của mỗi kiện (không phải toàn bộ lịch sử Edit Log). Máy chủ không lọc theo ngày này nên lọc phía máy khách.
         do {
+            guard want(.locationUpdate, .pkgConfirm) else { throw SkipKind() }
             let body = "PROJECT_NO=\(P)&PACKAGE_LIST_NO=&PACKAGE_NO=&DESCRIPTION=&IS_CONFIRM_MATERIAL=&RECEIPTED=&ATTRIBUTE10=&REMARK=&VENDOR=&LOCATION=&START_RECEIPT_DATE=&END_RECEIPT_DATE=&MRR_VISUAL_CHECK=All&MRR_RECEIVED=&START_MRR_RECEIVED_DATE=&END_MRR_RECEIVED_DATE=&CUSTOMS_YN=&MIR_CATEGORY=&PACKAGE_STATUS="
             let rows = try await desmQueryAsync("/getIdsmOsSummaryList.do", body: body)
             for r in rows {
@@ -159,7 +170,7 @@ extension BrowserModel {
                                             detail: join([Self.fstr(r, "CONFIRMED_BY"), Self.fstr(r, "DESCRIPTION")]), date: cd))
                 }
             }
-        } catch { errs.append("Kiện: \(error.localizedDescription)") }
+        } catch is SkipKind {} catch { errs.append("Kiện: \(error.localizedDescription)") }
 
         out.sort { $0.date > $1.date }   // "yyyy/MM/dd[ HH:mm]" so sánh chuỗi được
         return (out, errs)

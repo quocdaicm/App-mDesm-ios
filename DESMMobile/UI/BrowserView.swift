@@ -211,7 +211,7 @@ struct BrowserView: View {
                 .desmSheet(shot: false)
         }
         .sheet(item: $model.shotItem) { item in
-            ShareSheet(url: item.url)
+            ShareSheet(url: item.url, extra: item.extra)
         }
     }
 

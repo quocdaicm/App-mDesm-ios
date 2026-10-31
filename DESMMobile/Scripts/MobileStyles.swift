@@ -304,6 +304,10 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-cards-lists { display:flex; flex-wrap:wrap; gap:6px; margin:2px 4px 8px; }
     html.desm-mobile-mode .desm-list-chip { border:1px solid #bfd3f7; background:#fff; color:#1d4ed8; border-radius:999px; padding:6px 12px; font-size:12px; font-weight:700; }
     html.desm-mobile-mode .desm-list-chip.on { background:#2563eb; border-color:#2563eb; color:#fff; }
+    html.desm-mobile-mode .desm-list-chip.stk-open { color:#b45309; border-color:#f3d6a8; }
+    html.desm-mobile-mode .desm-list-chip.stk-open.on { background:#f59e0b; border-color:#f59e0b; color:#fff; }
+    html.desm-mobile-mode .desm-list-chip.stk-done { color:#15803d; border-color:#b7e3c5; }
+    html.desm-mobile-mode .desm-list-chip.stk-done.on { background:#22c55e; border-color:#22c55e; color:#fff; }
     html.desm-mobile-mode .desm-cards-note { margin:2px 4px 8px; padding:6px 10px; border-radius:10px; background:#fff7e6; color:#92580a; font-size:12px; font-weight:600; line-height:1.35; }
     html.desm-mobile-mode input.desm-chk { width:22px!important; height:22px!important; min-width:22px!important; min-height:22px!important; flex:0 0 22px; margin:0!important; accent-color:#2878e5; }
     html.desm-mobile-mode .desm-card { position:relative; padding-left:44px!important; }
@@ -323,6 +327,7 @@ enum MobileStyles {
     }
     html.desm-mobile-mode .desm-card-stats { display:inline-flex; align-items:center; gap:8px; flex:0 0 auto; white-space:nowrap; }
     html.desm-mobile-mode .desm-card-ao { color:#1e88e5; }
+    html.desm-mobile-mode .desm-card-ao.desm-st-close { color:#15803d; }
     html.desm-mobile-mode .desm-card-qty { padding:2px 9px; border-radius:999px; background:#e8f1fd; color:#1565c0; font-size:12.5px; font-weight:700; line-height:1.4; font-variant-numeric:tabular-nums; }
     html.desm-mobile-mode .desm-card-rem { flex:0 0 auto; margin-left:auto; padding:2px 10px; border-radius:999px; font-size:12.5px; font-weight:800; line-height:1.4; white-space:nowrap; font-variant-numeric:tabular-nums; }
     html.desm-mobile-mode .desm-card-locrow { margin-top:5px; padding-top:5px; border-top:1px solid #eef1f6; font-size:13px; font-weight:600; }

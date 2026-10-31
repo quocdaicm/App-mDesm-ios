@@ -10,12 +10,14 @@ import UserNotifications
 struct ShareItem: Identifiable {
     let id = UUID()
     let url: URL
+    var extra: [URL] = []   // file đi kèm (vd PDF cùng PNG khi chụp trang)
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
+    var extra: [URL] = []
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        UIActivityViewController(activityItems: [url] + extra, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
