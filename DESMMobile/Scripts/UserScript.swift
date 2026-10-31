@@ -1098,7 +1098,19 @@ extension BrowserModel {
             tri.appendChild(el('span', '', ao || '-'));
             tri.appendChild(el('span', '', pair('OUT_STATUS_QTY') || '-'));
             m.appendChild(tri);
-            m.appendChild(el('div', 'desm-d-l', 'S/C & Excel Remarks ' + g('REMARKS')));
+            // Hàng Remarks + ô "Remaining" (số lượng còn lại = tổng - đã xuất, từ cột OUT_STATUS_QTY, vd 1060/60 -> 1000)
+            var remRow = el('div', 'desm-d-remrow');
+            remRow.appendChild(el('span', 'desm-d-remtxt', 'S/C & Excel Remarks ' + g('REMARKS')));
+            (function() {
+              var pr = g('OUT_STATUS_QTY').split('/').map(function(x) { return parseFloat(String(x).replace(/,/g, '')); });
+              if (pr.length < 2 || isNaN(pr[0]) || isNaN(pr[1]) || pr[1] <= 0) return;   // chưa xuất gì -> không hiện Remaining
+              var left = Math.round((pr[0] - pr[1]) * 1000) / 1000;
+              var box2 = el('span', 'desm-d-rembox' + (left > 0 ? ' desm-d-rem-open' : ' desm-d-rem-done'));
+              box2.appendChild(el('span', 'desm-d-remlbl', 'Remaining'));
+              box2.appendChild(el('span', 'desm-d-remval', left.toLocaleString('en-US', { maximumFractionDigits: 3 })));
+              remRow.appendChild(box2);
+            })();
+            m.appendChild(remRow);
             m.appendChild(el('hr', 'desm-d-hr'));
             var tl = el('div', 'desm-d-two');
             tl.appendChild(el('span', '', g('PACKAGE_TYPE') || '-'));
@@ -1502,6 +1514,18 @@ extension BrowserModel {
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.DRAWING_NO)));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.TAG_NO)));
                 c.appendChild(el('div', 'desm-ditem-l', dash(x.REMARKS || x.COMMENTS)));
+                // Số lượng từng hạng mục: In/Out (vd 50/30) + Remaining (còn lại = REMAIN_QTY, thiếu thì In - Out)
+                (function() {
+                  function pn(v) { return parseFloat(String(v == null ? '' : v).replace(/,/g, '')); }
+                  var inQ = pn(x.IN_QTY), outQ = pn(x.OUT_QTY), remQ = pn(x.REMAIN_QTY);
+                  if (isNaN(inQ)) return;
+                  if (isNaN(outQ)) outQ = 0;
+                  if (isNaN(remQ)) remQ = Math.round((inQ - outQ) * 1000) / 1000;
+                  var qr = el('div', 'desm-ditem-l desm-ditem-qty');
+                  qr.appendChild(el('span', 'desm-ditem-qtxt', "Q'ty : " + fnum(inQ) + '/' + fnum(outQ) + (x.UNIT ? ' ' + x.UNIT : '')));
+                  if (outQ > 0) qr.appendChild(el('span', 'desm-d-rembox2 ' + (remQ > 0 ? 'desm-d-rem-open' : 'desm-d-rem-done'), 'Remaining ' + fnum(remQ)));   // chỉ khi đã xuất
+                  c.appendChild(qr);
+                })();
                 var ft = el('div', 'desm-ditem-foot');
                 ft.appendChild(el('span', '', dash(x.MATERIAL_CODE)));
                 var lc2 = el('span', 'desm-d-loc');
@@ -1845,12 +1869,22 @@ extension BrowserModel {
             } catch (e) { rows = []; }
             if (!rows.length) { for (var id0 in G.Rows) addRow(G.Rows[id0]); }
             function isSel(r) { return !!r.Selected && r.Selected !== '0'; }
+            function pairQ(t) { // "1,060.000/0.000" -> "1060/0" (giống ô trong màn chi tiết kiện)
+              return String(t || '').split('/').map(function(x) {
+                var v = parseFloat(String(x).replace(/,/g, '')); return isNaN(v) ? String(x).trim() : String(v);
+              }).join('/');
+            }
+            function remOf(t) { // "1,060.000/60.000" -> 1000 (tổng - đã xuất); không đọc được -> ''
+              var pr = String(t || '').split('/').map(function(x) { return parseFloat(String(x).replace(/,/g, '')); });
+              if (pr.length < 2 || isNaN(pr[0]) || isNaN(pr[1]) || pr[1] <= 0) return '';   // chưa xuất gì -> không hiện Remaining
+              return Math.round((pr[0] - pr[1]) * 1000) / 1000;
+            }
             var allItems = rows.map(function(r) {
               return {
                 id: r.id, sel: isSel(r),
                 no: gridText(G, r, 'PACKAGE_NO'), desc: gridText(G, r, 'DESCRIPTION'),
                 type: gridText(G, r, 'PACKAGE_TYPE'), list: gridText(G, r, 'PACKAGE_LIST_NO'),
-                ao: gridText(G, r, 'OUT_STATUS'), loc: gridText(G, r, 'STORAGE_LOCATION'),
+                ao: gridText(G, r, 'OUT_STATUS'), qty: pairQ(gridText(G, r, 'OUT_STATUS_QTY')), rem: remOf(gridText(G, r, 'OUT_STATUS_QTY')), loc: gridText(G, r, 'STORAGE_LOCATION'),
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
@@ -1870,7 +1904,7 @@ extension BrowserModel {
             // Thanh nút đổi chiều cao (thu/mở) nên tính lại chiều cao vùng thẻ cho vừa màn hình
             try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
             try { diWarm(box.ownerDocument); } catch (e) {}
-            var sig = listSel + '@' + items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
+            var sig = listSel + '@' + items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.qty, i.rem, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
             if (box.__sig === sig && (!tb || doc.getElementById('desmSelAllChip'))) return;
             box.__sig = sig;
             var keep = box.scrollTop;
@@ -1939,7 +1973,15 @@ extension BrowserModel {
               var sub = [it.type, it.list].filter(function(x) { return x; }).join(' · ');
               if (sub) card.appendChild(el('div', 'desm-card-sub', sub));
               var foot = el('div', 'desm-card-foot');
-              foot.appendChild(el('span', 'desm-card-ao', it.ao ? 'A/O : ' + it.ao : ''));
+              var stats = el('span', 'desm-card-stats');
+              stats.appendChild(el('span', 'desm-card-ao', it.ao ? 'A/O : ' + it.ao : ''));
+              if (it.qty) stats.appendChild(el('span', 'desm-card-qty', it.qty));   // vd 1060/0: giống dòng số lượng trong chi tiết kiện
+              foot.appendChild(stats);
+              // Còn lại: viên thuốc ở góc phải hàng A/O (cam = còn hàng, xanh = đã xuất hết)
+              if (it.rem !== '') {
+                foot.appendChild(el('span', 'desm-card-rem ' + (it.rem > 0 ? 'desm-d-rem-open' : 'desm-d-rem-done'),
+                  'Remaining ' + Number(it.rem).toLocaleString('en-US', { maximumFractionDigits: 3 })));
+              }
               var loc = el('span', 'desm-card-loc');
               var NS = 'http://www.w3.org/2000/svg';
               var svg = doc.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24');
@@ -1949,7 +1991,8 @@ extension BrowserModel {
               pth.setAttribute('fill', 'none'); pth.setAttribute('stroke', 'currentColor'); pth.setAttribute('stroke-width', '2');
               svg.appendChild(pth); loc.appendChild(svg);
               loc.appendChild(el('span', 'desm-card-loctxt', it.loc || '—'));
-              foot.appendChild(loc); card.appendChild(foot);
+              card.appendChild(foot);
+              var locRow = el('div', 'desm-card-locrow'); locRow.appendChild(loc); card.appendChild(locRow);   // vị trí xuống hàng riêng, đủ chỗ hiện hết
               card.addEventListener('click', function(ev) {
                 var r = G.Rows[it.id]; if (!r) return;
                 // Chế độ "Chi tiết": chạm vùng ô tích bên trái = chọn dòng, chạm chỗ khác = mở chi tiết
@@ -1963,6 +2006,8 @@ extension BrowserModel {
               box.appendChild(card);
             });
             box.scrollTop = keep;
+            // Báo cho app (màn khởi động) biết màn Package đã dựng xong lần đầu
+            try { var tw = win; try { tw = win.top; void tw.document; } catch (e0) { tw = win; } if (!tw.__desmReadySent) { tw.__desmReadySent = 1; win.webkit.messageHandlers.desmReady.postMessage(1); } } catch (e) {}
           }
           // ===== Danh sách dạng thẻ cho các lưới khác (RSI, MRR, MRF, MPR...): mỗi dòng một thẻ, chạm thẻ để mở rộng toàn bộ cột,
           // chạm vùng ô tích bên trái để chọn dòng (các nút Confirm/Delete... của trang vẫn dùng dòng đã chọn).

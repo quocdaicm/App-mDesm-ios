@@ -187,6 +187,7 @@ struct WebView: UIViewRepresentable {
         content.add(context.coordinator, name: "desmSnap")
         content.add(context.coordinator, name: "desmAudit")
         content.add(context.coordinator, name: "desmAI")
+        content.add(context.coordinator, name: "desmReady")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -216,6 +217,7 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmSnap")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAudit")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAI")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmReady")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -304,6 +306,13 @@ struct WebView: UIViewRepresentable {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
                 DispatchQueue.main.async { if !self.model.reconnecting { self.model.reconnectSession(reason: "page") } }
+                return
+            }
+            if message.name == "desmReady" {
+                // Màn Package dựng xong lần đầu: cho màn khởi động mờ đi
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
+                DispatchQueue.main.async { self.model.splashReady = true }
                 return
             }
             if message.name == "desmAI" {
@@ -398,6 +407,7 @@ struct WebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             DispatchQueue.main.async {
                 self.model.isLoading = false
+                self.model.firstLoadDone = true
                 self.model.canGoBack = webView.canGoBack
                 self.model.canGoForward = webView.canGoForward
                 self.model.address = webView.url?.absoluteString ?? self.model.address
@@ -411,10 +421,10 @@ struct WebView: UIViewRepresentable {
             }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            DispatchQueue.main.async { self.model.isLoading = false }
+            DispatchQueue.main.async { self.model.isLoading = false; self.model.firstLoadDone = true }
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            DispatchQueue.main.async { self.model.isLoading = false }
+            DispatchQueue.main.async { self.model.isLoading = false; self.model.firstLoadDone = true }
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

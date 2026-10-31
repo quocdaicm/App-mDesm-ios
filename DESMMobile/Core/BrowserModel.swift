@@ -17,6 +17,9 @@ final class BrowserModel: ObservableObject {
     @Published var address = BrowserModel.homeURL
     @Published var pageTitle = "DESM Mobile"
     @Published var isLoading = false
+    /// Màn khởi động (LaunchSplash): trang DESM đã dựng xong màn Package (tín hiệu `desmReady` từ JS) / đã tải xong lần đầu
+    @Published var splashReady = false
+    @Published var firstLoadDone = false
     @Published var progress = 0.0
     @Published var canGoBack = false
     @Published var canGoForward = false

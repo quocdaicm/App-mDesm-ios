@@ -30,6 +30,7 @@ struct BrowserView: View {
     @State private var showOutgoing = false
     @State private var showWip = false
     @State private var showMrfReturn = false
+    @State private var showSplash = true   // màn khởi động: chỉ lần mở app đầu tiên
 
     var body: some View {
         VStack(spacing: 0) {
@@ -77,6 +78,13 @@ struct BrowserView: View {
                 Color(.systemGroupedBackground)
             }
             .ignoresSafeArea()
+        }
+        .overlay {
+            if showSplash {
+                LaunchSplashView(model: model, onFinish: { showSplash = false })
+                    .transition(.identity)
+                    .zIndex(100)
+            }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)   // bàn phím phủ lên footer, không ép WebView (tránh lưới báo "Too small space" làm mất focus ô nhập)
         .tint(.blue)

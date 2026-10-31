@@ -321,8 +321,12 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-card-foot {
       display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:6px; font-size:13px; font-weight:600;
     }
+    html.desm-mobile-mode .desm-card-stats { display:inline-flex; align-items:center; gap:8px; flex:0 0 auto; white-space:nowrap; }
     html.desm-mobile-mode .desm-card-ao { color:#1e88e5; }
-    html.desm-mobile-mode .desm-card-loc { display:inline-flex; align-items:center; gap:4px; min-width:0; color:#111827; }
+    html.desm-mobile-mode .desm-card-qty { padding:2px 9px; border-radius:999px; background:#e8f1fd; color:#1565c0; font-size:12.5px; font-weight:700; line-height:1.4; font-variant-numeric:tabular-nums; }
+    html.desm-mobile-mode .desm-card-rem { flex:0 0 auto; margin-left:auto; padding:2px 10px; border-radius:999px; font-size:12.5px; font-weight:800; line-height:1.4; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    html.desm-mobile-mode .desm-card-locrow { margin-top:5px; padding-top:5px; border-top:1px solid #eef1f6; font-size:13px; font-weight:600; }
+    html.desm-mobile-mode .desm-card-loc { display:inline-flex; align-items:center; justify-content:flex-start; flex:1 1 auto; gap:4px; min-width:0; max-width:100%; color:#111827; }
     html.desm-mobile-mode .desm-card-loctxt { text-decoration:underline; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
     /* ===== Danh sách dạng thẻ cho RSI / MRR / MRF / MPR ===== */
@@ -458,6 +462,16 @@ enum MobileStyles {
     html.desm-mobile-mode .desm-d-h { font-size:19px; font-weight:800; line-height:1.3; word-break:break-word; margin-bottom:4px; }
     html.desm-mobile-mode .desm-d-l { font-size:17px; line-height:1.5; word-break:break-word; }
     html.desm-mobile-mode .desm-d-red { color:#dc2626; font-weight:700; }
+    html.desm-mobile-mode .desm-d-remrow { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:17px; line-height:1.5; }
+    html.desm-mobile-mode .desm-d-remtxt { flex:1 1 auto; min-width:0; word-break:break-word; }
+    html.desm-mobile-mode .desm-d-rembox { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; line-height:1.15; padding:3px 10px; border-radius:10px; }
+    html.desm-mobile-mode .desm-d-remlbl { font-size:11px; font-weight:600; letter-spacing:.3px; text-transform:uppercase; opacity:.8; }
+    html.desm-mobile-mode .desm-d-remval { font-size:19px; font-weight:800; font-variant-numeric:tabular-nums; }
+    html.desm-mobile-mode .desm-ditem-qty { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:2px 0; font-weight:600; }
+    html.desm-mobile-mode .desm-ditem-qtxt { min-width:0; word-break:break-word; }
+    html.desm-mobile-mode .desm-d-rembox2 { flex:0 0 auto; padding:2px 12px; border-radius:999px; font-size:14px; font-weight:800; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    html.desm-mobile-mode .desm-d-rem-open { background:#fff4e0; color:#b45309; }
+    html.desm-mobile-mode .desm-d-rem-done { background:#e7f7ec; color:#15803d; }
     html.desm-mobile-mode .desm-d-tri, html.desm-mobile-mode .desm-d-two { display:flex; justify-content:space-between; gap:8px; font-size:17px; line-height:1.5; }
     html.desm-mobile-mode .desm-d-tri span:nth-child(2) { text-align:center; flex:1; }
     html.desm-mobile-mode .desm-d-hr { border:0; border-top:1px solid #d9dee7; margin:8px 0; }
