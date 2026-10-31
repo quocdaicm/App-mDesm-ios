@@ -44,6 +44,7 @@ struct AIToolResult {
 
 enum AIMsg {
     case user(String)
+    case userImages(String, [Data])    // câu hỏi kèm ảnh (JPEG) đính kèm
     case assistant(AITurn)
     case tools([AIToolResult])
 }
@@ -125,6 +126,12 @@ enum AIClient {
             switch m {
             case .user(let t):
                 messages.append(["role": "user", "content": t])
+            case .userImages(let t, let imgs):
+                var parts: [[String: Any]] = [["type": "text", "text": t]]
+                for d in imgs {
+                    parts.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + d.base64EncodedString()] as [String: Any]])
+                }
+                messages.append(["role": "user", "content": parts])
             case .assistant(let a):
                 if let raw = a.raw as? [String: Any] { messages.append(raw) }
             case .tools(let rs):
@@ -168,6 +175,12 @@ enum AIClient {
             switch m {
             case .user(let t):
                 messages.append(["role": "user", "content": t])
+            case .userImages(let t, let imgs):
+                var blocks: [[String: Any]] = imgs.map { (d: Data) -> [String: Any] in
+                    return ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": d.base64EncodedString()] as [String: Any]]
+                }
+                blocks.append(["type": "text", "text": t])
+                messages.append(["role": "user", "content": blocks])
             case .assistant(let a):
                 messages.append(["role": "assistant", "content": a.raw])
             case .tools(let rs):
@@ -208,6 +221,12 @@ enum AIClient {
             switch m {
             case .user(let t):
                 contents.append(["role": "user", "parts": [["text": t]]])
+            case .userImages(let t, let imgs):
+                var parts: [[String: Any]] = imgs.map { (d: Data) -> [String: Any] in
+                    return ["inlineData": ["mimeType": "image/jpeg", "data": d.base64EncodedString()] as [String: Any]]
+                }
+                parts.append(["text": t])
+                contents.append(["role": "user", "parts": parts])
             case .assistant(let a):
                 contents.append(["role": "model", "parts": a.raw])
             case .tools(let rs):
@@ -288,8 +307,17 @@ enum AIClient {
             let s = t.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return "Kết nối được. Model trả lời: " + (s.isEmpty ? "(trống)" : String(s.prefix(60)))
         } catch {
-            return "Lỗi: " + error.localizedDescription
+            return "Lỗi: " + error.localizedDescription + "\n\n" + diag(p, key: key, model: model)
         }
+    }
+
+    /// Thông tin chẩn đoán (không lộ khoá): địa chỉ đang gọi, model, khoá rút gọn + độ dài.
+    static func diag(_ p: AIProvider, key: String, model: String) -> String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kp = k.count > 10 ? String(k.prefix(6)) + "…" + String(k.suffix(4)) : "(quá ngắn)"
+        let m = model.isEmpty ? "(TRỐNG — hãy nhập tên model)" : model
+        let path = p.kind == .claude ? "/messages" : (p.kind == .gemini ? "/models/…:generateContent" : "/chat/completions")
+        return "Đang gọi: " + AIStore.baseURL(p) + path + "\nModel: " + m + "\nKhoá: " + kp + " (" + String(k.count) + " ký tự)"
     }
 }
 

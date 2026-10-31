@@ -186,7 +186,7 @@ struct AIProviderDetailView: View {
                     busy = false
                 }
             } catch {
-                await MainActor.run { info = "Lỗi: " + error.localizedDescription; busy = false }
+                await MainActor.run { info = "Lỗi: " + error.localizedDescription + "\n\n" + AIClient.diag(p, key: k, model: AIStore.model(p)); busy = false }
             }
         }
     }
@@ -233,7 +233,7 @@ struct AIProviderDetailView: View {
                     busy = false
                 }
             } catch {
-                await MainActor.run { info = "Lỗi: " + error.localizedDescription; busy = false }
+                await MainActor.run { info = "Lỗi: " + error.localizedDescription + "\n\n" + AIClient.diag(p, key: k, model: AIStore.model(p)); busy = false }
             }
         }
     }
@@ -246,6 +246,7 @@ struct AIProviderDetailView: View {
         info = "Đang kiểm tra…"
         let p = provider
         let m = AIStore.model(p)
+        if m.isEmpty { info = "Chưa có tên model. Hãy gõ tên model vào ô \"Tên model\" (xem danh sách tại trang model của nhà AI) rồi kiểm tra lại.\n\n" + AIClient.diag(p, key: k, model: m); busy = false; return }
         Task {
             let r = await AIClient.test(p, key: k, model: m)
             await MainActor.run { info = r; busy = false }
@@ -367,7 +368,7 @@ struct AIModelPickerView: View {
                     busy = false
                 }
             } catch {
-                await MainActor.run { info = "Lỗi: " + error.localizedDescription; busy = false }
+                await MainActor.run { info = "Lỗi: " + error.localizedDescription + "\n\n" + AIClient.diag(p, key: k, model: AIStore.model(p)); busy = false }
             }
         }
     }
@@ -388,7 +389,7 @@ struct AIModelPickerView: View {
                     busy = false
                 }
             } catch {
-                await MainActor.run { info = "Lỗi: " + error.localizedDescription; busy = false }
+                await MainActor.run { info = "Lỗi: " + error.localizedDescription + "\n\n" + AIClient.diag(p, key: k, model: AIStore.model(p)); busy = false }
             }
         }
     }

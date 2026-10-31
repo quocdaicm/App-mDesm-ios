@@ -492,3 +492,30 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 ## Ô 'Tìm MRF/RSI No.' / 'Tìm ... Name' (2026-10-30)
 - Lọc giờ so khớp theo giá trị cột ĐANG HIỂN THỊ trên thẻ (header/khoá dạng `<MRF|RSI|MRR|MPR> No/Number/Name`) + khoá cột thật + giá trị thô; so cả dạng bỏ ký tự đặc biệt và dạng chữ thường nguyên văn. Ô nghe thêm keyup/change/search (iOS). Tên phiếu lấy cùng loại với số phiếu (MRF No ↔ MRF Name).
 - Hai ô chuyển ra thành hàng `.desm-gsearch` chèn ngay dưới hàng chứa ô Packing List No / Package No của trang (dò input theo placeholder/id/name chứa package|packing, leo lên tới hàng chứa nó; không thấy thì chèn ngay trên danh sách thẻ). Căn lề và lấy bo góc/cỡ chữ/viền từ ô native; CSS ở `MobileStyles.swift` (`.desm-gsearch`, nền trắng, cao 44px, chữ 16px chống zoom iOS). Hàng này bị ẩn cùng các phần phía trên khi cuộn xuống. Chips Tất cả/Chưa đóng/Đã đóng vẫn ở thanh dính. Chưa thử máy thật.
+
+## Chẩn đoán lỗi nhà AI (2026-10-31)
+- `AIClient.diag(p,key:,model:)`: khi dò model/kiểm tra kết nối lỗi, hiện thêm địa chỉ đang gọi, model, khoá rút gọn (6 ký tự đầu…4 cuối + độ dài). Không lộ khoá.
+- "Kiểm tra kết nối" với nhà Tùy chỉnh mà chưa có tên model: báo ngay "Chưa có tên model" thay vì gửi model rỗng lên máy chủ (nhà custom không có model mặc định, gây lỗi 503 kiểu "không cung cấp mô hình"). Chưa biên dịch/thử máy thật.
+
+## Khung chat AI riêng: bàn phím + cuộn (2026-10-31)
+- `AIChatView`: `@FocusState inputFocused` cho ô nhập; danh sách tin dùng `.scrollDismissesKeyboard(.interactively)` (iOS 16+) và chạm vào tin chat thì `inputFocused = false` (hạ bàn phím). Bàn phím mở/đóng thì trượt về tin cuối.
+- Mở lại chat: `onAppear` trong `ScrollViewReader` gọi `scrollEnd(animated:false)` hai lần (ngay + sau 0.3s) để xuống tin cuối. Chưa biên dịch/thử máy thật.
+
+## Hỏi AI bằng giọng nói (2026-10-31)
+- `AIVoiceInput` (trong `AIChatView.swift`, không thêm file mới để khỏi sửa pbxproj): `SFSpeechRecognizer(vi-VN)` + `AVAudioEngine`, chữ hiện dần vào ô nhập; dừng khi bấm mic lần nữa, im lặng 2,5s, gửi tin, hoặc đóng chat. KHÔNG tự gửi, người dùng kiểm tra chữ rồi bấm gửi.
+- `Info.plist` thêm `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`. Lần đầu iOS hỏi quyền micro + nhận dạng giọng nói. Chưa biên dịch/thử máy thật.
+
+## Đính kèm ảnh / tệp trong chat AI riêng (2026-10-31)
+- Nút kẹp giấy trong ô nhập: Chụp ảnh (camera), Chọn ảnh (PhotosPicker, tối đa 4), Chọn tệp (fileImporter). Tối đa 6 mục mỗi lần; hiện chip xem trước, bấm x để bỏ.
+- Ảnh: thu nhỏ cạnh dài 1600px, JPEG 0.7, gửi qua `AIMsg.userImages` (OpenAI `image_url` data URL, Claude `image` base64, Gemini `inlineData`). Model phải hỗ trợ nhìn ảnh, không thì API báo lỗi.
+- Tệp: PDF có chữ → trích chữ bằng PDFKit; PDF quét → 3 trang đầu thành ảnh; txt/csv/json/md/log/xml… → đọc chữ (cắt 40.000 ký tự, tối đa 5 MB). Excel/Word chưa đọc được (báo hướng dẫn xuất CSV/PDF). Chữ tệp chèn vào câu hỏi và giữ trong lịch sử chữ; ảnh không giữ ở lượt sau.
+- Code nằm trong `AIChatView.swift` (không thêm file mới khỏi sửa pbxproj). Chưa biên dịch/thử máy thật.
+- (cập nhật) Hàng `.desm-gsearch` bị co theo nội dung khi nằm trong khung flex của trang → ép `flex:0 0 100%; width:100%`, 2 ô `flex:1 1 0` chia đều, khoảng cách (gap) và lề lấy theo hai ô Packing List No / Package No. Placeholder đổi thành tên cột đúng chức năng: 'MRF No.', 'MRF Name', 'RSI No.', 'RSI Name' (không còn chữ 'Tìm').
+
+## Khung lọc nhanh thu gọn vào nút cạnh 'Cột: Gọn' (2026-10-31)
+- Thẻ RSI/MRF/MRR/MPR Summary: khung dính (checkbox chọn tất cả, ô 'Lọc nhanh', số dòng, Dạng: Thẻ/Bảng, Tất cả/Chưa đóng/Đã đóng) mặc định ĐÓNG (class `desm-bar-collapsed` trên `#desmGenCards`, chỉ khi không ở dạng Bảng). Nút `#desmBarToggle` ('Lọc nhanh ▾ · N dòng · chọn M') chèn ngay sau nút 'Cột: Gọn' để mở/đóng; trạng thái nhớ trong localStorage `desmGenBar` ('1' = mở). Không có nút 'Cột: Gọn' thì khung giữ nguyên mở. Hai ô tìm No/Name vẫn nằm dưới Package No. Chưa thử máy thật.
+- (cập nhật) Thu gọn thanh nút thẻ: hàng 1 = checkbox 20px + ô lọc nhanh + nút '▦ Thẻ/☰ Bảng'; hàng 2 = chip Tất cả/Chưa đóng/Đã đóng cao 28px + số dòng ở cuối hàng (một dòng, cuộn ngang nếu thiếu chỗ). Thanh nút 'Cột: Gọn' + 'Lọc ▾ · N' + 'Number of Page' thêm class `desm-tb-compact` (nút cao 30px, lề nhỏ). CSS ở `MobileStyles.swift` (khối 'thu gọn thanh nút thẻ'). Chưa thử máy thật.
+
+## Lịch sử chat AI riêng + tạo chat mới (2026-10-31)
+- `AIConversation` (id, title, updated, lines, turns) lưu thành JSON `Application Support/DESMAIChats.json` qua `AIChatStore` (tối đa 40 cuộc, mới nhất trước; mỗi lượt lưu cắt 20.000 ký tự). `AIChatSession` tự lưu (gộp lần ghi) mỗi khi `lines`/`turns` đổi; khi khởi tạo tự mở lại cuộc gần nhất. Tiêu đề = dòng đầu câu hỏi đầu tiên (40 ký tự).
+- Thanh đầu khung chat: 🕘 Lịch sử (`AIHistoryView`: chạm mở lại, vuốt trái xoá, nút 'Cuộc trò chuyện mới'), ✎ Chat mới (`newChat()`, không làm gì nếu cuộc hiện tại trống), ⋯ gồm 'Nhật ký lỗi' và 'Xoá cuộc trò chuyện này'. Đổi/mở/xoá cuộc khi AI đang trả lời thì huỷ lượt đang chạy. Ảnh đính kèm không được lưu (chỉ tên). Chưa biên dịch/thử máy thật.

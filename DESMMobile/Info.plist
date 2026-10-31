@@ -10,5 +10,9 @@
 	<array>
 		<string>fetch</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dùng micro để bạn hỏi trợ lý AI bằng giọng nói.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Chuyển giọng nói của bạn thành chữ để gửi câu hỏi cho trợ lý AI.</string>
 </dict>
 </plist>

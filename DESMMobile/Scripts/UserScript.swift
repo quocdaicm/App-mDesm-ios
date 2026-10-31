@@ -2141,7 +2141,29 @@ extension BrowserModel {
                 box.__sig = null; genericCards(doc);
               });
             }
-            box.__tg.textContent = on ? 'Dạng: Thẻ' : 'Dạng: Bảng';
+            box.__tg.textContent = on ? '▦ Thẻ' : '☰ Bảng';
+            // Nút 'Lọc nhanh' cạnh nút 'Cột: Gọn': mở/đóng khung lọc nhanh (ô lọc, Dạng, Tất cả/Chưa đóng/Đã đóng) cho đỡ chiếm màn hình. Mặc định đóng.
+            var colBtn = doc.getElementById('desmColToggle');
+            if (win.__desmGenBar === undefined) {
+              var sb = ''; try { sb = win.localStorage.getItem('desmGenBar') || ''; } catch (e) {}
+              win.__desmGenBar = sb === '1';
+            }
+            if (colBtn && !doc.getElementById('desmBarToggle')) {
+              var bb = doc.createElement('button');
+              bb.type = 'button'; bb.id = 'desmBarToggle'; bb.className = colBtn.className; bb.style.marginLeft = '8px';
+              bb.addEventListener('click', function(e) {
+                e.preventDefault(); e.stopPropagation();
+                win.__desmGenBar = !win.__desmGenBar;
+                try { win.localStorage.setItem('desmGenBar', win.__desmGenBar ? '1' : '0'); } catch (e2) {}
+                box.__sig = null; genericCards(doc);
+              });
+              if (colBtn.parentNode) colBtn.parentNode.insertBefore(bb, colBtn.nextSibling);
+            }
+            var barBtn = doc.getElementById('desmBarToggle');
+            if (colBtn && colBtn.parentNode && colBtn.parentNode.classList) colBtn.parentNode.classList.add('desm-tb-compact');
+            var barOpen = !barBtn || !!win.__desmGenBar;
+            box.classList.toggle('desm-bar-collapsed', !barOpen);
+            if (barBtn) barBtn.style.display = on ? '' : 'none';
             host.classList.toggle('desm-grid-off', on);
             box.classList.toggle('desm-gtable', !on);
             if (!on) {
@@ -2222,6 +2244,7 @@ extension BrowserModel {
                   b2.appendChild(cb);
                 });
               }
+              b2.appendChild(box.__cnt);   // số dòng nằm cuối hàng chip cho gọn
               box.__bar.appendChild(b2);
             }
             // Hai ô 'Tìm MRF No.' / 'Tìm MRF Name' nằm trong trang, ngay dưới hàng Packing List No / Package No
@@ -2231,7 +2254,7 @@ extension BrowserModel {
                 if (!key) return;
                 var ht = ''; try { ht = gridText(G, G.Rows.Header, key); } catch (e) {}
                 var inp = doc.createElement('input'); inp.type = 'search'; inp.className = 'desm-gq2';
-                inp.placeholder = 'Tìm ' + (ht || fallback);
+                inp.placeholder = ht || ((key.match(/^(RSI|MRR|MRF|MPR)/i) || [''])[0].toUpperCase() + (fld === 'no' ? ' No.' : ' Name'));
                 inp.setAttribute('autocomplete', 'off'); inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('enterkeyhint', 'search');
                 inp.value = F[fld] || '';
                 var go = function() { if (F[fld] === inp.value) return; F[fld] = inp.value; box.__sig = null; genericCards(doc); };
@@ -2269,6 +2292,11 @@ extension BrowserModel {
                       var l = Math.min.apply(null, ins.map(function(x) { return x.left; })), r = Math.max.apply(null, ins.map(function(x) { return x.right; }));
                       sr2.style.paddingLeft = Math.max(0, l - rr.left) + 'px';
                       sr2.style.paddingRight = Math.max(0, rr.right - r) + 'px';
+                      if (ins.length > 1) {
+                        var srt = ins.slice().sort(function(a, b) { return a.left - b.left; });
+                        var gp = srt[1].left - srt[0].right;
+                        if (gp > 0 && gp < 60) sr2.style.gap = gp + 'px';
+                      }
                       var cs = win.getComputedStyle(anchor);
                       [].forEach.call(sr2.querySelectorAll('input'), function(i) {
                         i.style.height = cs.height; i.style.borderRadius = cs.borderRadius; i.style.fontSize = cs.fontSize;
@@ -2325,6 +2353,7 @@ extension BrowserModel {
             box.__all.checked = items.length > 0 && nSel === items.length;
             box.__all.indeterminate = nSel > 0 && nSel < items.length;
             box.__cnt.textContent = items.length + ' dòng' + (nSel ? ' · chọn ' + nSel : '');
+            if (barBtn) barBtn.textContent = 'Lọc ' + (barOpen ? '▴' : '▾') + ' · ' + items.length + (nSel ? ' (chọn ' + nSel + ')' : '');
             var list = box.__list, keep = box.scrollTop;
             while (list.firstChild) list.removeChild(list.firstChild);
             if (!items.length) {

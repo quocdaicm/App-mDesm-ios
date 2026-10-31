@@ -325,8 +325,8 @@ enum MobileStyles {
     html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gbar2 { display:none!important; }
     html.desm-mobile-mode .desm-gbar2 { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
     html:not(.desm-mobile-mode) .desm-gsearch { display:none!important; }
-    html.desm-mobile-mode .desm-gsearch { display:flex; gap:8px; align-items:center; margin:8px 0; padding:0 10px; box-sizing:border-box; width:100%; max-width:100%; }
-    html.desm-mobile-mode .desm-gsearch .desm-gq2 { flex:1 1 0; min-width:0; box-sizing:border-box; height:44px; margin:0; padding:0 12px; border:1px solid #cfd6e4; border-radius:10px; background:#fff; color:#111827; font-size:16px; -webkit-appearance:none; appearance:none; }
+    html.desm-mobile-mode .desm-gsearch { display:flex!important; flex:0 0 100%!important; gap:10px; align-items:center; margin:8px 0; padding:0 10px; box-sizing:border-box!important; width:100%!important; max-width:100%!important; float:none!important; clear:both; }
+    html.desm-mobile-mode .desm-gsearch .desm-gq2 { flex:1 1 0!important; width:auto!important; min-width:0; box-sizing:border-box; height:44px; margin:0; padding:0 12px; border:1px solid #cfd6e4; border-radius:10px; background:#fff; color:#111827; font-size:16px; -webkit-appearance:none; appearance:none; }
     html.desm-mobile-mode .desm-gsearch .desm-gq2:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.18); }
     html.desm-mobile-mode .desm-gchip { flex:0 0 auto; height:32px; padding:0 12px; border:1px solid #cbd8f0; border-radius:16px; background:#fff; color:#35507a; font-weight:600; font-size:13px; }
     html.desm-mobile-mode .desm-gchip.desm-on { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
@@ -335,11 +335,26 @@ enum MobileStyles {
       border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:sticky; top:0; z-index:5;
     }
     html.desm-mobile-mode .desm-tophide { display:none!important; }
+    html.desm-mobile-mode #desmGenCards.desm-bar-collapsed:not(.desm-gtable) .desm-gbar { display:none!important; }
+    html.desm-mobile-mode #desmGenCards.desm-bar-collapsed:not(.desm-gtable) { padding-top:4px; }
+    html:not(.desm-mobile-mode) #desmBarToggle { display:none!important; }
     html.desm-mobile-mode #desmGenCards .desm-gbar { transition:transform .22s ease, box-shadow .22s ease; }
     html.desm-mobile-mode #desmGenCards.desm-bar-hide .desm-gbar { transform:translateY(calc(-100% - 12px)); box-shadow:none; pointer-events:none; }
     html.desm-mobile-mode .desm-gq { flex:1 1 auto; min-width:0; height:34px; border:1px solid #d5dbe5; border-radius:8px; padding:0 10px; font-size:14px; }
     html.desm-mobile-mode .desm-gcnt { flex:0 0 auto; font-size:12px; font-weight:600; color:#374151; white-space:nowrap; }
     html.desm-mobile-mode .desm-gbtn { flex:0 0 auto; height:34px; padding:0 12px; border:0; border-radius:8px; background:#e8f0fe; color:#1d4ed8; font-weight:600; font-size:13px; }
+    /* --- thu gọn thanh nút thẻ RSI/MRF/MRR/MPR cho đỡ chiếm màn hình --- */
+    html.desm-mobile-mode .desm-gbar { gap:6px; margin:0 0 6px; padding:5px 8px; border-radius:10px; }
+    html.desm-mobile-mode .desm-gbar .desm-gall { flex:0 0 auto; width:20px; height:20px; margin:0; }
+    html.desm-mobile-mode .desm-gbar .desm-gq { height:30px; font-size:14px; padding:0 10px; }
+    html.desm-mobile-mode .desm-gbar .desm-gbtn { height:30px; padding:0 10px; font-size:12px; }
+    html.desm-mobile-mode .desm-gbar2 { gap:5px!important; flex-wrap:nowrap!important; overflow-x:auto; align-items:center; }
+    html.desm-mobile-mode .desm-gbar2 .desm-gchip { height:28px; padding:0 10px; font-size:12px; border-radius:14px; white-space:nowrap; }
+    html.desm-mobile-mode .desm-gbar2 .desm-gcnt { margin-left:auto; padding-left:6px; font-size:12px; }
+    html.desm-mobile-mode .desm-tb-compact { padding:2px 10px!important; min-height:0!important; gap:6px!important; align-items:center!important; }
+    html.desm-mobile-mode .desm-tb-compact #desmColToggle,
+    html.desm-mobile-mode .desm-tb-compact #desmBarToggle { height:30px!important; min-height:0!important; padding:0 12px!important; font-size:13px!important; line-height:1!important; margin:0!important; width:auto!important; }
+    html.desm-mobile-mode .desm-tb-compact select { height:30px!important; min-height:0!important; font-size:13px!important; padding-top:0!important; padding-bottom:0!important; }
     html.desm-mobile-mode .desm-gcard.desm-g-ok { border-left-color:#22c55e; }
     html.desm-mobile-mode .desm-gcard.desm-g-bad { border-left-color:#ef4444; }
     html.desm-mobile-mode .desm-gtop { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }

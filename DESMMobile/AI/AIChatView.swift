@@ -3,16 +3,50 @@
 // Cố ý KHÔNG dùng textSelection / AsyncImage / animation cuộn / LazyVStack để tránh treo layout khi tin nhắn dài. Chưa build/chưa thử trên máy thật.
 
 import SwiftUI
+import Speech
+import AVFoundation
+import PhotosUI
+import PDFKit
+import UniformTypeIdentifiers
 
-struct AIPlainTurn {
+struct AIPlainTurn: Codable {
     let isUser: Bool
     let text: String
 }
 
-struct AIChatLine: Identifiable, Equatable {
-    let id = UUID()
+struct AIChatLine: Identifiable, Equatable, Codable {
+    var id = UUID()
     let isUser: Bool
     let text: String
+}
+
+/// Một cuộc trò chuyện đã lưu (giống danh sách chat của Dodo).
+struct AIConversation: Codable, Identifiable {
+    var id = UUID()
+    var title = "Cuộc trò chuyện mới"
+    var updated = Date()
+    var lines: [AIChatLine] = []
+    var turns: [AIPlainTurn] = []
+}
+
+/// Lưu lịch sử chat AI riêng vào tệp JSON trong thư mục Application Support của app (chỉ nằm trên máy này).
+enum AIChatStore {
+    static let maxChats = 40
+    static var fileURL: URL {
+        let fm = FileManager.default
+        let dir = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
+        return dir.appendingPathComponent("DESMAIChats.json")
+    }
+    static func load() -> [AIConversation] {
+        guard let d = try? Data(contentsOf: fileURL), let l = try? JSONDecoder().decode([AIConversation].self, from: d) else { return [] }
+        return l
+    }
+    static func save(_ l: [AIConversation]) {
+        let url = fileURL
+        DispatchQueue.global(qos: .utility).async {
+            if let d = try? JSONEncoder().encode(l) { try? d.write(to: url, options: .atomic) }
+        }
+    }
 }
 
 enum AITheme {
@@ -61,11 +95,92 @@ struct AIBusyRow: View {
 final class AIChatSession: ObservableObject {
     static let shared = AIChatSession()
 
-    @Published var lines: [AIChatLine] = []
+    @Published var lines: [AIChatLine] = [] { didSet { persistSoon() } }
+    @Published var chats: [AIConversation] = []          // đã lưu, mới nhất trước
+    @Published private(set) var currentID = UUID()
     @Published var busy = false
     @Published var status = ""
     @Published var busySince = Date()
-    private var turns: [AIPlainTurn] = []     // lịch sử chỉ chữ: dùng được cho mọi nhà AI (mỗi nhà định dạng khác nhau)
+    private var turns: [AIPlainTurn] = [] { didSet { persistSoon() } }    // lịch sử chỉ chữ: dùng được cho mọi nhà AI (mỗi nhà định dạng khác nhau)
+    private var loading = false
+    private var saveQueued = false
+
+    init() {
+        chats = AIChatStore.load().sorted { $0.updated > $1.updated }
+        if let c = chats.first { open(c.id) }     // mở lại cuộc trò chuyện gần nhất
+    }
+
+    private func persistSoon() {
+        if loading || saveQueued { return }
+        saveQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.saveQueued = false
+            self?.persistNow()
+        }
+    }
+
+    private func title() -> String {
+        let t = lines.first(where: { $0.isUser })?.text ?? "Cuộc trò chuyện"
+        let first = t.components(separatedBy: "\n").first ?? t
+        return String(first.prefix(40))
+    }
+
+    private func persistNow() {
+        if lines.isEmpty { return }
+        let c = AIConversation(id: currentID, title: title(), updated: Date(), lines: lines,
+                               turns: turns.map { AIPlainTurn(isUser: $0.isUser, text: String($0.text.prefix(20000))) })
+        chats.removeAll { $0.id == currentID }
+        chats.insert(c, at: 0)
+        if chats.count > AIChatStore.maxChats { chats.removeLast(chats.count - AIChatStore.maxChats) }
+        AIChatStore.save(chats)
+    }
+
+    private func cancelRun() {
+        endRunWatch()
+        task?.cancel()
+        task = nil
+        busy = false
+        status = ""
+    }
+
+    /// Tạo cuộc trò chuyện mới (cuộc hiện tại đã được lưu).
+    func newChat() {
+        if lines.isEmpty { return }
+        cancelRun()
+        persistNow()
+        loading = true
+        currentID = UUID()
+        lines = []
+        turns = []
+        loading = false
+        AILog.add("Tạo cuộc trò chuyện mới")
+    }
+
+    /// Mở lại một cuộc trò chuyện đã lưu.
+    func open(_ id: UUID) {
+        guard id != currentID, let c = chats.first(where: { $0.id == id }) else { return }
+        cancelRun()
+        persistNow()
+        loading = true
+        currentID = c.id
+        lines = c.lines
+        turns = c.turns
+        loading = false
+        AILog.add("Mở lại cuộc trò chuyện: " + c.title)
+    }
+
+    func delete(_ id: UUID) {
+        chats.removeAll { $0.id == id }
+        AIChatStore.save(chats)
+        if id == currentID {
+            cancelRun()
+            loading = true
+            currentID = UUID()
+            lines = []
+            turns = []
+            loading = false
+        }
+    }
     private var task: Task<Void, Never>? = nil
     private var runTag = ""
 
@@ -74,14 +189,8 @@ final class AIChatSession: ObservableObject {
     }
 
     func clear() {
-        endRunWatch()
-        task?.cancel()
-        task = nil
-        lines = []
-        turns = []
-        busy = false
-        status = ""
-        AILog.add("Người dùng xoá hội thoại")
+        delete(currentID)
+        AILog.add("Người dùng xoá cuộc trò chuyện")
     }
 
     func stop() {
@@ -125,10 +234,23 @@ final class AIChatSession: ObservableObject {
         return out
     }
 
-    func send(_ text: String, model: BrowserModel) {
-        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if q.isEmpty || busy { return }
-        append(AIChatLine(isUser: true, text: q))
+    func send(_ text: String, attachments: [AIAttachment] = [], model: BrowserModel) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (trimmed.isEmpty && attachments.isEmpty) || busy { return }
+        let q = trimmed.isEmpty ? "Hãy xem phần đính kèm và tóm tắt nội dung chính." : trimmed
+        // Tệp chữ chèn thẳng vào câu hỏi; ảnh gửi riêng
+        var q2v = q
+        var imgsV: [Data] = []
+        var names: [String] = []
+        for a in attachments {
+            names.append(a.name)
+            if let d = a.image { imgsV.append(d) }
+            if let t = a.text { q2v += "\n\n--- Tệp: " + a.name + " ---\n" + t + "\n--- hết tệp ---" }
+        }
+        let q2 = q2v
+        let imgs = imgsV
+        let histText = q2 + (imgs.isEmpty ? "" : "\n[Lượt này có " + String(imgs.count) + " ảnh đính kèm, không giữ lại ở lượt sau]")
+        append(AIChatLine(isUser: true, text: names.isEmpty ? q : q + "\n📎 " + names.joined(separator: ", ")))
         let cands = AIStore.candidates()
         if cands.isEmpty {
             let p = AIStore.active
@@ -156,7 +278,7 @@ final class AIChatSession: ObservableObject {
                     AILog.step("↪︎ Chuyển sang " + p.name + " · " + modelName + " (nhà trước lỗi)")
                 }
                 var msgs = me.plainMsgs(kind: p.kind)
-                msgs.append(.user(q))
+                msgs.append(imgs.isEmpty ? .user(q2) : .userImages(q2, imgs))
                 // Thử model đã chọn; nếu model sai/không có thì thử model mặc định của nhà; đứt mạng/5xx thì thử lại 1 lần; sau đó mới sang nhà khác
                 var tryModels = [modelName]
                 if !p.defaultModel.isEmpty && p.defaultModel != modelName { tryModels.append(p.defaultModel) }
@@ -208,7 +330,7 @@ final class AIChatSession: ObservableObject {
                         shown = "↪︎ " + head + " (" + detail + ").\n\n" + ans
                     }
                     me.append(AIChatLine(isUser: false, text: shown))
-                    me.turns.append(AIPlainTurn(isUser: true, text: q))
+                    me.turns.append(AIPlainTurn(isUser: true, text: histText))
                     me.turns.append(AIPlainTurn(isUser: false, text: ans))
                     if me.turns.count > 12 { me.turns.removeFirst(me.turns.count - 12) }
                     me.busy = false
@@ -227,6 +349,248 @@ final class AIChatSession: ObservableObject {
     }
 }
 
+// MARK: - Đính kèm ảnh / tệp để hỏi
+/// Ảnh (JPEG đã thu nhỏ) gửi thẳng cho AI nhìn được; tệp chữ / PDF có chữ được đọc thành văn bản chèn vào câu hỏi.
+struct AIAttachment: Identifiable {
+    let id = UUID()
+    let name: String
+    var image: Data? = nil
+    var text: String? = nil
+    var preview: UIImage? = nil
+}
+
+enum AIAttach {
+    static let maxItems = 6
+    static let maxTextChars = 40000
+    static let textExts: Set<String> = ["txt", "csv", "tsv", "json", "md", "log", "xml", "html", "htm", "yaml", "yml", "sql", "ini", "cfg", "js", "swift", "py"]
+    static let imageExts: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "tif", "tiff", "bmp"]
+
+    /// Thu nhỏ cạnh dài về tối đa 1600px, JPEG 0.7 để gửi nhẹ.
+    static func jpeg(_ img: UIImage, maxSide: CGFloat = 1600) -> Data? {
+        let w = img.size.width, h = img.size.height
+        guard w > 0, h > 0 else { return nil }
+        let k = min(1, maxSide / max(w, h))
+        let size = CGSize(width: max(1, (w * k).rounded()), height: max(1, (h * k).rounded()))
+        let fmt = UIGraphicsImageRendererFormat.default()
+        fmt.scale = 1
+        fmt.opaque = true
+        let r = UIGraphicsImageRenderer(size: size, format: fmt)
+        let out = r.image { ctx in
+            UIColor.white.setFill(); ctx.fill(CGRect(origin: .zero, size: size))
+            img.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return out.jpegData(compressionQuality: 0.7)
+    }
+
+    static func image(_ img: UIImage, name: String) -> AIAttachment? {
+        guard let d = jpeg(img) else { return nil }
+        let thumb = jpeg(img, maxSide: 160).flatMap { UIImage(data: $0) }
+        return AIAttachment(name: name, image: d, text: nil, preview: thumb)
+    }
+
+    static func image(data: Data, name: String) -> AIAttachment? {
+        guard let u = UIImage(data: data) else { return nil }
+        return image(u, name: name)
+    }
+
+    static func clip(_ s: String, _ name: String) -> String {
+        if s.count <= maxTextChars { return s }
+        return String(s.prefix(maxTextChars)) + "\n…(tệp " + name + " dài, chỉ gửi " + String(maxTextChars) + " ký tự đầu)"
+    }
+
+    /// Đọc một tệp người dùng chọn. Trả về các mục đính kèm + ghi chú (nếu có vấn đề).
+    static func load(url: URL) -> (items: [AIAttachment], note: String) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let name = url.lastPathComponent
+        let ext = url.pathExtension.lowercased()
+        if imageExts.contains(ext) {
+            if let d = try? Data(contentsOf: url), let a = image(data: d, name: name) { return ([a], "") }
+            return ([], "Không đọc được ảnh " + name + ".")
+        }
+        if ext == "pdf" {
+            guard let doc = PDFDocument(url: url) else { return ([], "Không mở được PDF " + name + ".") }
+            let txt = (doc.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if txt.count > 30 {
+                return ([AIAttachment(name: name + " (" + String(doc.pageCount) + " trang)", image: nil, text: clip(txt, name), preview: nil)], "")
+            }
+            // PDF dạng ảnh quét: không có chữ → chụp vài trang đầu thành ảnh cho AI đọc
+            var items: [AIAttachment] = []
+            for i in 0..<min(doc.pageCount, 3) {
+                guard let page = doc.page(at: i) else { continue }
+                let b = page.bounds(for: .mediaBox)
+                let k = 1400 / max(b.width, b.height, 1)
+                let img = page.thumbnail(of: CGSize(width: b.width * k, height: b.height * k), for: .mediaBox)
+                if let a = image(img, name: name + " tr." + String(i + 1)) { items.append(a) }
+            }
+            return (items, items.isEmpty ? "PDF " + name + " không có chữ và không vẽ được trang." : (doc.pageCount > 3 ? "PDF quét ảnh: chỉ gửi 3 trang đầu của " + name + "." : ""))
+        }
+        guard let d = try? Data(contentsOf: url) else { return ([], "Không đọc được " + name + ".") }
+        if d.count > 5_000_000 { return ([], name + " quá lớn (trên 5 MB).") }
+        if textExts.contains(ext) || ext.isEmpty || d.prefix(2000).allSatisfy({ $0 != 0 }) {
+            if let t = String(data: d, encoding: .utf8) ?? String(data: d, encoding: .isoLatin1) {
+                return ([AIAttachment(name: name, image: nil, text: clip(t, name), preview: nil)], "")
+            }
+        }
+        return ([], "Chưa đọc được định dạng ." + ext + " (" + name + "). Dùng ảnh, PDF hoặc tệp chữ (txt, csv, json…). Excel/Word: xuất ra CSV/PDF rồi gửi.")
+    }
+}
+
+/// Mở camera chụp ảnh.
+struct AICameraPicker: UIViewControllerRepresentable {
+    var onImage: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let c = UIImagePickerController()
+        c.sourceType = .camera
+        c.delegate = context.coordinator
+        return c
+    }
+    func updateUIViewController(_ vc: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coord { Coord(self) }
+
+    final class Coord: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: AICameraPicker
+        init(_ p: AICameraPicker) { parent = p }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let img = info[.originalImage] as? UIImage { parent.onImage(img) }
+            parent.dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
+    }
+}
+
+// MARK: - Hỏi bằng giọng nói (nhận dạng giọng nói của iOS, tiếng Việt)
+/// Bấm mic để nói, câu nói hiện dần vào ô nhập; im lặng ~2,5 giây hoặc bấm mic lần nữa thì dừng. Không tự gửi: kiểm tra chữ rồi bấm gửi.
+final class AIVoiceInput: NSObject, ObservableObject {
+    @Published var listening = false
+    @Published var error = ""
+    private var recognizer: SFSpeechRecognizer?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private let engine = AVAudioEngine()
+    private var silence: Timer?
+    private var onText: ((String) -> Void)?
+
+    func toggle(onText: @escaping (String) -> Void) {
+        if listening { stop(); return }
+        self.onText = onText
+        error = ""
+        SFSpeechRecognizer.requestAuthorization { st in
+            DispatchQueue.main.async {
+                guard st == .authorized else { self.error = "Chưa cho phép nhận dạng giọng nói (Cài đặt > DESM Mobile)."; return }
+                AVAudioSession.sharedInstance().requestRecordPermission { ok in
+                    DispatchQueue.main.async {
+                        guard ok else { self.error = "Chưa cho phép micro (Cài đặt > DESM Mobile)."; return }
+                        self.begin()
+                    }
+                }
+            }
+        }
+    }
+
+    private func begin() {
+        let rec = SFSpeechRecognizer(locale: Locale(identifier: "vi-VN")) ?? SFSpeechRecognizer()
+        guard let r = rec, r.isAvailable else { error = "Máy chưa hỗ trợ nhận dạng giọng nói tiếng Việt lúc này."; return }
+        recognizer = r
+        do {
+            let a = AVAudioSession.sharedInstance()
+            try a.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try a.setActive(true, options: .notifyOthersOnDeactivation)
+            let req = SFSpeechAudioBufferRecognitionRequest()
+            req.shouldReportPartialResults = true
+            request = req
+            let input = engine.inputNode
+            input.removeTap(onBus: 0)
+            let fmt = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buf, _ in req.append(buf) }
+            engine.prepare()
+            try engine.start()
+            listening = true
+            armSilence()
+            task = r.recognitionTask(with: req) { [weak self] res, err in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    if let res = res {
+                        self.onText?(res.bestTranscription.formattedString)
+                        self.armSilence()
+                        if res.isFinal { self.stop() }
+                    }
+                    if err != nil { self.stop() }
+                }
+            }
+        } catch {
+            self.error = "Không mở được micro: " + error.localizedDescription
+            stop()
+        }
+    }
+
+    private func armSilence() {
+        silence?.invalidate()
+        silence = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in self?.stop() }
+    }
+
+    func stop() {
+        silence?.invalidate(); silence = nil
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio(); request = nil
+        task?.cancel(); task = nil
+        listening = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}
+
+/// Danh sách các cuộc trò chuyện đã lưu: chạm để mở lại, vuốt trái để xoá, nút trên cùng tạo cuộc mới.
+struct AIHistoryView: View {
+    @ObservedObject var session: AIChatSession
+    @Environment(\.dismiss) private var dismiss
+
+    private static func fmt(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "vi_VN")
+        f.dateFormat = "dd/MM HH:mm"
+        return f.string(from: d)
+    }
+
+    var body: some View {
+        NavigationView {
+            List {
+                Button { session.newChat(); dismiss() } label: {
+                    Label("Cuộc trò chuyện mới", systemImage: "square.and.pencil")
+                }
+                Section {
+                    ForEach(session.chats) { c in
+                        Button { session.open(c.id); dismiss() } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(c.title).font(.body).lineLimit(1)
+                                    if c.id == session.currentID { Spacer(); Image(systemName: "checkmark").foregroundColor(.blue) }
+                                }
+                                Text(AIHistoryView.fmt(c.updated) + " · " + String(c.lines.count) + " tin")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .foregroundColor(.primary)
+                    }
+                    .onDelete { idx in
+                        let ids = idx.map { session.chats[$0].id }
+                        for id in ids { session.delete(id) }
+                    }
+                } header: {
+                    Text("Lịch sử (" + String(session.chats.count) + ")")
+                } footer: {
+                    Text("Lưu trên máy này, tối đa " + String(AIChatStore.maxChats) + " cuộc gần nhất. Vuốt trái để xoá.")
+                }
+            }
+            .navigationTitle("Lịch sử chat")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Xong") { dismiss() } } }
+        }
+    }
+}
+
 struct AIChatView: View {
     // CỐ Ý không dùng @ObservedObject cho model: BrowserModel phát thay đổi liên tục (progress, tiêu đề, trạng thái tải trang…),
     // mỗi lần như vậy cả khung chat bị vẽ lại → giật/treo. Khung chat chỉ cần gọi model.runDesmTool nên giữ tham chiếu thường.
@@ -238,6 +602,15 @@ struct AIChatView: View {
     @State private var tick = 0     // ép vẽ lại khi đổi nhà AI
     @State private var showLog = false
     @State private var showModels = false
+    @State private var showHistory = false
+    @FocusState private var inputFocused: Bool
+    @StateObject private var voice = AIVoiceInput()
+    @State private var attachments: [AIAttachment] = []
+    @State private var attachNote = ""
+    @State private var showFiles = false
+    @State private var showPhotos = false
+    @State private var showCamera = false
+    @State private var photoItems: [PhotosPickerItem] = []
 
     private let blue1 = AITheme.blue1
     private let blue2 = AITheme.blue2
@@ -260,10 +633,38 @@ struct AIChatView: View {
                     }
                     .padding(14)
                 }
+                .scrollDismissesKeyboard(.interactively)   // vuốt danh sách là tự hạ bàn phím
+                .simultaneousGesture(TapGesture().onEnded { inputFocused = false })   // chạm vào tin chat là ẩn bàn phím
                 .onChange(of: session.lines.last?.id) { _ in scrollEnd(proxy) }
                 .onChange(of: session.busy) { _ in scrollEnd(proxy) }
+                .onChange(of: session.currentID) { _ in DispatchQueue.main.async { scrollEnd(proxy, animated: false) } }
+                .onChange(of: inputFocused) { f in
+                    // bàn phím mở/đóng làm khung co giãn: giữ tin cuối trong tầm nhìn
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { scrollEnd(proxy) }
+                }
+                .onAppear {
+                    // mở lại chat: tự trượt xuống tin cuối (thử lại sau khi bố cục xong)
+                    DispatchQueue.main.async { scrollEnd(proxy, animated: false) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { scrollEnd(proxy, animated: false) }
+                }
             }
+            if voice.listening || !voice.error.isEmpty {
+                Text(voice.listening ? "🎙 Đang nghe… nói xong bấm mic để dừng" : voice.error)
+                    .font(.caption).foregroundColor(voice.listening ? .red : .orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 4)
+                    .background(Color.white)
+            }
+            if !attachNote.isEmpty {
+                Text(attachNote).font(.caption).foregroundColor(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 4).background(Color.white)
+            }
+            if !attachments.isEmpty { attachChips }
             inputBar
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            AICameraPicker { img in addImage(img) }.ignoresSafeArea()
         }
         .background(Color(red: 0.97, green: 0.97, blue: 0.99))
         .onAppear {
@@ -271,25 +672,32 @@ struct AIChatView: View {
             AIWatchdog.shared.hold("view")
         }
         .onDisappear {
+            voice.stop()
             AILog.add("Đóng khung chat AI")
             AIWatchdog.shared.release("view")
         }
         .sheet(isPresented: $showLog) {
             AILogView()
         }
+        .sheet(isPresented: $showHistory) {
+            AIHistoryView(session: session)
+        }
         .sheet(isPresented: $showModels, onDismiss: { tick += 1 }) {
             AIModelPickerView(provider: AIStore.active)
         }
     }
 
-    private func scrollEnd(_ proxy: ScrollViewProxy) {
-        if session.busy { proxy.scrollTo("busy", anchor: .bottom) }
-        else if let last = session.lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
+    private func scrollEnd(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        let go: () -> Void = {
+            if session.busy { proxy.scrollTo("busy", anchor: .bottom) }
+            else if let last = session.lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
+        }
+        if animated { go() } else { var t = Transaction(); t.disablesAnimations = true; withTransaction(t, go) }
     }
 
     private var header: some View {
         let p = AIStore.active
-        return HStack(spacing: 10) {
+        return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Trợ lý AI").font(.title3.bold()).foregroundColor(.white)
                 HStack(spacing: 6) {
@@ -309,17 +717,24 @@ struct AIChatView: View {
                 }
             }
             Spacer()
-            Button { showLog = true } label: {
-                Image(systemName: "ladybug").foregroundColor(.white)
-                    .frame(width: 40, height: 40).background(Color.white.opacity(0.18)).cornerRadius(12)
+            Button { showHistory = true } label: {
+                Image(systemName: "clock.arrow.circlepath").foregroundColor(.white)
+                    .frame(width: 36, height: 40).background(Color.white.opacity(0.18)).cornerRadius(12)
             }
-            Button { session.clear() } label: {
-                Image(systemName: "trash").foregroundColor(.white)
-                    .frame(width: 40, height: 40).background(Color.white.opacity(0.18)).cornerRadius(12)
+            Button { session.newChat() } label: {
+                Image(systemName: "square.and.pencil").foregroundColor(.white)
+                    .frame(width: 36, height: 40).background(Color.white.opacity(0.18)).cornerRadius(12)
+            }
+            Menu {
+                Button { showLog = true } label: { Label("Nhật ký lỗi", systemImage: "ladybug") }
+                Button(role: .destructive) { session.clear() } label: { Label("Xoá cuộc trò chuyện này", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis").foregroundColor(.white)
+                    .frame(width: 36, height: 40).background(Color.white.opacity(0.18)).cornerRadius(12)
             }
             Button { onClose() } label: {
                 Image(systemName: "xmark").foregroundColor(blue2)
-                    .frame(width: 40, height: 40).background(Color.white).cornerRadius(12)
+                    .frame(width: 36, height: 40).background(Color.white).cornerRadius(12)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -342,11 +757,37 @@ struct AIChatView: View {
     private var inputBar: some View {
         HStack(spacing: 8) {
             TextField("Hỏi về dữ liệu DESM…", text: $input)
+                .focused($inputFocused)
+                .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in loadFiles(r) }
                 .submitLabel(.send)
                 .onSubmit { sendNow() }
                 .padding(.horizontal, 14).padding(.vertical, 11)
                 .background(Color(red: 0.945, green: 0.949, blue: 0.976)).cornerRadius(22)
+            Menu {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button { showCamera = true } label: { Label("Chụp ảnh", systemImage: "camera") }
+                }
+                Button { showPhotos = true } label: { Label("Chọn ảnh từ thư viện", systemImage: "photo") }
+                Button { showFiles = true } label: { Label("Chọn tệp (PDF, txt, csv…)", systemImage: "doc") }
+            } label: {
+                Image(systemName: "paperclip").foregroundColor(blue1)
+                    .frame(width: 40, height: 44)
+            }
+            .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 4, matching: .images)
+            .onChange(of: photoItems) { items in loadPhotos(items) }
             Button {
+                inputFocused = false
+                voice.toggle { t in input = t }
+            } label: {
+                Image(systemName: voice.listening ? "mic.fill" : "mic")
+                    .foregroundColor(voice.listening ? .white : blue1)
+                    .frame(width: 44, height: 44)
+                    .background(voice.listening ? Color.red : Color(red: 0.91, green: 0.94, blue: 1.0))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Hỏi bằng giọng nói")
+            Button {
+                if voice.listening { voice.stop() }
                 if session.busy { session.stop() } else { sendNow() }
             } label: {
                 Image(systemName: session.busy ? "stop.fill" : "paperplane.fill").foregroundColor(.white)
@@ -359,9 +800,78 @@ struct AIChatView: View {
         .background(Color.white)
     }
 
+    private var attachChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { a in
+                    HStack(spacing: 6) {
+                        if let pv = a.preview {
+                            Image(uiImage: pv).resizable().scaledToFill().frame(width: 36, height: 36).clipped().cornerRadius(6)
+                        } else {
+                            Image(systemName: "doc.text").foregroundColor(blue1).frame(width: 36, height: 36)
+                        }
+                        Text(a.name).font(.caption).lineLimit(1).frame(maxWidth: 120, alignment: .leading)
+                        Button { attachments.removeAll { $0.id == a.id } } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundColor(.gray)
+                        }
+                    }
+                    .padding(6)
+                    .background(Color(red: 0.945, green: 0.949, blue: 0.976)).cornerRadius(10)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+        }
+        .background(Color.white)
+    }
+
+    private func addItems(_ items: [AIAttachment], note: String = "") {
+        var room = AIAttach.maxItems - attachments.count
+        var added: [AIAttachment] = []
+        for a in items { if room > 0 { added.append(a); room -= 1 } }
+        attachments.append(contentsOf: added)
+        var n = note
+        if added.count < items.count { n += (n.isEmpty ? "" : " ") + "Tối đa " + String(AIAttach.maxItems) + " mục đính kèm mỗi lần." }
+        attachNote = n
+    }
+
+    private func addImage(_ img: UIImage) {
+        if let a = AIAttach.image(img, name: "Ảnh chụp " + String(attachments.count + 1)) { addItems([a]) }
+    }
+
+    private func loadPhotos(_ items: [PhotosPickerItem]) {
+        if items.isEmpty { return }
+        Task {
+            var got: [AIAttachment] = []
+            for (i, it) in items.enumerated() {
+                if let d = try? await it.loadTransferable(type: Data.self),
+                   let a = AIAttach.image(data: d, name: "Ảnh " + String(attachments.count + i + 1)) { got.append(a) }
+            }
+            await MainActor.run {
+                addItems(got, note: got.count < items.count ? "Có ảnh không đọc được." : "")
+                photoItems = []
+            }
+        }
+    }
+
+    private func loadFiles(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        var all: [AIAttachment] = []
+        var notes: [String] = []
+        for u in urls {
+            let r = AIAttach.load(url: u)
+            all.append(contentsOf: r.items)
+            if !r.note.isEmpty { notes.append(r.note) }
+        }
+        addItems(all, note: notes.joined(separator: " "))
+    }
+
     private func sendNow() {
         let t = input
+        if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty { return }
+        let a = attachments
         input = ""
-        session.send(t, model: model)
+        attachments = []
+        attachNote = ""
+        session.send(t, attachments: a, model: model)
     }
 }
