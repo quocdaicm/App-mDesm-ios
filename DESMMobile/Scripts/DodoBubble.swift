@@ -37,8 +37,12 @@ extension BrowserModel {
             '.dodo-fab{display:none!important}',
             '#' + BTN + '{position:fixed;width:56px;height:56px;padding:0;border-radius:50%;border:2px solid #fff;background:#fff;',
             ' box-shadow:0 6px 18px rgba(28,40,90,.35);z-index:2147483100;touch-action:none;-webkit-tap-highlight-color:transparent;',
-            ' display:flex;align-items:center;justify-content:center;transition:transform .15s}',
+            ' display:flex;align-items:center;justify-content:center;transition:transform .25s ease,opacity .25s ease}',
             '#' + BTN + ':active{transform:scale(.93)}',
+            // Không dùng vài giây: mờ đi và ép sát mép màn hình (lộ khoảng nửa bong bóng); chạm vào là hiện lại
+            '#' + BTN + '.dd-idle{opacity:.45;box-shadow:0 2px 8px rgba(28,40,90,.25)}',
+            '#' + BTN + '.dd-idle.dd-r{transform:translateX(38px)}',
+            '#' + BTN + '.dd-idle.dd-l{transform:translateX(-38px)}',
             '#' + BTN + ' img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;-webkit-user-drag:none}',
             '#' + BTN + ' .dd-fb{font-size:26px;line-height:1;pointer-events:none}',
             '#' + BTN + ' .dd-dot{position:absolute;right:0;top:0;width:13px;height:13px;border-radius:50%;background:#22c55e;border:2px solid #fff;pointer-events:none}',
@@ -118,6 +122,19 @@ extension BrowserModel {
             s.onerror = function() { ST.loading = false; ST.queue = []; toast('Không tải được Dodo. Kiểm tra kết nối.'); };
             (document.head || document.documentElement).appendChild(s);
           }
+          // Tự ép sát mép + mờ sau IDLE_MS không chạm vào bong bóng; chạm/kéo/đóng khung chat thì hiện lại rồi đếm lại.
+          var IDLE_MS = 3500, idleTimer = 0;
+          function dockNow() {
+            var b = ST.btn; if (!b || b.style.display === 'none' || ST.dragging) return;
+            b.classList.remove('dd-l', 'dd-r');
+            b.classList.add((ST.pos && ST.pos.side === 'l') ? 'dd-l' : 'dd-r', 'dd-idle');
+          }
+          function wake() {
+            var b = ST.btn; if (!b) return;
+            b.classList.remove('dd-idle');
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(dockNow, IDLE_MS);
+          }
           function openChat() {
             if (w.__desmDodoEngine === 'ai') { try { w.webkit.messageHandlers.desmAI.postMessage({}); } catch (e) {} return; }   // AI riêng: mở khung chat native
             ensure(function() { try { w.Dodo.open(); } catch (e) {} sync(); });
@@ -139,6 +156,7 @@ extension BrowserModel {
             b.addEventListener('pointerdown', function(e) {
               var r = b.getBoundingClientRect();
               drag = { sx: e.clientX, sy: e.clientY, x0: r.left, y0: r.top, moved: false };
+              ST.dragging = true; wake();
               try { b.setPointerCapture(e.pointerId); } catch (x) {}
             });
             b.addEventListener('pointermove', function(e) {
@@ -153,16 +171,17 @@ extension BrowserModel {
             });
             b.addEventListener('pointerup', function() {
               if (!drag) return;
-              var d = drag; drag = null;
+              var d = drag; drag = null; ST.dragging = false;
               if (d.moved) {
                 var r = b.getBoundingClientRect();
                 ST.pos = { side: (r.left + r.width / 2 < w.innerWidth / 2) ? 'l' : 'r', y: r.top };
                 savePos(); place();
               } else openChat();
+              wake();
             });
-            b.addEventListener('pointercancel', function() { drag = null; place(); });
+            b.addEventListener('pointercancel', function() { drag = null; ST.dragging = false; place(); wake(); });
             body.appendChild(b);
-            ST.btn = b; place();
+            ST.btn = b; place(); wake();
             return true;
           }
           function sync() {
@@ -171,6 +190,8 @@ extension BrowserModel {
               if (!mount()) return;
               var open = !!(w.Dodo && w.Dodo.isOpen && w.Dodo.isOpen());
               ST.btn.style.display = open ? 'none' : '';
+              if (open) ST.wasOpen = true;
+              else if (ST.wasOpen) { ST.wasOpen = false; wake(); }   // vừa đóng khung chat: hiện lại rồi đếm lại
               vv();
             } catch (e) {}
           }

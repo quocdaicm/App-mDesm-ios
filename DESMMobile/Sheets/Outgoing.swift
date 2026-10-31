@@ -114,6 +114,22 @@ struct DesmRsiInfo {
     }
 }
 
+/// Một hạng mục trong màn RSI Detail: dòng của phiếu (getDesmRsiViewList, gồm cả dòng đã đóng) ghép với dòng còn xuất được
+/// (getDesmOutGoingCreationList). Dòng có `out` còn số lượng thì tích được để OUT.G; dòng đã xuất đủ chỉ để xem.
+struct DesmRsiItem: Identifiable {
+    let id: String
+    var pkg = "", desc = "", code = "", unit = ""
+    var req = 0.0, done = 0.0
+    var out: DesmOutLine? = nil
+    /// Còn xuất được và có đủ ID để gửi lệnh
+    var tickable: Bool { guard let o = out else { return false }; return o.valid && o.avail > 0 }
+    /// Đã xuất đủ: máy chủ không còn dòng chờ xuất, hoặc số đã xuất >= số yêu cầu
+    var isClosed: Bool {
+        if let o = out, o.avail <= 0 { return true }
+        return req > 0 && done >= req - 0.0005
+    }
+}
+
 struct DesmOutLine: Identifiable {
     let id: String
     var rsiNo = "", rsiName = "", subcon = "", reqDate = "", pkg = "", plist = "", desc = "", code = "", pending = "", project = "", status = ""
@@ -143,19 +159,69 @@ final class DesmOutgoingVM: ObservableObject {
     @Published var error: String? = nil
     @Published var notice: String? = nil
     @Published var infos: [String: DesmRsiInfo] = [:]   // thông tin đầu phiếu theo số RSI (tải khi mở phiếu)
+    @Published var viewRows: [String: [[String: Any]]] = [:]   // TẤT CẢ dòng của phiếu (kể cả đã đóng) theo số RSI
+    @Published var viewLoading = Set<String>()
+    @Published var viewFailed = Set<String>()
     var project = ""
 
-    /// Tải thông tin đầu phiếu (cùng truy vấn getDesmRsiViewList đã dùng ở DocDetail); lỗi thì bỏ qua, không ảnh hưởng xuất kho.
-    func loadInfo(_ model: BrowserModel, rsi: String) {
-        if infos[rsi] != nil || rsi.isEmpty { return }
+    /// Tải đầu phiếu + toàn bộ dòng của phiếu (getDesmRsiViewList, cùng truy vấn đã dùng ở DocDetail), kể cả dòng đã xuất đủ.
+    /// `force` = tải lại (sau khi OUT.G). Lỗi thì đánh dấu `viewFailed`, không ảnh hưởng xuất kho.
+    func loadInfo(_ model: BrowserModel, rsi: String, force: Bool = false) {
+        if rsi.isEmpty { return }
+        if !force && infos[rsi] != nil { return }
+        if viewLoading.contains(rsi) { return }
+        viewLoading.insert(rsi); viewFailed.remove(rsi)
         Task { @MainActor in
-            guard let pj = try? await model.desmProjectNo() else { return }
+            defer { self.viewLoading.remove(rsi) }
+            guard let pj = try? await model.desmProjectNo() else { self.viewFailed.insert(rsi); return }
             let e = desmFormEnc
             let body = "PAGE_NUM=1&PAGE_CNT=1000&PROJECT_NO=\(e(pj))&RSI_NO=\(e(rsi))&RSI_NAME=&SUBCONTRACTOR=&ATTRIBUTE10=&MATERIAL_CODE=&START_REQUEST_DATE=&END_REQUEST_DATE=&BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&PACKAGE_NO=&ITEM_DESC=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
-            guard let rows = try? await model.desmQueryAsync("/getDesmRsiViewList.do", body: body) else { return }
-            let row = rows.first { Self.str($0, "RSI_NO") == rsi } ?? rows.first
-            self.infos[rsi] = row.map { DesmRsiInfo.parse($0) } ?? DesmRsiInfo()
+            guard let rows = try? await model.desmQueryAsync("/getDesmRsiViewList.do", body: body) else { self.viewFailed.insert(rsi); return }
+            let mine = rows.filter { Self.str($0, "RSI_NO").uppercased() == rsi.uppercased() }
+            self.viewRows[rsi] = mine
+            self.infos[rsi] = mine.first.map { DesmRsiInfo.parse($0) } ?? DesmRsiInfo()
         }
+    }
+
+    /// Ghép dòng của phiếu với dòng còn xuất được: theo RSI_LINE_ID, không có thì theo Package No + Material Code.
+    /// Dòng chờ xuất không ghép được với dòng nào của phiếu vẫn được thêm vào cuối để không bỏ sót.
+    func items(for rsi: String) -> [DesmRsiItem] {
+        let key = rsi.uppercased()
+        let outs = lines.filter { $0.rsiNo.uppercased() == key }
+        func nz(_ t: String) -> String { t.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased() }
+        var used = Set<Int>()
+        var result: [DesmRsiItem] = []
+        for (i, r) in (viewRows[rsi] ?? []).enumerated() {
+            let lid = Self.str(r, "RSI_LINE_ID")
+            var hit: Int? = nil
+            if !lid.isEmpty { hit = outs.indices.first { !used.contains($0) && outs[$0].id == lid } }
+            if hit == nil {
+                let k = nz(Self.str(r, "PACKAGE_NO")) + "|" + nz(Self.str(r, "MATERIAL_CODE"))
+                hit = outs.indices.first { !used.contains($0) && nz(outs[$0].pkg) + "|" + nz(outs[$0].code) == k }
+            }
+            var it = DesmRsiItem(id: "v\(i)")
+            it.pkg = Self.str(r, "PACKAGE_NO"); it.desc = Self.str(r, "DESCRIPTION"); it.code = Self.str(r, "MATERIAL_CODE")
+            it.unit = Self.str(r, "UNIT"); it.req = Self.num(r, "REQ_QTY"); it.done = Self.num(r, "HANDOVER_QTY")
+            if let h = hit { used.insert(h); it.out = outs[h] }
+            result.append(it)
+        }
+        for (i, o) in outs.enumerated() where !used.contains(i) {
+            var it = DesmRsiItem(id: "o\(o.id)")
+            it.pkg = o.pkg; it.desc = o.desc; it.code = o.code; it.req = o.req; it.done = max(0, o.req - o.avail); it.out = o
+            result.append(it)
+        }
+        return result
+    }
+
+    /// Đầu phiếu lấy từ dòng của phiếu khi không còn dòng chờ xuất nào (phiếu đã đóng hết).
+    func headerLine(_ rsi: String) -> DesmOutLine {
+        var l = DesmOutLine(id: "hdr")
+        l.rsiNo = rsi
+        if let r = viewRows[rsi]?.first {
+            l.rsiName = Self.str(r, "RSI_NAME"); l.subcon = Self.str(r, "SUBCONTRACTOR"); l.status = Self.str(r, "STATUS")
+            l.reqDate = Self.str(r, "REQUEST_DATE")
+        }
+        return l
     }
 
     /// Đổi RSI_HEADER_ID (số sau `RSI!!!` trong QR) thành số RSI bằng getDesmRsiList.do (API của màn RSI Creation, kết quả là mảng).
@@ -271,6 +337,7 @@ final class DesmOutgoingVM: ObservableObject {
                 self.notice = "Đã xuất kho \(chosen.count) dòng."
                 self.selected.removeAll(); self.qty.removeAll()
                 self.search(model)
+                for rsi in Set(chosen.map { $0.rsiNo }) { self.loadInfo(model, rsi: rsi, force: true) }   // cập nhật số đã xuất/đã đóng
             } else if (e as? String) == "QTY" {
                 let id = Self.str(r, "RSI_LINE_ID")
                 let av = Self.str(r, "HANDOVER_AVAILABLE_QTY")
@@ -397,7 +464,7 @@ struct DesmOutgoingSheet: View {
     }
 
     // MARK: Bước 2 — mở phiếu: tích dòng, chỉnh số lượng, bấm OUT.G
-    func matches(_ l: DesmOutLine) -> Bool {
+    func matches(_ l: DesmRsiItem) -> Bool {
         let p = vm.fPkg.trimmingCharacters(in: .whitespaces).lowercased()
         let c = vm.fCode.trimmingCharacters(in: .whitespaces).lowercased()
         if !p.isEmpty && !l.pkg.lowercased().contains(p) { return false }
@@ -548,12 +615,64 @@ struct DesmOutgoingSheet: View {
         .onTapGesture { vm.toggle(l) }
     }
 
+    /// Thẻ hạng mục đã xuất đủ (hoặc chưa xuất được): chỉ để xem, không có ô tích.
+    func closedCard(_ it: DesmRsiItem) -> some View {
+        let done = it.isClosed
+        let tint: Color = done ? .green : .orange
+        return HStack(spacing: 0) {
+            Rectangle().fill(tint).frame(width: 5)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(it.pkg.isEmpty ? "(không có package)" : it.pkg).font(.system(size: 17, weight: .bold)).underline()
+                Text(it.desc).font(.system(size: 16)).lineLimit(4)
+                HStack(spacing: 4) {
+                    Text(it.code).font(.system(size: 16))
+                    Spacer(minLength: 4)
+                    Text("\(DesmOutgoingVM.fmt(it.req)) / \(DesmOutgoingVM.fmt(it.done)) \(it.unit)").font(.system(size: 17, weight: .bold))
+                }
+                HStack(spacing: 8) {
+                    Text(done ? "Đã đóng (xuất đủ)" : "Chưa đóng · chưa có trong danh sách chờ xuất")
+                        .font(.system(size: 11, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
+                        .foregroundStyle(tint).background(tint.opacity(0.15), in: Capsule())
+                    Text("yêu cầu / đã xuất").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+    }
+
+    /// Dải trạng thái của cả phiếu: đã đóng hết hay còn dòng chờ xuất (OUT.G).
+    func stateBanner(_ items: [DesmRsiItem]) -> some View {
+        let total = items.count
+        let open = items.filter { $0.tickable }.count
+        let closed = items.filter { $0.isClosed }.count
+        let known = vm.searched && vm.error == nil && !vm.loading
+        let text: String, tint: Color
+        if total == 0 { text = ""; tint = .gray }
+        else if !known { text = "Đang kiểm tra dòng chờ xuất…"; tint = .gray }
+        else if open > 0 { text = "CHƯA ĐÓNG HẾT · còn \(open)/\(total) dòng chờ xuất (tích rồi bấm OUT.G)"; tint = .orange }
+        else if closed == total { text = "ĐÃ ĐÓNG · \(total)/\(total) dòng đã xuất đủ"; tint = .green }
+        else { text = "Chưa đóng hết nhưng chưa có dòng nào xuất được (\(closed)/\(total) dòng đã đóng)"; tint = .orange }
+        return Group {
+            if !text.isEmpty {
+                Text(text).font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(tint.opacity(0.12))
+            }
+        }
+    }
+
     func detail(_ rsi: String) -> some View {
-        let all = vm.lines.filter { $0.rsiNo == rsi }
-        let shown = all.filter { matches($0) }
+        let items = vm.items(for: rsi)
+        let shown = items.filter { matches($0) }
+        let head = vm.lines.first { $0.rsiNo.uppercased() == rsi.uppercased() } ?? vm.headerLine(rsi)
+        let tickLines = shown.compactMap { $0.out }.filter { $0.avail > 0 }
         return VStack(spacing: 0) {
-            header(all.first, info: vm.infos[rsi])
-            filterBar(shown)
+            header(head, info: vm.infos[rsi])
+            stateBanner(items)
+            filterBar(tickLines)
             Divider()
             if let e = vm.error {
                 Text(e).font(.system(size: 13)).foregroundStyle(.red).padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -563,20 +682,27 @@ struct DesmOutgoingSheet: View {
                 Text(n).font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.green.opacity(0.10))
             }
-            if all.isEmpty {
+            if items.isEmpty {
                 Spacer()
-                if vm.loading { ProgressView("Đang tải…") }
+                if vm.loading || vm.viewLoading.contains(rsi) { ProgressView("Đang tải…") }
                 else {
                     VStack(spacing: 10) {
-                        Text("Phiếu \(rsi) không còn dòng nào chờ xuất (đã xuất hết).").font(.callout).multilineTextAlignment(.center)
-                        Button("Về danh sách") { path.removeAll() }.buttonStyle(.borderedProminent)
+                        Text(vm.viewFailed.contains(rsi) ? "Không tải được hạng mục của phiếu \(rsi)." : "Phiếu \(rsi) không có hạng mục nào.")
+                            .font(.callout).multilineTextAlignment(.center)
+                        Button("Tải lại") { vm.loadInfo(model, rsi: rsi, force: true); vm.search(model) }.buttonStyle(.borderedProminent)
+                        Button("Xem chi tiết (chỉ xem)") { path.append(Self.closedPrefix + rsi) }
+                        Button("Về danh sách") { path.removeAll() }
                     }.padding(24)
                 }
                 Spacer()
             } else {
+                Text("\(shown.count) / \(items.count) hạng mục").font(.system(size: 13)).foregroundStyle(Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 6).background(bg)
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(shown) { l in card(l) }
+                        ForEach(shown) { it in
+                            if it.tickable, let o = it.out { card(o) } else { closedCard(it) }
+                        }
                         if shown.isEmpty { Text("Không có dòng khớp bộ lọc.").font(.footnote).foregroundStyle(.secondary).padding(20) }
                     }.padding(12)
                 }
@@ -617,9 +743,8 @@ struct DesmOutgoingSheet: View {
                     path = [h.rsiNo]
                 } else if vm.error == nil {
                     if rr.isNo {
-                        // Phiếu đã đóng/xuất hết: không có dòng chờ xuất → mở màn xem chi tiết phiếu (chỉ xem)
-                        vm.notice = "Phiếu \(rr.value) không còn dòng chờ xuất, đang mở chi tiết để xem."
-                        path = [Self.closedPrefix + rr.value]
+                        // Phiếu không còn dòng chờ xuất (đã đóng hết): vẫn mở màn RSI Detail đầy đủ để xem từng dòng đã đóng/chưa đóng
+                        path = [rr.value]
                     } else {
                         vm.error = "Không đổi được mã \(rr.value) sang số RSI (kiểm tra mạng/phiên đăng nhập rồi quét lại)."
                     }

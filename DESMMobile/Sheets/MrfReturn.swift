@@ -15,6 +15,20 @@ import UserNotifications
 //   Lưu:  POST /saveDesmMrfReturnSave.do  updateList=[{MRF_HEADER_ID, MRF_LINE_ID, MATERIAL_CODE, PROJECT_NO, RETURN_DATE(yyyy/MM/dd), RETURN_QTY, RSI_LINE_ID}]
 //         lỗi số lượng: {error:"QTY", MRF_LINE_ID, RETURN_AVAILABLE_QTY}. Phần lưu CHƯA thử trên DESM thật.
 
+/// Một hạng mục trong màn MRF Detail: dòng của phiếu (getMrfSummaryList, gồm cả dòng đã trả đủ) ghép với dòng còn trả được
+/// (getDesmReturnCreationList). Dòng còn trả được thì tích được để RETURN; dòng đã trả đủ chỉ để xem.
+struct DesmMrfItem: Identifiable {
+    let id: String
+    var pkg = "", desc = "", code = "", unit = ""
+    var req = 0.0, done = 0.0
+    var out: DesmMrfLine? = nil
+    var tickable: Bool { guard let o = out else { return false }; return o.valid && o.balance > 0 }
+    var isClosed: Bool {
+        if let o = out, o.balance <= 0 { return true }
+        return req > 0 && done >= req - 0.0005
+    }
+}
+
 struct DesmMrfLine: Identifiable {
     let id: String
     var mrfNo = "", mrfName = "", status = "", returnType = "", reqDate = "", rsiNo = "", code = "", desc = "", pkg = "", loc = "", unit = ""
@@ -44,6 +58,56 @@ final class DesmMrfReturnVM: ObservableObject {
     @Published var loading = false
     @Published var searched = false
     @Published var error: String? = nil
+    @Published var docs: [String: DesmDocDetail] = [:]   // TẤT CẢ dòng của phiếu (kể cả đã trả đủ) theo số MRF
+    @Published var docLoading = Set<String>()
+    @Published var docFailed = Set<String>()
+
+    /// Tải toàn bộ dòng của phiếu (cùng truy vấn đã dùng ở DocDetail). `force` = tải lại (sau khi RETURN).
+    func loadDoc(_ model: BrowserModel, mrf: String, force: Bool = false) {
+        if mrf.isEmpty { return }
+        if !force && docs[mrf] != nil { return }
+        if docLoading.contains(mrf) { return }
+        docLoading.insert(mrf); docFailed.remove(mrf)
+        Task { @MainActor in
+            defer { self.docLoading.remove(mrf) }
+            if let d = try? await model.fetchDocDetailAsync(kind: .mrf, no: mrf) { self.docs[mrf] = d }
+            else { self.docFailed.insert(mrf) }
+        }
+    }
+
+    /// Ghép dòng của phiếu với dòng còn trả được theo Package No + Material Code (theo thứ tự nếu trùng).
+    func items(for mrf: String) -> [DesmMrfItem] {
+        let key = mrf.uppercased()
+        let outs = lines.filter { $0.mrfNo.uppercased() == key }
+        func nz(_ t: String) -> String { t.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased() }
+        var used = Set<Int>()
+        var result: [DesmMrfItem] = []
+        for (i, d) in (docs[mrf]?.lines ?? []).enumerated() {
+            let k = nz(d.pkg) + "|" + nz(d.code)
+            let hit = outs.indices.first { !used.contains($0) && nz(outs[$0].pkg) + "|" + nz(outs[$0].code) == k }
+            var it = DesmMrfItem(id: "v\(i)")
+            it.pkg = d.pkg; it.desc = d.desc; it.code = d.code; it.unit = d.unit; it.req = d.req; it.done = d.done
+            if let h = hit { used.insert(h); it.out = outs[h] }
+            result.append(it)
+        }
+        for (i, o) in outs.enumerated() where !used.contains(i) {
+            var it = DesmMrfItem(id: "o\(o.id)")
+            it.pkg = o.pkg; it.desc = o.desc; it.code = o.code; it.req = o.req; it.done = max(0, o.req - o.balance); it.out = o
+            result.append(it)
+        }
+        return result
+    }
+
+    /// Đầu phiếu lấy từ dữ liệu phiếu khi không còn dòng phải trả nào (phiếu đã trả hết).
+    func headerLine(_ mrf: String) -> DesmMrfLine {
+        var l = DesmMrfLine(id: "hdr")
+        l.mrfNo = mrf
+        if let h = docs[mrf]?.header {
+            func v(_ k: String) -> String { h.first { $0.0 == k }?.1 ?? "" }
+            l.mrfName = v("Tên phiếu"); l.status = v("Đơn vị"); l.returnType = v("Loại trả"); l.reqDate = v("Ngày yêu cầu trả")
+        }
+        return l
+    }
 
     var groups: [(String, [DesmMrfLine])] {
         var order: [String] = []; var map: [String: [DesmMrfLine]] = [:]
@@ -149,6 +213,7 @@ final class DesmMrfReturnVM: ObservableObject {
                 self.notice = "Đã trả hàng \(chosen.count) dòng."
                 self.selected.removeAll(); self.qty.removeAll()
                 self.search(model)
+                for m in Set(chosen.map { $0.mrfNo }) { self.loadDoc(model, mrf: m, force: true) }   // cập nhật số đã trả/đã đóng
             } else if (e as? String) == "QTY" {
                 let id = Self.str(r, "MRF_LINE_ID")
                 let av = Self.str(r, "RETURN_AVAILABLE_QTY")
@@ -276,7 +341,7 @@ struct DesmMrfReturnSheet: View {
     }
 
     // MARK: Bước 2 — mở phiếu: tích dòng, chỉnh số lượng, bấm RETURN
-    func matches(_ l: DesmMrfLine) -> Bool {
+    func matches(_ l: DesmMrfItem) -> Bool {
         let p = vm.fPkg.trimmingCharacters(in: .whitespaces).lowercased()
         let c = vm.fCode.trimmingCharacters(in: .whitespaces).lowercased()
         if !p.isEmpty && !l.pkg.lowercased().contains(p) { return false }
@@ -397,12 +462,64 @@ struct DesmMrfReturnSheet: View {
         .onTapGesture { vm.toggle(l) }
     }
 
+    /// Thẻ hạng mục đã trả đủ (hoặc chưa trả được): chỉ để xem, không có ô tích.
+    func closedCard(_ it: DesmMrfItem) -> some View {
+        let done = it.isClosed
+        let tint: Color = done ? .green : .orange
+        return HStack(spacing: 0) {
+            Rectangle().fill(tint).frame(width: 5)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(it.pkg.isEmpty ? "(không có package)" : it.pkg).font(.system(size: 17, weight: .bold)).underline()
+                Text(it.desc).font(.system(size: 16)).lineLimit(4)
+                HStack(spacing: 4) {
+                    Text(it.code).font(.system(size: 16))
+                    Spacer(minLength: 4)
+                    Text("\(DesmMrfReturnVM.fmt(it.req)) / \(DesmMrfReturnVM.fmt(it.done)) \(it.unit)").font(.system(size: 17, weight: .bold))
+                }
+                HStack(spacing: 8) {
+                    Text(done ? "Đã đóng (trả đủ)" : "Chưa đóng · chưa có trong danh sách chờ trả")
+                        .font(.system(size: 11, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
+                        .foregroundStyle(tint).background(tint.opacity(0.15), in: Capsule())
+                    Text("yêu cầu trả / đã trả").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+    }
+
+    /// Dải trạng thái của cả phiếu: đã đóng hết hay còn dòng chờ trả (RETURN).
+    func stateBanner(_ items: [DesmMrfItem]) -> some View {
+        let total = items.count
+        let open = items.filter { $0.tickable }.count
+        let closed = items.filter { $0.isClosed }.count
+        let known = vm.searched && vm.error == nil && !vm.loading
+        let text: String, tint: Color
+        if total == 0 { text = ""; tint = .gray }
+        else if !known { text = "Đang kiểm tra dòng chờ trả…"; tint = .gray }
+        else if open > 0 { text = "CHƯA ĐÓNG HẾT · còn \(open)/\(total) dòng chờ trả (tích rồi bấm RETURN)"; tint = .orange }
+        else if closed == total { text = "ĐÃ ĐÓNG · \(total)/\(total) dòng đã trả đủ"; tint = .green }
+        else { text = "Chưa đóng hết nhưng chưa có dòng nào trả được (\(closed)/\(total) dòng đã đóng)"; tint = .orange }
+        return Group {
+            if !text.isEmpty {
+                Text(text).font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(tint.opacity(0.12))
+            }
+        }
+    }
+
     func detail(_ mrf: String) -> some View {
-        let all = vm.lines.filter { $0.mrfNo == mrf }
-        let shown = all.filter { matches($0) }
+        let items = vm.items(for: mrf)
+        let shown = items.filter { matches($0) }
+        let head = vm.lines.first { $0.mrfNo.uppercased() == mrf.uppercased() } ?? vm.headerLine(mrf)
+        let tickLines = shown.compactMap { $0.out }.filter { $0.balance > 0 }
         return VStack(spacing: 0) {
-            header(all.first)
-            filterBar(shown)
+            header(head)
+            stateBanner(items)
+            filterBar(tickLines)
             Divider()
             if let e = vm.error {
                 Text(e).font(.system(size: 13)).foregroundStyle(.red).padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -412,20 +529,27 @@ struct DesmMrfReturnSheet: View {
                 Text(n).font(.system(size: 13, weight: .semibold)).foregroundStyle(.green).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.green.opacity(0.10))
             }
-            if all.isEmpty {
+            if items.isEmpty {
                 Spacer()
-                if vm.loading { ProgressView("Đang tải…") }
+                if vm.loading || vm.docLoading.contains(mrf) { ProgressView("Đang tải…") }
                 else {
                     VStack(spacing: 10) {
-                        Text("Phiếu \(mrf) không còn dòng nào phải trả (đã trả hết).").font(.callout).multilineTextAlignment(.center)
-                        Button("Về danh sách") { path.removeAll() }.buttonStyle(.borderedProminent)
+                        Text(vm.docFailed.contains(mrf) ? "Không tải được hạng mục của phiếu \(mrf)." : "Phiếu \(mrf) không có hạng mục nào.")
+                            .font(.callout).multilineTextAlignment(.center)
+                        Button("Tải lại") { vm.loadDoc(model, mrf: mrf, force: true); vm.search(model) }.buttonStyle(.borderedProminent)
+                        Button("Xem chi tiết (chỉ xem)") { path.append(Self.closedPrefix + mrf) }
+                        Button("Về danh sách") { path.removeAll() }
                     }.padding(24)
                 }
                 Spacer()
             } else {
+                Text("\(shown.count) / \(items.count) hạng mục").font(.system(size: 13)).foregroundStyle(Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 6).background(bg)
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(shown) { l in card(l) }
+                        ForEach(shown) { it in
+                            if it.tickable, let o = it.out { card(o) } else { closedCard(it) }
+                        }
                         if shown.isEmpty { Text("Không có dòng khớp bộ lọc.").font(.footnote).foregroundStyle(.secondary).padding(20) }
                     }.padding(12)
                 }
@@ -434,12 +558,13 @@ struct DesmMrfReturnSheet: View {
         }
         .navigationTitle("MRF Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { vm.loadDoc(model, mrf: mrf) }
     }
 
     private static let closedPrefix = "closed:"
 
     /// Phiếu MRF vừa quét: đổi mã QR (MRF_HEADER_ID) thành số MRF, tìm rồi mở thẳng màn MRF Detail.
-    /// Phiếu không còn dòng phải trả (đã trả hết) → mở màn xem chi tiết phiếu (chỉ xem).
+    /// Phiếu không còn dòng phải trả (đã trả hết) → vẫn mở MRF Detail, dòng đã đóng chỉ để xem.
     private func consumeScan() {
         guard let r0 = model.pendingRsiScan, r0.kind == .mrf else { return }
         model.pendingRsiScan = nil
@@ -464,8 +589,8 @@ struct DesmMrfReturnSheet: View {
                     path = [h.mrfNo]
                 } else if vm.error == nil {
                     if rr.isNo {
-                        vm.notice = "Phiếu \(rr.value) không còn dòng phải trả, đang mở chi tiết để xem."
-                        path = [Self.closedPrefix + rr.value]
+                        // Phiếu không còn dòng phải trả (đã đóng hết): vẫn mở màn MRF Detail đầy đủ để xem từng dòng đã đóng/chưa đóng
+                        path = [rr.value]
                     } else {
                         vm.error = "Không đổi được mã \(rr.value) sang số MRF (kiểm tra mạng/phiên đăng nhập rồi quét lại)."
                     }

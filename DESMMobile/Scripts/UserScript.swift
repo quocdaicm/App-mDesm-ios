@@ -1458,8 +1458,8 @@ extension BrowserModel {
             }
             // Màn "MRF Detail": các dòng của một MRF (RSI, kiện, vật tư, số lượng trả, vị trí). Dữ liệu: /getMrfSummaryList.do
             // Màn "MRF Detail" / "RSI Detail" (từ Detail Item): phần danh sách dùng chung mrfTickList / rsiTickList
-            function openMrfDetail(h, unit) {
-              var S = subScreen('MRF Detail', 'Detail Item'), b = S.body;
+            function openMrfDetail(h, unit, back) {
+              var S = subScreen('MRF Detail', back || 'Detail Item'), b = S.body;
               var m = el('div', 'desm-dcard desm-mrf-head');
               m.appendChild(el('div', 'desm-d-h', dash(h.MRF_NO)));
               m.appendChild(el('div', 'desm-d-l', dash(h.SUBCONTRACTOR) + ' · ' + dash(h.STATUS)));
@@ -1468,8 +1468,8 @@ extension BrowserModel {
               b.appendChild(m);
               mrfTickList(win, doc, idoc, b, h, unit, function() { return !!S.ov.parentNode; });
             }
-            function openRsiDetail(h) {
-              var S = subScreen('RSI Detail', 'Detail Item'), b = S.body;
+            function openRsiDetail(h, back) {
+              var S = subScreen('RSI Detail', back || 'Detail Item'), b = S.body;
               var m = el('div', 'desm-dcard');
               m.appendChild(el('div', 'desm-d-h', dash(h.RSI_NO)));
               m.appendChild(el('div', 'desm-d-l', dash(h.SUBCONTRACTOR) + ' · ' + dash(h.STATUS)));
@@ -1632,6 +1632,54 @@ extension BrowserModel {
             var llb = el('button', 'desm-detail-list', 'Lịch sử thay đổi vị trí'); llb.type = 'button';
             llb.addEventListener('click', function() { openLocLog(); });
             body.appendChild(llb);
+            // RSI & MRF List của cả kiện: chỉ hiện khi kiện có phiếu RSI hoặc MRF; chạm để mở danh sách, chạm một phiếu để xem RSI Detail / MRF Detail
+            var prb = el('button', 'desm-detail-list', 'RSI & MRF List  ↓'); prb.type = 'button'; prb.style.display = 'none';
+            var prl = el('div', 'desm-ditems'), prl1 = el('div', ''), prl2 = el('div', ''), prOpen = false, prCnt = 0;
+            prl.appendChild(prl1); prl.appendChild(prl2); prl.style.display = 'none';
+            prb.addEventListener('click', function() { prOpen = !prOpen; prl.style.display = prOpen ? '' : 'none'; prb.textContent = 'RSI & MRF List  ' + (prOpen ? '↑' : '↓'); });
+            body.appendChild(prb); body.appendChild(prl);
+            (function() {
+              // Gom các dòng của kiện theo số phiếu (một phiếu có thể có nhiều dòng của cùng kiện)
+              function groupBy(list, key, qtyKey) {
+                var m = {}, order = [];
+                [].forEach.call(list, function(r) {
+                  if (!r || !sameStr(r.PACKAGE_NO, pkgNo)) return;
+                  var k = String(r[key] == null ? '' : r[key]).trim(); if (!k) return;
+                  if (!m[k]) { m[k] = { h: r, n: 0, q: 0 }; order.push(k); }
+                  m[k].n++; var q = parseFloat(String(r[qtyKey] == null ? '' : r[qtyKey]).replace(/,/g, '')); if (!isNaN(q)) m[k].q += q;
+                });
+                return order.map(function(k) { return m[k]; });
+              }
+              function reveal() { if (prCnt > 0) prb.style.display = ''; }
+              diAjax(idoc, '/getDesmRsiViewList.do', rsiParam({ PACKAGE_NO: pkgNo }), function(list) {
+                if (!ov.parentNode) return;
+                var gs = groupBy(list, 'RSI_NO', 'REQ_QTY'); prCnt += gs.length;
+                gs.forEach(function(g) {
+                  var r = g.h, c = el('div', 'desm-rsi-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.RSI_NO))); t1.appendChild(el('span', '', dash(r.STATUS))); c.appendChild(t1);
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.SUBCONTRACTOR) + ' · ' + dash(r.RSI_NAME)));
+                  var t3 = el('div', 'desm-rsi-row'); t3.appendChild(el('span', '', dash(r.RSI_APPROVED_DATE || r.REQUEST_DATE)));
+                  t3.appendChild(el('span', '', g.n + ' dòng · ' + fnum(g.q) + ' ' + (r.UNIT || ''))); c.appendChild(t3);
+                  c.addEventListener('click', function() { openRsiDetail(r, 'Package'); });
+                  prl1.appendChild(c);
+                });
+                reveal();
+              }, function() {});
+              diAjax(idoc, '/getMrfSummaryList.do', mrfParam({ PACKAGE_NO: pkgNo }), function(list) {
+                if (!ov.parentNode) return;
+                var gs = groupBy(list, 'MRF_NO', 'MRF_REQ_RETURN_QTY'); prCnt += gs.length;
+                gs.forEach(function(g) {
+                  var r = g.h, c = el('div', 'desm-rsi-card desm-mrf-card');
+                  var t1 = el('div', 'desm-rsi-row'); t1.appendChild(el('span', 'desm-ditem-no', dash(r.MRF_NO))); t1.appendChild(el('span', '', dash(r.STATUS))); c.appendChild(t1);
+                  c.appendChild(el('div', 'desm-ditem-l', dash(r.SUBCONTRACTOR) + ' · ' + dash(r.MRF_NAME)));
+                  var t3 = el('div', 'desm-rsi-row'); t3.appendChild(el('span', '', dash(r.RETURN_REQ_DATE)));
+                  t3.appendChild(el('span', '', g.n + ' dòng · ' + fnum(g.q) + ' ' + (r.UNIT || ''))); c.appendChild(t3);
+                  c.addEventListener('click', function() { openMrfDetail(r, r.UNIT, 'Package'); });
+                  prl2.appendChild(c);
+                });
+                reveal();
+              }, function() {});
+            })();
             body.appendChild(dl); body.appendChild(note); body.appendChild(dis);
             ov.appendChild(body);
             // Nút Location Update: chỉ chọn đúng kiện này rồi bấm nút cập nhật vị trí gốc của DESM
@@ -1725,6 +1773,7 @@ extension BrowserModel {
             box.style.display = on ? '' : 'none';
             if (!on) {
               try { win.__desmItems = null; } catch (e) {}
+              if (box.__setHidden) box.__setHidden(false);
               if (tb) tb.classList.remove('desm-tb-nosel');
               if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
               return;
@@ -1734,6 +1783,53 @@ extension BrowserModel {
               var top = box.getBoundingClientRect().top;
               box.style.height = Math.max(160, win.innerHeight - top - 4) + 'px';
             } catch (e) {}
+            // Vuốt lên xem danh sách kiện thì tự ẩn TOÀN BỘ phần phía trên danh sách (hàng Bộ lọc/Search, ô Package No., thanh nút "...")
+            // để thẻ chiếm cả màn hình. Vuốt xuống một chút, về đầu danh sách, hoặc đang nhập vào ô lọc thì hiện lại. (Giống màn RSI/MRR/MRF.)
+            if (!box.__hideInit) {
+              box.__hideInit = true;
+              var pLastY = 0;
+              var pTopEls = function() {
+                var out = [], n = box;
+                while (n && n !== doc.body && n !== doc.documentElement) {
+                  for (var p = n.previousElementSibling; p; p = p.previousElementSibling) {
+                    if (/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(p.tagName) || !p.offsetHeight) continue;
+                    var ps = ''; try { ps = win.getComputedStyle(p).position; } catch (e) {}
+                    if (ps === 'fixed' || ps === 'absolute') continue;
+                    out.push(p);
+                  }
+                  n = n.parentElement;
+                }
+                return out;
+              };
+              var pFit = function() {
+                try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
+              };
+              box.__setHidden = function(on) {
+                if (on === !!box.__tophid) return;
+                if (on) {
+                  var els = pTopEls(), total = 0;
+                  els.forEach(function(x) { total += x.offsetHeight; });
+                  // Chỉ ẩn khi sau khi ẩn danh sách vẫn còn đủ chỗ cuộn (tránh nhấp nháy ẩn/hiện liên tục)
+                  if (box.scrollHeight - box.clientHeight < total + 140) return;
+                  if (els.some(function(x) { return x.contains(doc.activeElement); })) return;
+                  els.forEach(function(x) { x.classList.add('desm-tophide'); });
+                  box.__tophid = els;
+                } else {
+                  (box.__tophid || []).forEach(function(x) { x.classList.remove('desm-tophide'); });
+                  box.__tophid = null;
+                }
+                pFit();
+              };
+              box.addEventListener('scroll', function() {
+                var y = box.scrollTop, dy = y - pLastY; pLastY = y;
+                if (y <= 8) { box.__setHidden(false); return; }
+                if (dy > 8) box.__setHidden(true);
+                else if (dy < -8) box.__setHidden(false);
+              }, { passive: true });
+              doc.addEventListener('focusin', function(e) {
+                if (box.__tophid && !box.contains(e.target)) box.__setHidden(false);
+              }, true);
+            }
             var rows = [];
             function addRow(r) {
               if (!r || r.Kind !== 'Data') return;
