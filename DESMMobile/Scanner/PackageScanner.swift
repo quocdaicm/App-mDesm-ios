@@ -4,6 +4,7 @@
 //    Đọc được chữ in lẫn chữ viết tay/viết tắt (P2-LS-06-51 → OM4-P2-LS-0006-051), tự sửa nhầm O/0, I/1, S/5...
 //  - Thấy cả 2 số → hiện khung chọn 1 trong 2; chỉ thấy 1 số (chữ in rõ) → tự mở.
 //  - Mã QR nhãn hạng mục: DETAIL!!!<mã>!!!<tên Packing List>!!!<Material Code> (QRDetail.parse).
+//  - Mã QR phiếu xuất kho RSI: RSI!!!<số> (QRParser.parseDoc, cả MRF!!!<số> → tab Trả hàng) → mở tab Xuất kho đúng phiếu đó. Không có QR thì đọc chữ "RSI No : RSI2026006488" (RsiNoOCR).
 //  - Kết quả được BrowserModel chuyển thành lệnh JS (__desmFindPkg / __desmFindPackingList / __desmFindDetail) chạy trong trang DESM.
 // Xem DEV_NOTES.md (mục "Quét thông minh").
 import SwiftUI
@@ -442,7 +443,57 @@ struct QRDetail: Equatable {
     let raw: String
 }
 
+/// Phiếu xuất kho RSI in QR dạng `RSI!!!<giá trị>`. Giá trị có thể là số RSI đầy đủ (RSI2026006488)
+/// hoặc mã nội bộ dạng số (vd 86167, nhiều khả năng là RSI_HEADER_ID) → isNo phân biệt hai trường hợp.
+struct QRRsi: Equatable {
+    let value: String
+    let raw: String
+    let isNo: Bool
+    /// Loại phiếu: RSI (xuất kho) hoặc MRF (trả hàng)
+    var kind: DesmDocKind = .rsi
+}
+
+/// Đọc số RSI in bằng chữ trên phiếu ("RSI No : RSI2026006488") khi không quét được QR.
+enum RsiNoOCR {
+    static func parse(_ s: String) -> String? {
+        let up = s.uppercased().filter { !$0.isWhitespace }
+        guard let r = up.range(of: "RSI20[0-9]{8}", options: .regularExpression) else { return nil }
+        return String(up[r])
+    }
+
+    static func find(_ obs: [OCRObs]) -> String? {
+        for line in PkgParser.textLines(obs) { if let n = parse(line) { return n } }
+        return nil
+    }
+
+    /// Số MRF in trên phiếu trả hàng ("MRF No : MRF2026…"; dạng số đoán theo RSI, CHƯA kiểm chứng với phiếu thật).
+    static func parseMrf(_ s: String) -> String? {
+        let up = s.uppercased().filter { !$0.isWhitespace }
+        guard let r = up.range(of: "MRF20[0-9]{8}", options: .regularExpression) else { return nil }
+        return String(up[r])
+    }
+
+    /// Tìm số phiếu trong chữ đọc được. MRF xét trước vì phiếu MRF còn liệt kê cả số RSI ở từng dòng.
+    static func findDoc(_ obs: [OCRObs]) -> QRRsi? {
+        let lines = PkgParser.textLines(obs)
+        for l in lines { if let n = parseMrf(l) { return QRRsi(value: n, raw: n, isNo: true, kind: .mrf) } }
+        for l in lines { if let n = parse(l) { return QRRsi(value: n, raw: n, isNo: true, kind: .rsi) } }
+        return nil
+    }
+}
+
 enum QRParser {
+    /// `RSI!!!<giá trị>` hoặc `MRF!!!<giá trị>` (MRF: định dạng đoán theo RSI, CHƯA kiểm chứng với tem thật).
+    static func parseDoc(_ s: String) -> QRRsi? {
+        let parts = s.components(separatedBy: "!!!").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count >= 2, !parts[1].isEmpty else { return nil }
+        let tag = parts[0].uppercased()
+        guard tag == "RSI" || tag == "MRF" else { return nil }
+        let v = parts[1].uppercased()
+        let isNo = v.hasPrefix(tag) && v.count >= 9 && v.dropFirst(3).allSatisfy { $0.isNumber }
+        return QRRsi(value: v, raw: s, isNo: isNo, kind: tag == "MRF" ? .mrf : .rsi)
+    }
+
     static func parse(_ s: String) -> QRDetail? {
         let parts = s.components(separatedBy: "!!!").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard parts.count >= 4, parts[0].uppercased() == "DETAIL", let m = parts.last, !m.isEmpty else { return nil }
@@ -466,6 +517,8 @@ final class ScanState: ObservableObject {
 
     var onAccept: ((PkgCandidate) -> Void)?
     var onQR: ((QRDetail) -> Void)?
+    var onQRRsi: ((QRRsi) -> Void)?
+    private var rsiStreak: [String: Int] = [:]
 
     private struct Seen {
         var cand: PkgCandidate
@@ -482,6 +535,18 @@ final class ScanState: ObservableObject {
     func ingest(_ obs: [OCRObs]) {
         guard !finished else { return }
         let now = Date()
+        // Phiếu RSI có chữ "RSI No : RSI2026…" (và nhiều Package No bên trong): thấy số RSI thì ưu tiên mở phiếu, không đoán Package.
+        if let doc = RsiNoOCR.findDoc(obs) {
+            let n = doc.kind.rawValue + ":" + doc.value
+            let c = (rsiStreak[n] ?? 0) + 1
+            rsiStreak = [n: c]
+            if c >= 2 {
+                finished = true
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                onQRRsi?(doc)
+            }
+            return
+        }
         let found = PkgParser.candidates(in: obs)
         for c in found {
             if var s = seen[c.uid] {
@@ -533,6 +598,13 @@ final class ScanState: ObservableObject {
                     finished = true
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     onQR?(d)
+                    return
+                }
+            } else if let r = QRParser.parseDoc(p) {
+                if (next[p] ?? 0) >= 2 {
+                    finished = true
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    onQRRsi?(r)
                     return
                 }
             } else if otherQR != p { otherQR = p }
@@ -779,12 +851,14 @@ struct ScanChoiceSheet: View {
 struct PackageScannerView: View {
     let onPick: (PkgCandidate) -> Void
     let onQR: (QRDetail) -> Void
+    let onRsi: (QRRsi) -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var st = ScanState()
 
-    init(onPick: @escaping (PkgCandidate) -> Void, onQR: @escaping (QRDetail) -> Void = { _ in }) {
+    init(onPick: @escaping (PkgCandidate) -> Void, onQR: @escaping (QRDetail) -> Void = { _ in }, onRsi: @escaping (QRRsi) -> Void = { _ in }) {
         self.onPick = onPick
         self.onQR = onQR
+        self.onRsi = onRsi
     }
 
     var body: some View {
@@ -808,6 +882,10 @@ struct PackageScannerView: View {
             st.onQR = { d in
                 dismiss()
                 onQR(d)
+            }
+            st.onQRRsi = { r in
+                dismiss()
+                onRsi(r)
             }
         }
     }
@@ -850,7 +928,7 @@ struct PackageScannerView: View {
             if let ch = st.choice {
                 ScanChoiceCard(choice: ch) { st.accept($0) }
             } else if st.candidates.isEmpty && st.otherQR == nil {
-                Text("Đưa camera vào tem: dòng Package No hoặc Shipment No (chữ in hoặc viết tay), hay mã QR.\nChạm màn hình để lấy nét.")
+                Text("Đưa camera vào tem: dòng Package No hoặc Shipment No (chữ in hoặc viết tay), mã QR, hay phiếu RSI xuất kho / MRF trả hàng (QR hoặc dòng RSI No / MRF No).\nChạm màn hình để lấy nét.")
                     .font(.system(size: 14, weight: .medium)).multilineTextAlignment(.center)
                     .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 10)
                     .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
@@ -915,6 +993,8 @@ extension CGImagePropertyOrientation {
 
 enum ImageScanResult {
     case detail(QRDetail)
+    /// Phiếu RSI (xuất kho) hoặc MRF (trả hàng): QR `RSI!!!…` / `MRF!!!…` hoặc chữ số phiếu → mở tab Xuất kho / Trả hàng
+    case rsi(QRRsi)
     /// Chỉ có một số (Package hoặc Packing List) → mở luôn
     case package(PkgCandidate)
     /// Có cả hai số → cho người dùng chọn
@@ -946,7 +1026,9 @@ enum ImageScanner {
             }
             var out = ImageScanResult.none
             if let d = codes.compactMap({ QRParser.parse($0) }).first { out = .detail(d) }
+            else if let r = codes.compactMap({ QRParser.parseDoc($0) }).first { out = .rsi(r) }
             else if let o = codes.first { out = .otherQR(o) }
+            else if let doc = RsiNoOCR.findDoc(obs) { out = .rsi(doc) }
             else {
                 let p = PkgParser.pair(PkgParser.candidates(in: obs))
                 if let a = p.package, let b = p.packingList {

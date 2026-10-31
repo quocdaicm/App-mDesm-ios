@@ -40,3 +40,12 @@ extension BrowserModel {
         webView?.evaluateJavaScript("window.__desmFindDetail ? window.__desmFindDetail(\(js)) : 0;", completionHandler: nil)
     }
 }
+
+extension BrowserModel {
+    /// Quét phiếu RSI (xuất kho) hoặc MRF (trả hàng): QR `RSI!!!…`/`MRF!!!…` hoặc chữ số phiếu → mở tab Xuất kho / Trả hàng, vào đúng phiếu (xem consumeScan của từng sheet).
+    func runQRRsi(_ r: QRRsi) {
+        showToast(r.isNo ? "Đang mở phiếu \(r.value)…" : "Đang tìm phiếu \(r.kind == .mrf ? "MRF" : "RSI") (mã \(r.value))…")
+        // Chờ màn quét đóng xong rồi mới mở sheet Xuất kho
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.pendingRsiScan = r }
+    }
+}

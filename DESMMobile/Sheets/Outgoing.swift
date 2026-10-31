@@ -158,6 +158,18 @@ final class DesmOutgoingVM: ObservableObject {
         }
     }
 
+    /// Đổi RSI_HEADER_ID (số sau `RSI!!!` trong QR) thành số RSI bằng getDesmRsiList.do (API của màn RSI Creation, kết quả là mảng).
+    /// Trả nil nếu lỗi hoặc không thấy; khi đó dùng đường tải toàn bộ danh sách chờ xuất.
+    func resolveRsiNo(_ model: BrowserModel, headerId: String) async -> String? {
+        guard let pj = try? await model.desmProjectNo() else { return nil }
+        let e = desmFormEnc
+        let body = "STATUS=&CLOSED_CODE=&RSI_NO=&RSI_NAME=&DESCRIPTION=&PROJECT_NO=\(e(pj))&START_REQUEST_DATE=&END_REQUEST_DATE=&MATERIAL_TYPE=&SUBCONTRACTOR="
+        guard let rows = try? await model.desmQueryAsync("/getDesmRsiList.do", body: body) else { return nil }
+        let hit = rows.first { Self.str($0, "RSI_HEADER_ID") == headerId }
+        let no = hit.map { Self.str($0, "RSI_NO") } ?? ""
+        return no.isEmpty ? nil : no.uppercased()
+    }
+
     var groups: [(String, [DesmOutLine])] {
         var order: [String] = []; var map: [String: [DesmOutLine]] = [:]
         for l in lines { if map[l.rsiNo] == nil { order.append(l.rsiNo) }; map[l.rsiNo, default: []].append(l) }
@@ -198,16 +210,16 @@ final class DesmOutgoingVM: ObservableObject {
         return 0
     }
 
-    func search(_ model: BrowserModel) {
+    func search(_ model: BrowserModel, done: (() -> Void)? = nil) {
         loading = true; error = nil; notice = nil
         Task { @MainActor in
             let pj: String
             do { pj = try await model.desmProjectNo() }
-            catch { self.loading = false; self.error = error.localizedDescription; return }
+            catch { self.loading = false; self.error = error.localizedDescription; done?(); return }
             self.project = pj
             let e = desmFormEnc
             let body = "PROJECT_NO=\(e(pj))&PACKING_LIST_NO=&PACKAGE_NO=\(e(self.pkg))&RSI_NO=\(e(self.rsiNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&DESCRIPTION=&DRAWING_NO=&TAG_NO=&RSI_NAME=\(e(self.rsiName))&TYPE=&CATEGORY=&SUBCON=\(e(self.subconF))&PENDING=&MASTER_SHOP_UNIT=&MASTER_SHOP_BLDG=&SHOP_UNIT=&SHOP_BLDG="
-            defer { self.loading = false; self.searched = true }
+            defer { self.loading = false; self.searched = true; done?() }
             let list: [[String: Any]]
             do { list = try await model.desmQueryAsync("/getDesmOutGoingCreationList.do", body: body) }
             catch { self.error = error.localizedDescription; self.lines = []; return }
@@ -576,6 +588,46 @@ struct DesmOutgoingSheet: View {
         .onAppear { vm.loadInfo(model, rsi: rsi) }
     }
 
+    /// Phiếu RSI vừa quét: đổi mã QR (RSI_HEADER_ID) thành số RSI, tìm theo số RSI (nhanh) rồi mở thẳng màn RSI Detail.
+    /// Đổi mã qua getDesmRsiList.do (đã kiểm chứng: RSI2026006488 ↔ RSI_HEADER_ID 86167); không đổi được thì tải toàn bộ
+    /// danh sách chờ xuất (chậm ~9 s) và so RSI_HEADER_ID.
+    private static let closedPrefix = "closed:"
+
+    private func consumeScan() {
+        guard let r0 = model.pendingRsiScan, r0.kind == .rsi else { return }
+        model.pendingRsiScan = nil
+        vm.reset()
+        path.removeAll()
+        withAnimation { showForm = false }
+        Task { @MainActor in
+            var r = r0
+            if !r.isNo {
+                vm.loading = true
+                if let no = await vm.resolveRsiNo(model, headerId: r.value) { r = QRRsi(value: no, raw: r0.raw, isNo: true) }
+            }
+            let rr = r
+            vm.rsiNo = rr.isNo ? rr.value : ""
+            vm.search(model) {
+                let hit = vm.lines.first { l in
+                    rr.isNo ? l.rsiNo.uppercased() == rr.value
+                            : DesmOutgoingVM.str(["x": l.headerId], "x") == rr.value
+                }
+                if let h = hit {
+                    vm.rsiNo = h.rsiNo
+                    path = [h.rsiNo]
+                } else if vm.error == nil {
+                    if rr.isNo {
+                        // Phiếu đã đóng/xuất hết: không có dòng chờ xuất → mở màn xem chi tiết phiếu (chỉ xem)
+                        vm.notice = "Phiếu \(rr.value) không còn dòng chờ xuất, đang mở chi tiết để xem."
+                        path = [Self.closedPrefix + rr.value]
+                    } else {
+                        vm.error = "Không đổi được mã \(rr.value) sang số RSI (kiểm tra mạng/phiên đăng nhập rồi quét lại)."
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             rootView
@@ -584,8 +636,14 @@ struct DesmOutgoingSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
                 }
-                .navigationDestination(for: String.self) { rsi in detail(rsi) }
+                .navigationDestination(for: String.self) { rsi in
+                    if rsi.hasPrefix(Self.closedPrefix) {
+                        DesmDocDetailView(model: model, kind: .rsi, group: DesmDocGroup(id: String(rsi.dropFirst(Self.closedPrefix.count))))
+                    } else { detail(rsi) }
+                }
         }
+        .onAppear { consumeScan() }
+        .onChange(of: model.pendingRsiScan) { _ in consumeScan() }
         .onChange(of: path) { _ in
             // Đổi phiếu: bỏ chọn/số lượng đã gõ/bộ lọc để không xuất nhầm dòng của phiếu khác
             vm.selected.removeAll(); vm.qty.removeAll(); vm.fPkg = ""; vm.fCode = ""; vm.error = nil; vm.notice = nil

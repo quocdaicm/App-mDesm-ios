@@ -93,7 +93,7 @@ struct BrowserView: View {
         ), icon: "exclamationmark.triangle.fill", title: "Không mở được địa chỉ", message: model.errorMessage,
                    actions: [DesmDialogAction(title: "Đóng", kind: .cancel) { model.errorMessage = nil }])
         .fullScreenCover(isPresented: $showScanner) {
-            PackageScannerView(onPick: { c in model.runScan(c) }, onQR: { d in model.runQRScan(d) })
+            PackageScannerView(onPick: { c in model.runScan(c) }, onQR: { d in model.runQRScan(d) }, onRsi: { r in model.runQRRsi(r) })
         }
         .desmAlert(isPresented: $showScanChoice, icon: "viewfinder", title: "Quét mã", actions: [
             DesmDialogAction(title: "Quét bằng camera", kind: .primary) { showScanner = true },
@@ -121,6 +121,7 @@ struct BrowserView: View {
                 ImageScanner.scan(img) { r in
                     switch r {
                     case .detail(let d): model.runQRScan(d)
+                    case .rsi(let r): model.runQRRsi(r)
                     case .package(let c): PkgParser.learn(c); model.runScan(c)
                     case .choose(let ch): photoChoice = ch
                     case .otherQR(let q):
@@ -144,6 +145,10 @@ struct BrowserView: View {
         .sheet(isPresented: $showWip) {
             DesmWipSheet(model: model, onClose: { showWip = false })
                 .desmSheet()
+        }
+        .onChange(of: model.pendingRsiScan) { r in
+            guard let r = r else { return }
+            if r.kind == .mrf { showMrfReturn = true } else { showOutgoing = true }
         }
         .sheet(isPresented: $showOutgoing) {
             DesmOutgoingSheet(model: model, onClose: { showOutgoing = false })

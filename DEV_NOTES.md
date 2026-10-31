@@ -519,3 +519,21 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 ## Lịch sử chat AI riêng + tạo chat mới (2026-10-31)
 - `AIConversation` (id, title, updated, lines, turns) lưu thành JSON `Application Support/DESMAIChats.json` qua `AIChatStore` (tối đa 40 cuộc, mới nhất trước; mỗi lượt lưu cắt 20.000 ký tự). `AIChatSession` tự lưu (gộp lần ghi) mỗi khi `lines`/`turns` đổi; khi khởi tạo tự mở lại cuộc gần nhất. Tiêu đề = dòng đầu câu hỏi đầu tiên (40 ký tự).
 - Thanh đầu khung chat: 🕘 Lịch sử (`AIHistoryView`: chạm mở lại, vuốt trái xoá, nút 'Cuộc trò chuyện mới'), ✎ Chat mới (`newChat()`, không làm gì nếu cuộc hiện tại trống), ⋯ gồm 'Nhật ký lỗi' và 'Xoá cuộc trò chuyện này'. Đổi/mở/xoá cuộc khi AI đang trả lời thì huỷ lượt đang chạy. Ảnh đính kèm không được lưu (chỉ tên). Chưa biên dịch/thử máy thật.
+
+## Quét phiếu xuất kho RSI (QR) → mở tab Xuất kho đúng phiếu (2026-10-31)
+- Ảnh phiếu "Requisition for Stored Items" (trang 2 có QR). Đã giải mã QR trong ảnh mẫu: nội dung `RSI!!!86167`, trong khi số RSI in trên phiếu là `RSI2026006488` → số sau `!!!` KHÔNG phải số RSI; nhiều khả năng là `RSI_HEADER_ID` (CHƯA xác nhận).
+- `QRParser.parseRsi` → `QRRsi{value, raw, isNo}` (isNo = giá trị bắt đầu bằng RSI và dài ≥ 12 ký tự). `RsiNoOCR` đọc chữ `RSI20xxxxxxxx` (phòng khi QR mờ; camera cần thấy 2 khung liên tiếp; ưu tiên hơn đoán Package No vì phiếu RSI chứa nhiều Package No).
+- Luồng: camera/ảnh → `BrowserModel.runQRRsi` → `pendingRsiScan` → `BrowserView` mở sheet Xuất kho → `DesmOutgoingSheet.consumeScan`: isNo → lọc `RSI_NO` (nhanh) rồi mở RSI Detail; chỉ có mã số → tìm KHÔNG lọc (~9 s) và so với `RSI_HEADER_ID` của `getDesmOutGoingCreationList.do`.
+- Giới hạn: tab Xuất kho chỉ liệt kê dòng còn chờ xuất, nên phiếu đã xuất hết sẽ báo "không còn dòng chờ xuất". Nếu quét QR báo không thấy phiếu mà phiếu còn hàng → `86167` không phải HEADER_ID; cần ghi Nhật ký API để tìm API tra theo mã này. CHƯA build, CHƯA thử máy thật.
+
+### Bổ sung (2026-10-31): QR RSI = `RSI_HEADER_ID` (đã xác nhận)
+- Log API: `getDesmRsiList.do` (MENU_SEQ=336) trả `RSI_NO "RSI2026006488"` ↔ `RSI_HEADER_ID 86167` = số sau `RSI!!!` trong QR. Phiếu in từ nút Report của popup RSI Creation: `/rsiMrd.do?seq=<RSI_HEADER_ID>&fileNm=RD_<mã dự án>_RSI` (+`_RU`).
+- `DesmOutgoingVM.resolveRsiNo` đổi HEADER_ID → RSI_NO bằng `getDesmRsiList.do` (bộ lọc trống, dự án mặc định; chưa biết tốc độ khi nhiều phiếu), rồi tìm Xuất kho theo `RSI_NO` (nhanh). Lỗi thì lùi về cách cũ (tải toàn bộ chờ xuất, so HEADER_ID). `getDesmRsiInfoList.do` (nhận RSI_HEADER_ID) có `results` là object (lineList) nên `desmQueryAsync` chưa đọc được, chưa dùng. CHƯA build/thử máy thật.
+
+### Quét phiếu RSI đã đóng (2026-10-31)
+- Quét ra số RSI mà tab Xuất kho không có dòng chờ xuất (phiếu đã đóng/xuất hết) → đẩy `closed:<số RSI>` vào `path` của `DesmOutgoingSheet`, mở `DesmDocDetailView(kind: .rsi)` (chỉ xem: dòng hàng, đã xuất, còn lại, ngày bàn giao; dữ liệu `getDesmRsiViewList` + `getDesmRsiOutGoingList` theo RSI_NO, không giới hạn ngày). Chưa build/thử máy thật.
+
+### Quét phiếu MRF (trả hàng) giống RSI (2026-10-31)
+- `QRRsi.kind` (.rsi/.mrf); `QRParser.parseDoc` nhận `RSI!!!…` và `MRF!!!…`; `RsiNoOCR.findDoc` đọc chữ `MRF20xxxxxxxx` (xét trước, vì phiếu MRF liệt kê cả số RSI) rồi `RSI20xxxxxxxx`. Camera/ảnh → `runQRRsi` → `pendingRsiScan` → `BrowserView` mở Xuất kho (RSI) hoặc Trả hàng (MRF).
+- `DesmMrfReturnSheet.consumeScan`: mã số → `resolveMrfNo` (getMrfSummaryList.do, so `MRF_HEADER_ID`) → tìm `getDesmReturnCreationList.do` theo MRF_NO → mở MRF Detail; không còn dòng phải trả → `DesmDocDetailView(kind: .mrf)` chỉ xem.
+- CHƯA có phiếu MRF thật: định dạng QR (`MRF!!!<HEADER_ID>`?), định dạng số MRF (đoán `MRF20` + 8 số theo RSI) và trường `MRF_HEADER_ID` trong getMrfSummaryList đều là ĐOÁN. Cần ảnh phiếu MRF in ra (nút Report của popup MRF) để chỉnh. CHƯA build/thử máy thật.

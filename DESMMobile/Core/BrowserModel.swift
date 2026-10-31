@@ -24,6 +24,8 @@ final class BrowserModel: ObservableObject {
     @Published var shotItem: ShareItem?      // ảnh chụp toàn trang chờ chia sẻ/lưu
     @Published var errorMessage: String?
     @Published var toast: String?
+    /// Phiếu RSI vừa quét (QR/chữ) đang chờ tab Xuất kho mở đúng phiếu đó
+    @Published var pendingRsiScan: QRRsi?
     /// Hàng đợi hộp thoại tự vẽ (alert/confirm của trang, hỏi lưu tài khoản...): hiện cái đầu tiên ở đáy màn hình.
     @Published var dialogQueue: [DesmDialogState] = []
     func presentDialog(_ s: DesmDialogState) { dialogQueue.append(s) }

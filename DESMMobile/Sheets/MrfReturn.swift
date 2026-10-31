@@ -60,6 +60,18 @@ final class DesmMrfReturnVM: ObservableObject {
 
     static func fmt(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%g", v) }
 
+    /// Đổi MRF_HEADER_ID (số sau `MRF!!!` trong QR) thành số MRF bằng getMrfSummaryList.do (bộ lọc trống).
+    /// Trả nil nếu lỗi/không thấy (khi đó dùng đường tải toàn bộ danh sách còn phải trả). Trường MRF_HEADER_ID của API này CHƯA kiểm chứng.
+    func resolveMrfNo(_ model: BrowserModel, headerId: String) async -> String? {
+        guard let pj = try? await model.desmProjectNo() else { return nil }
+        let e = desmFormEnc
+        let body = "PROJECT_NO=\(e(pj))&RSI_NO=&RSI_NAME=&SUBCONTRACTOR=&MATERIAL_CODE=&RSI_START_REQUEST_DATE=&RSI_END_REQUEST_DATE=&ZIM_ATTRIBUTE10=&RSI_BALANCE_QTY=&TYPE=&CATEGORY=&SUB_CATEGORY=&PACKING_LIST_NO=&MRF_NO=&MRF_NAME=&PACKAGE_NO=&ITEM_DESC=&RETURN_TYPE=&MRF_BALANCE_QTY="
+        guard let rows = try? await model.desmQueryAsync("/getMrfSummaryList.do", body: body) else { return nil }
+        let hit = rows.first { Self.str($0, "MRF_HEADER_ID") == headerId }
+        let no = hit.map { Self.str($0, "MRF_NO") } ?? ""
+        return no.isEmpty ? nil : no.uppercased()
+    }
+
     func pick(_ l: DesmMrfLine) { selected.insert(l.id); if (qty[l.id] ?? "").isEmpty { qty[l.id] = Self.fmt(l.balance) } }
     func toggle(_ l: DesmMrfLine) { guard l.valid else { return }; if selected.contains(l.id) { selected.remove(l.id) } else { pick(l) } }
     func setGroup(_ items: [DesmMrfLine], on: Bool) { for l in items where l.valid { if on { pick(l) } else { selected.remove(l.id) } } }
@@ -76,16 +88,16 @@ final class DesmMrfReturnVM: ObservableObject {
         return 0
     }
 
-    func search(_ model: BrowserModel) {
+    func search(_ model: BrowserModel, done: (() -> Void)? = nil) {
         loading = true; error = nil
         Task { @MainActor in
             let pj: String
             do { pj = try await model.desmProjectNo() }
-            catch { self.loading = false; self.error = error.localizedDescription; return }
+            catch { self.loading = false; self.error = error.localizedDescription; done?(); return }
             self.project = pj
             let e = desmFormEnc
             let body = "PROJECT_NO=\(e(pj))&PACKAGE_NO=\(e(self.pkg))&MRF_NO=\(e(self.mrfNo))&MATERIAL_CODE=\(e(self.code))&REQUEST_START_DATE=&ATTRIBUTE10=&REQUEST_END_DATE=&TYPE=&CATEGORY="
-            defer { self.loading = false; self.searched = true }
+            defer { self.loading = false; self.searched = true; done?() }
             let list: [[String: Any]]
             do { list = try await model.desmQueryAsync("/getDesmReturnCreationList.do", body: body) }
             catch { self.error = error.localizedDescription; self.lines = []; return }
@@ -424,6 +436,44 @@ struct DesmMrfReturnSheet: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    private static let closedPrefix = "closed:"
+
+    /// Phiếu MRF vừa quét: đổi mã QR (MRF_HEADER_ID) thành số MRF, tìm rồi mở thẳng màn MRF Detail.
+    /// Phiếu không còn dòng phải trả (đã trả hết) → mở màn xem chi tiết phiếu (chỉ xem).
+    private func consumeScan() {
+        guard let r0 = model.pendingRsiScan, r0.kind == .mrf else { return }
+        model.pendingRsiScan = nil
+        vm.mrfNo = ""; vm.mrfName = ""; vm.pkg = ""; vm.code = ""; vm.onlyOpen = true
+        path.removeAll()
+        withAnimation { showForm = false }
+        Task { @MainActor in
+            var r = r0
+            if !r.isNo {
+                vm.loading = true
+                if let no = await vm.resolveMrfNo(model, headerId: r.value) { r = QRRsi(value: no, raw: r0.raw, isNo: true, kind: .mrf) }
+            }
+            let rr = r
+            vm.mrfNo = rr.isNo ? rr.value : ""
+            vm.search(model) {
+                let hit = vm.lines.first { l in
+                    rr.isNo ? l.mrfNo.uppercased() == rr.value
+                            : DesmMrfReturnVM.str(["x": l.headerId], "x") == rr.value
+                }
+                if let h = hit {
+                    vm.mrfNo = h.mrfNo
+                    path = [h.mrfNo]
+                } else if vm.error == nil {
+                    if rr.isNo {
+                        vm.notice = "Phiếu \(rr.value) không còn dòng phải trả, đang mở chi tiết để xem."
+                        path = [Self.closedPrefix + rr.value]
+                    } else {
+                        vm.error = "Không đổi được mã \(rr.value) sang số MRF (kiểm tra mạng/phiên đăng nhập rồi quét lại)."
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             rootView
@@ -432,8 +482,13 @@ struct DesmMrfReturnSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) { Button("Đóng") { onClose() } }
                 }
-                .navigationDestination(for: String.self) { mrf in detail(mrf) }
+                .navigationDestination(for: String.self) { mrf in
+                    if mrf.hasPrefix(Self.closedPrefix) {
+                        DesmDocDetailView(model: model, kind: .mrf, group: DesmDocGroup(id: String(mrf.dropFirst(Self.closedPrefix.count))))
+                    } else { detail(mrf) }
+                }
         }
+        .onChange(of: model.pendingRsiScan) { _ in consumeScan() }
         .onChange(of: path) { _ in
             // Đổi phiếu: bỏ chọn/số lượng đã gõ/bộ lọc để không trả nhầm dòng của phiếu khác
             vm.selected.removeAll(); vm.qty.removeAll(); vm.fPkg = ""; vm.fCode = ""; vm.error = nil; vm.notice = nil
@@ -442,6 +497,9 @@ struct DesmMrfReturnSheet: View {
                    message: "Ghi trả hàng \(vm.selected.count) dòng lên DESM ngày \(DesmMrfReturnVM.dayText(vm.date)). Thao tác này không tự hoàn tác được.",
                    actions: [DesmDialogAction(title: "Trả hàng", kind: .destructive) { vm.save(model) },
                              DesmDialogAction(title: "Huỷ", kind: .cancel)])
-        .onAppear { if !vm.searched { vm.search(model) } }
+        .onAppear {
+            if model.pendingRsiScan?.kind == .mrf { consumeScan() }
+            else if !vm.searched { vm.search(model) }
+        }
     }
 }
