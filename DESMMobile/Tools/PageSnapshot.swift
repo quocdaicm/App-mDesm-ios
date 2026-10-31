@@ -378,6 +378,7 @@ struct DesmDiagView: View {
     @State private var frames: [DesmDiagFrame] = []
     @State private var loading = true
     @State private var failed = false
+    @ObservedObject private var stats = DesmStats.shared
 
     var issueCount: Int { frames.reduce(0) { $0 + $1.problems.count } }
 
@@ -388,6 +389,7 @@ struct DesmDiagView: View {
             if f.blocked { t += " (không đọc được)" }
             for p in f.problems { t += "\n  ! \(p)" }
         }
+        t += "\n\n" + stats.report
         return t
     }
 
@@ -436,6 +438,25 @@ struct DesmDiagView: View {
                     Text(f.path + (f.url.isEmpty ? "" : "  ·  " + f.url) + (f.hidden ? "  (khung ẩn)" : ""))
                         .textCase(nil)
                 }
+            }
+            Section {
+                ForEach(DesmStats.Kind.allCases, id: \.self) { k in
+                    let n = stats.total(k)
+                    if n > 0 || k == .apiOK {
+                        HStack { Text(k.label).foregroundColor(k.isFailure && n > 0 ? .red : .primary); Spacer(); Text("\(n)").foregroundColor(.secondary) }
+                    }
+                }
+                ForEach(stats.worstPaths(), id: \.path) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.path).font(.system(size: 13, weight: .semibold))
+                        Text("\(e.fails) lỗi / \(e.ok) thành công (7 ngày)").font(.footnote).foregroundColor(.secondary)
+                    }
+                }
+                Button("Xoá thống kê", role: .destructive) { stats.reset() }
+            } header: {
+                Text("Thống kê lỗi 7 ngày")
+            } footer: {
+                Text("Đếm lệnh gọi API DESM (thành công/lỗi theo loại) và số lần DESM xoá CSS/class buộc app phải áp lại. Chỉ lưu số đếm trong máy.")
             }
             Section {
                 Button("Áp lại giao diện ngay") {

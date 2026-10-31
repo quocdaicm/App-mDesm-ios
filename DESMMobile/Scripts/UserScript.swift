@@ -56,6 +56,8 @@ enum UserJS {
     /// Vòng áp lại (apply/applyAll/__desmRevert), quan sát DOM và đóng IIFE
     static let tail = #"""
           function enhance(doc) { navHandlers(doc); formify(doc); fixMaps(doc); try { colToggle(doc); } catch (e) {} }
+          // Báo cho app (thống kê lỗi) mỗi lần phải áp lại style/class
+          function stat(k) { try { w.webkit.messageHandlers.desmStat.postMessage({ k: k }); } catch (e) {} }
           function apply(doc) {
             var root = doc.documentElement; if (!root) return;
             var c = w.__desmCfg;
@@ -63,10 +65,12 @@ enum UserJS {
             var style = doc.getElementById(ID);
             if (mobile) {
               if (!style) {
+                if (doc.__desmHad) stat('style');   // đã từng có mà mất = DESM xoá style
                 style = doc.createElement('style'); style.id = ID; style.textContent = c.css;
-                root.appendChild(style);
+                root.appendChild(style); doc.__desmHad = 1;
               } else if (style.textContent !== c.css) { style.textContent = c.css; }
-              if (!root.classList.contains(CLS)) root.classList.add(CLS);
+              if (!root.classList.contains(CLS)) { if (doc.__desmHad && style.__desmSeen) stat('class'); root.classList.add(CLS); }
+              style.__desmSeen = 1;
               if (w === w.top && !root.classList.contains('desm-top')) root.classList.add('desm-top');
               enhance(doc);
             } else {

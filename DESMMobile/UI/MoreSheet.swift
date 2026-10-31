@@ -20,6 +20,7 @@ struct MoreSheet: View {
     var onFetch: () -> Void = {}
     var onSource: () -> Void = {}
     var onAudit: () -> Void = {}
+    var onDashboard: () -> Void = {}
 
     struct Item: Identifiable {
         let id = UUID(); let symbol: String; let title: String; var enabled = true; let action: () -> Void
@@ -27,6 +28,7 @@ struct MoreSheet: View {
     /// Nhóm 1: các mục của web DESM (mở màn hình / dữ liệu DESM)
     var webItems: [Item] {
         [
+            Item(symbol: "gauge.with.dots.needle.67percent", title: "Tổng quan", enabled: model.inDesm) { onDashboard() },
             Item(symbol: "line.3.horizontal", title: "Menu đầy đủ") {
                 model.webView?.evaluateJavaScript("window.__desmToggleDrawer && window.__desmToggleDrawer();", completionHandler: nil)
             },

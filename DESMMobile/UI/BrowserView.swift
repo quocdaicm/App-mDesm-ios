@@ -20,6 +20,7 @@ struct BrowserView: View {
     @State private var showMore = false
     @State private var showPackingHistory = false
     @State private var showActivity = false
+    @State private var showDashboard = false
     @State private var showEditLog = false
     @State private var showVessel = false
     @State private var showNotice = false
@@ -141,7 +142,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true }, onAudit: { showAudit = true })
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true }, onAudit: { showAudit = true }, onDashboard: { showDashboard = true })
                 .presentationDetents([.fraction(0.7), .large])
                 .presentationDragIndicator(.visible)
                 .tint(Color.tabBlue)
@@ -168,6 +169,10 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $showEditLog) {
             DesmEditLogSheet(model: model, onClose: { showEditLog = false })
+                .desmSheet()
+        }
+        .sheet(isPresented: $showDashboard) {
+            DesmDashboardSheet(model: model, onClose: { showDashboard = false })
                 .desmSheet()
         }
         .sheet(isPresented: $showActivity) {

@@ -189,6 +189,7 @@ struct WebView: UIViewRepresentable {
         content.add(context.coordinator, name: "desmAI")
         content.add(context.coordinator, name: "desmReady")
         content.add(context.coordinator, name: "desmExport")
+        content.add(context.coordinator, name: "desmStat")
         model.webView = webView
         model.contentController = content
         model.installUserScript()
@@ -220,6 +221,7 @@ struct WebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmAI")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmReady")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmExport")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "desmStat")
         uiView.navigationDelegate = nil
         uiView.uiDelegate = nil
     }
@@ -308,6 +310,15 @@ struct WebView: UIViewRepresentable {
                 guard let host = message.frameInfo.request.url?.host?.lowercased(),
                       host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com") else { return }
                 DispatchQueue.main.async { if !self.model.reconnecting { self.model.reconnectSession(reason: "page") } }
+                return
+            }
+            if message.name == "desmStat" {
+                // Thống kê: script báo đã phải chèn lại CSS / class (đếm, gộp các lần báo liên tiếp trong 5 giây)
+                guard let host = message.frameInfo.request.url?.host?.lowercased(),
+                      host == "doosanenerbility.com" || host.hasSuffix(".doosanenerbility.com"),
+                      let d = message.body as? [String: Any], let k = d["k"] as? String else { return }
+                let kind: DesmStats.Kind? = k == "style" ? .reapplyStyle : (k == "class" ? .reapplyClass : nil)
+                if let kind = kind { DispatchQueue.main.async { DesmStats.shared.record(kind, minGap: 5) } }
                 return
             }
             if message.name == "desmExport" {

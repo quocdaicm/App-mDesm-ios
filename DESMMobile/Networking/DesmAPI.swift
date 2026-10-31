@@ -74,16 +74,39 @@ extension BrowserModel {
     /// POST một endpoint .do bằng phiên đăng nhập hiện có; trả mảng dòng (results hoặc results.list).
     @MainActor
     func desmQueryAsync(_ path: String, body: String) async throws -> [[String: Any]] {
+        let stats = DesmStats.shared
+        func kind(_ e: Error) -> DesmStats.Kind {
+            switch e as? DesmAPIError {
+            case .expired?: return .apiExpired
+            case .noSession?: return .apiNoSession
+            case .network?: return .apiNetwork
+            case .notJSON?: return .apiNotJSON
+            case .server?, .unreadable?: return .apiServer
+            default: return .apiOther
+            }
+        }
         do {
-            return try await desmQueryHTTP(path, body: body)
+            let r = try await desmQueryHTTP(path, body: body)
+            stats.record(.apiOK, path: path)
+            return r
         } catch DesmAPIError.expired {
+            stats.record(.apiExpired, path: path)
             throw DesmAPIError.expired
         } catch DesmAPIError.noSession {
+            stats.record(.apiNoSession, path: path)
             throw DesmAPIError.noSession
         } catch {
-            guard webView != nil else { throw error }
+            guard webView != nil else { stats.record(kind(error), path: path); throw error }
             AILog.add("↩︎ " + path + " URLSession lỗi (" + error.localizedDescription + ") → thử qua trang web")
-            return try await desmQueryViaWebView(path, body: body)   // đường lui
+            stats.record(.webFallback, path: path)
+            do {
+                let r = try await desmQueryViaWebView(path, body: body)   // đường lui
+                stats.record(.apiOK, path: path)
+                return r
+            } catch {
+                stats.record(kind(error), path: path)
+                throw error
+            }
         }
     }
 
