@@ -104,15 +104,17 @@ extension View {
 
 /// Kiểu chung cho mọi màn hình native mở từ "Thêm": sheet toàn chiều cao, thanh kéo, màu nhấn xanh của app.
 struct DesmSheetStyle: ViewModifier {
+    var shot = true   // true: có nút chụp cả danh sách thành một ảnh (xem ShareSheet.swift)
     func body(content: Content) -> some View {
         content
+            .modifier(DesmShotModifier(enabled: shot))
             .tint(Color.tabBlue)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
     }
 }
 extension View {
-    func desmSheet() -> some View { modifier(DesmSheetStyle()) }
+    func desmSheet(shot: Bool = true) -> some View { modifier(DesmSheetStyle(shot: shot)) }
 }
 
 /// Mục "Thêm": các nút điều hướng/công cụ cũ của thanh dưới + mở menu đầy đủ, Cài đặt.

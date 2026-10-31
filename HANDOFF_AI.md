@@ -1,3 +1,11 @@
+## ⚠️ QUY ƯỚC BẮT BUỘC khi thêm mục/màn hình mới vào "Thêm" (More) — AI nào làm tiếp cũng phải theo
+1. **Mục mới = một màn native mở dạng sheet từ `UI/MoreSheet.swift`** (thêm `Item` vào `webItems` hoặc `toolItems`, thêm callback `onXxx` rồi nối trong `UI/BrowserView.swift`). Sheet đăng ký trong `BrowserView.swift` bằng `.sheet { MànMới(model:, onClose:) .desmSheet() }`.
+2. **Luôn gắn `.desmSheet()`** cho sheet mới: modifier này đã tự thêm (a) nút camera nổi góc dưới phải để chụp CẢ danh sách thành một ảnh dài (`DesmShotModifier` trong `UI/ShareSheet.swift`), (b) sheet toàn chiều cao, thanh kéo, màu nhấn `Color.tabBlue`. Không tự viết lại nút chụp riêng cho từng màn. Nếu bắt buộc không dùng `desmSheet()` thì gọi `.desmShotButton()`. Chỉ truyền `.desmSheet(shot: false)` cho màn có ô nhập/thanh gửi ở đáy (như AI chat, Cài đặt) và phải ghi lý do.
+3. **Nội dung cuộn phải là `ScrollView`/`List` thật** (LazyVStack trong ScrollView đều được) để bộ chụp cuộn-ghép tìm thấy được. Đừng tự dựng cuộn bằng gesture/offset, đừng lồng nhiều ScrollView dọc.
+4. **Đồng bộ giao diện app**: dùng `Color.tabBlue`/`tabBlueLight`, hộp thoại dùng `.desmAlert`/`.desmDialog` (KHÔNG dùng `.alert`/`confirmationDialog` hệ thống), chữ tiếng Việt, tiêu đề + nút "Đóng" ở thanh trên theo mẫu các sheet trong `Sheets/`. Thẻ dữ liệu, bộ lọc, trạng thái rỗng/lỗi làm giống các màn có sẵn (xem `Sheets/Outgoing.swift`, `Sheets/DocSheet.swift`).
+5. File Swift mới phải được thêm vào `DESMMobile.xcodeproj/project.pbxproj` (PBXBuildFile, PBXFileReference, nhóm, Sources) — hoặc đặt code vào file có sẵn cho khỏi sửa pbxproj.
+6. Sau khi thêm mục mới: cập nhật `DEV_NOTES.md`, và nhớ nói rõ với người dùng "chưa build/chưa thử máy thật" nếu chưa build.
+
 > **LƯU Ý (2026-10-30, cập nhật): "AI riêng" đã được ĐƯA LẠI bằng bản viết lại gọn trong `DESMMobile/AI/` — xem mục cuối DEV_NOTES.md. Các mô tả bên dưới là bản cũ, chỉ để tham khảo.**
 
 # BÀN GIAO CHO AI KHÁC — DESM Mobile: thêm "AI riêng" cho bong bóng Dodo

@@ -149,12 +149,20 @@ enum MobileStyles {
         flex:0 0 auto; float:none!important; margin:0!important; height:34px!important; white-space:nowrap!important; font-size:12px!important;
       }
       /* Thanh nút gọn: chỉ chừa Location Delete + Location Update (nút "⋯" mở ra các nút còn lại) */
-      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim:not(.desm-tb-all) > :not(#btnLocationDelete):not(#btnLocationSetup):not(#desmMoreToggle):not(#desmViewToggle):not(#desmTapToggle) { display:none!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim:not(.desm-tb-all) > :not(#btnLocationDelete):not(#btnLocationSetup):not(#desmMoreToggle):not(#desmViewToggle):not(#desmTapToggle):not(#desmSelAllChip) { display:none!important; }
       /* Chưa tích chọn kiện nào (dạng thẻ): ẩn cả thanh nút, chỉ chừa nút nhỏ "⋯" (chạm để mở toàn bộ). Tích chọn kiện thì các nút hiện lại */
-      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > :not(#desmMoreToggle) { display:none!important; }
-      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) { padding:2px 10px!important; justify-content:flex-end; min-height:0!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > :not(#desmMoreToggle):not(#desmSelAllChip) { display:none!important; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) { padding:2px 10px!important; justify-content:space-between; min-height:0!important; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > #desmMoreToggle { height:26px!important; min-height:0!important; min-width:36px; padding:0 10px!important; line-height:1; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim > #desmMoreToggle { order:99; min-width:40px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmSelAllChip {
+        order:-1; flex:0 0 auto; display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; margin:0;
+        background:#fff; border-radius:999px; box-shadow:inset 0 0 0 1.5px #d3dcee; cursor:pointer; white-space:nowrap;
+      }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmSelAllChip input.desm-chk { width:20px!important; height:20px!important; min-width:20px!important; min-height:20px!important; flex:0 0 20px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > #desmSelAllChip { height:26px; min-height:0; padding:0 10px; gap:6px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > #desmSelAllChip input.desm-chk { width:18px!important; height:18px!important; min-width:18px!important; min-height:18px!important; flex:0 0 18px; }
+      html.desm-mobile-mode.desm-mobile-mode #toolbar.desm-tb-slim.desm-tb-nosel:not(.desm-tb-all) > #desmSelAllChip .desm-cards-count { font-size:12px; line-height:1; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmViewToggle { order:98; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar > #desmTapToggle { order:97; }
       html.desm-mobile-mode.desm-mobile-mode #toolbar:not(.desm-tb-slim) > #desmMoreToggle { display:none!important; }
@@ -293,6 +301,10 @@ enum MobileStyles {
       border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:sticky; top:0; z-index:5; cursor:pointer;
     }
     html.desm-mobile-mode .desm-cards-count { font-size:13px; font-weight:600; color:#374151; }
+    html.desm-mobile-mode .desm-cards-lists { display:flex; flex-wrap:wrap; gap:6px; margin:2px 4px 8px; }
+    html.desm-mobile-mode .desm-list-chip { border:1px solid #bfd3f7; background:#fff; color:#1d4ed8; border-radius:999px; padding:6px 12px; font-size:12px; font-weight:700; }
+    html.desm-mobile-mode .desm-list-chip.on { background:#2563eb; border-color:#2563eb; color:#fff; }
+    html.desm-mobile-mode .desm-cards-note { margin:2px 4px 8px; padding:6px 10px; border-radius:10px; background:#fff7e6; color:#92580a; font-size:12px; font-weight:600; line-height:1.35; }
     html.desm-mobile-mode input.desm-chk { width:22px!important; height:22px!important; min-width:22px!important; min-height:22px!important; flex:0 0 22px; margin:0!important; accent-color:#2878e5; }
     html.desm-mobile-mode .desm-card { position:relative; padding-left:44px!important; }
     html.desm-mobile-mode .desm-card-chk { position:absolute; left:12px; top:12px; pointer-events:none; }
@@ -325,7 +337,7 @@ enum MobileStyles {
     html.desm-mobile-mode #desmGenCards.desm-gtable .desm-gbar2 { display:none!important; }
     html.desm-mobile-mode .desm-gbar2 { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
     html:not(.desm-mobile-mode) .desm-gsearch { display:none!important; }
-    html.desm-mobile-mode .desm-gsearch { display:flex!important; flex:0 0 100%!important; gap:10px; align-items:center; margin:8px 0; padding:0 10px; box-sizing:border-box!important; width:100%!important; max-width:100%!important; float:none!important; clear:both; }
+    html.desm-mobile-mode .desm-gsearch { display:flex!important; grid-column:1 / -1!important; justify-self:stretch; flex:0 0 100%!important; gap:10px; align-items:center; margin:8px 0; padding:0 10px; box-sizing:border-box!important; width:100%!important; max-width:100%!important; float:none!important; clear:both; }
     html.desm-mobile-mode .desm-gsearch .desm-gq2 { flex:1 1 0!important; width:auto!important; min-width:0; box-sizing:border-box; height:44px; margin:0; padding:0 12px; border:1px solid #cfd6e4; border-radius:10px; background:#fff; color:#111827; font-size:16px; -webkit-appearance:none; appearance:none; }
     html.desm-mobile-mode .desm-gsearch .desm-gq2:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.18); }
     html.desm-mobile-mode .desm-gchip { flex:0 0 auto; height:32px; padding:0 12px; border:1px solid #cbd8f0; border-radius:16px; background:#fff; color:#35507a; font-weight:600; font-size:13px; }

@@ -1775,6 +1775,7 @@ extension BrowserModel {
               try { win.__desmItems = null; } catch (e) {}
               if (box.__setHidden) box.__setHidden(false);
               if (tb) tb.classList.remove('desm-tb-nosel');
+              var chip0 = doc.getElementById('desmSelAllChip'); if (chip0 && chip0.parentNode) chip0.parentNode.removeChild(chip0);
               if (box.__wasOn) { box.__wasOn = false; try { win.dispatchEvent(new win.Event('resize')); } catch (e) {} }
               return;
             }
@@ -1844,7 +1845,7 @@ extension BrowserModel {
             } catch (e) { rows = []; }
             if (!rows.length) { for (var id0 in G.Rows) addRow(G.Rows[id0]); }
             function isSel(r) { return !!r.Selected && r.Selected !== '0'; }
-            var items = rows.map(function(r) {
+            var allItems = rows.map(function(r) {
               return {
                 id: r.id, sel: isSel(r),
                 no: gridText(G, r, 'PACKAGE_NO'), desc: gridText(G, r, 'DESCRIPTION'),
@@ -1853,14 +1854,24 @@ extension BrowserModel {
                 ok: gridText(G, r, 'IS_CONFIRM_MATERIAL').toUpperCase() === 'Y'
               };
             });
-            try { win.__desmItems = { t: Date.now(), items: items }; } catch (e) {}   // Dodo: dữ liệu đang hiển thị trên màn hình
+            // Ô lọc Packing List khớp kiểu 'chứa' (vd 0002 lấy cả DE-LS-0002 lẫn DE-IS-0002): cho thu hẹp theo từng list
+            var listCnt = {}, listOrder = [];
+            allItems.forEach(function(i) {
+              var lk = i.list || '(trống)';
+              if (!listCnt[lk]) { listCnt[lk] = 0; listOrder.push(lk); }
+              listCnt[lk]++;
+            });
+            var listSel = box.__listSel || '';
+            if (listSel && !listCnt[listSel]) { listSel = ''; box.__listSel = ''; }
+            var items = listSel ? allItems.filter(function(i) { return (i.list || '(trống)') === listSel; }) : allItems;
+            try { win.__desmItems = { t: Date.now(), items: allItems }; } catch (e) {}   // Dodo: dữ liệu đang hiển thị trên màn hình
             // Mặc định ẩn nút Xóa vị trí / Cập nhật vị trí; chỉ hiện khi đã tích chọn ít nhất một kiện
-            if (tb) tb.classList.toggle('desm-tb-nosel', !items.some(function(i) { return i.sel; }));
+            if (tb) tb.classList.toggle('desm-tb-nosel', !allItems.some(function(i) { return i.sel; }));
             // Thanh nút đổi chiều cao (thu/mở) nên tính lại chiều cao vùng thẻ cho vừa màn hình
             try { box.style.height = Math.max(160, win.innerHeight - box.getBoundingClientRect().top - 4) + 'px'; } catch (e) {}
             try { diWarm(box.ownerDocument); } catch (e) {}
-            var sig = items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
-            if (box.__sig === sig) return;
+            var sig = listSel + '@' + items.map(function(i) { return [i.id, i.sel ? 1 : 0, i.no, i.desc, i.type, i.list, i.ao, i.loc, i.ok ? 1 : 0].join('|'); }).join('\n') + '#' + (win.__desmTapDetail ? 1 : 0);
+            if (box.__sig === sig && (!tb || doc.getElementById('desmSelAllChip'))) return;
             box.__sig = sig;
             var keep = box.scrollTop;
             while (box.firstChild) box.removeChild(box.firstChild);
@@ -1881,8 +1892,41 @@ extension BrowserModel {
               box.__sig = null; cardView(doc);
             });
             bar.appendChild(all);
-            bar.appendChild(el('span', 'desm-cards-count', 'Chọn tất cả · ' + items.length + ' kiện' + (nSel ? ' · đã chọn ' + nSel : '')));
-            box.appendChild(bar);
+            bar.appendChild(el('span', 'desm-cards-count', nSel ? (nSel + '/' + items.length + ' kiện') : ('Chọn tất cả · ' + items.length + ' kiện')));
+            // Đặt chung hàng với nút ⋯ ở thanh nút (cố định phía trên) để không đè lên thẻ khi cuộn
+            if (tb) {
+              var oldChip = doc.getElementById('desmSelAllChip'); if (oldChip && oldChip.parentNode) oldChip.parentNode.removeChild(oldChip);
+              bar.id = 'desmSelAllChip'; bar.className = 'desm-selall-chip';
+              tb.insertBefore(bar, tb.firstChild);
+            } else box.appendChild(bar);
+            // Nhiều Packing List trong kết quả: hàng nút chọn list. Chọn một list thì BỎ CHỌN các kiện ngoài list đó
+            // (Location Delete/Update chạy trên mọi kiện đã chọn nên không để sót kiện của list khác).
+            if (listOrder.length > 1) {
+              var lrow = el('div', 'desm-cards-lists');
+              var addChip = function(label, key) {
+                var b = el('button', 'desm-list-chip' + (listSel === key ? ' on' : ''), label); b.type = 'button';
+                b.addEventListener('click', function(ev) {
+                  ev.preventDefault(); ev.stopPropagation();
+                  if (key) {
+                    allItems.forEach(function(it) {
+                      if ((it.list || '(trống)') === key) return;
+                      var r = G.Rows[it.id];
+                      if (r && isSel(r)) { try { G.SelectRow(r, 0); } catch (e) {} }
+                    });
+                  }
+                  box.__listSel = key; box.__sig = null; cardView(doc);
+                });
+                lrow.appendChild(b);
+              };
+              addChip('Tất cả (' + allItems.length + ')', '');
+              listOrder.forEach(function(lk) { addChip(lk + ' (' + listCnt[lk] + ')', lk); });
+              box.appendChild(lrow);
+            }
+            var pkgSeen = {}, nUniq = 0;
+            items.forEach(function(i) { if (i.no && !pkgSeen[i.no]) { pkgSeen[i.no] = 1; nUniq++; } });
+            if (items.length && nUniq < items.length) {
+              box.appendChild(el('div', 'desm-cards-note', items.length + ' dòng = ' + nUniq + ' kiện khác nhau'));
+            }
             if (!items.length) box.appendChild(el('div', 'desm-cards-empty', 'Chưa có kiện hàng nào. Hãy nhập điều kiện lọc rồi bấm Search.'));
             var tapDetail = !!win.__desmTapDetail;
             items.forEach(function(it, idx) {

@@ -168,6 +168,7 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $showNotice) {
             DesmNoticeSheet(model: model, onClose: { showNotice = false })
+                .desmShotButton()
         }
         .sheet(isPresented: $showVessel) {
             DesmVesselSheet(model: model, onClose: { showVessel = false })
@@ -195,11 +196,11 @@ struct BrowserView: View {
         }
         .sheet(isPresented: $model.showAIChat) {
             AIChatView(model: model, onClose: { model.showAIChat = false })
-                .desmSheet()
+                .desmSheet(shot: false)
         }
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
-                .desmSheet()
+                .desmSheet(shot: false)
         }
         .sheet(item: $model.shotItem) { item in
             ShareSheet(url: item.url)
