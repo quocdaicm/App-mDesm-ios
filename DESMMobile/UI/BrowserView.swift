@@ -20,6 +20,8 @@ struct BrowserView: View {
     @State private var showMore = false
     @State private var showPackingHistory = false
     @State private var showActivity = false
+    @State private var activityDays = 3      // khoảng ngày / loại mở sẵn cho màn Hoạt động (từ Tổng quan)
+    @State private var activityFilter = 0
     @State private var showDashboard = false
     @State private var showEditLog = false
     @State private var showVessel = false
@@ -32,6 +34,32 @@ struct BrowserView: View {
     @State private var showWip = false
     @State private var showMrfReturn = false
     @State private var showSplash = true   // màn khởi động: chỉ lần mở app đầu tiên
+
+    /// Bấm một dòng ở Tổng quan: đóng Tổng quan rồi mở đích (chờ sheet đóng xong mới mở tiếp).
+    func dashGo(_ t: DashTarget) {
+        showDashboard = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            switch t {
+            case .packageTab:
+                selectedTab = .package
+                model.openDesmTab(.package)
+            case .package(let no):
+                selectedTab = .package
+                model.openPackageNo(no)
+            case .packingList(let pl):
+                selectedTab = .package
+                model.openPackingList(pl)
+            case .doc(let kind):
+                docKind = kind
+            case .activity(let days, let filter):
+                activityDays = days; activityFilter = filter; showActivity = true
+            case .vessel:
+                showVessel = true
+            case .notice:
+                showNotice = true
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -142,7 +170,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: $showMore) {
-            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true }, onAudit: { showAudit = true }, onDashboard: { showDashboard = true })
+            MoreSheet(model: model, onClose: { showMore = false }, onHistory: { showPackingHistory = true }, onDoc: { docKind = $0 }, onWip: { showWip = true }, onActivity: { activityDays = 3; activityFilter = 0; showActivity = true }, onEditLog: { showEditLog = true }, onVessel: { showVessel = true }, onNotice: { showNotice = true }, onFetch: { showFetcher = true }, onSource: { showSource = true }, onAudit: { showAudit = true }, onDashboard: { showDashboard = true })
                 .presentationDetents([.fraction(0.7), .large])
                 .presentationDragIndicator(.visible)
                 .tint(Color.tabBlue)
@@ -172,11 +200,11 @@ struct BrowserView: View {
                 .desmSheet()
         }
         .sheet(isPresented: $showDashboard) {
-            DesmDashboardSheet(model: model, onClose: { showDashboard = false })
+            DesmDashboardSheet(model: model, onClose: { showDashboard = false }, onGo: { dashGo($0) })
                 .desmSheet()
         }
         .sheet(isPresented: $showActivity) {
-            DesmActivitySheet(model: model, onClose: { showActivity = false })
+            DesmActivitySheet(model: model, initialDays: activityDays, initialFilter: activityFilter, onClose: { showActivity = false })
                 .desmSheet()
         }
         .sheet(isPresented: $showNotice) {

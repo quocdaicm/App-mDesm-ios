@@ -606,3 +606,43 @@ Cách đọc nhật ký: `[M]` luồng chính, `[B]` luồng nền; `→`/`←` 
 ## Tổng quan + thống kê lỗi (2026-10-31)
 - **Thêm > Tổng quan** (`Sheets/Dashboard.swift`, `DesmDashboardSheet`): kiện chưa có vị trí / chưa xác nhận / cập nhật hôm nay + theo Packing List (từ `/getIdsmOsSummaryList.do`), RSI/MRF chưa đóng (`fetchDocsAsync`), RSI/MRF mới và MRF đã trả 24 giờ (`fetchActivityAsync(days:1, only:)`), tàu sắp đến (`arrivingSoon`), thông báo chưa mở (`DesmNoticeSeen`). 4 phần tải độc lập, kéo xuống để làm mới.
 - **Thống kê lỗi** (`Tools/DesmStats.swift`, hiện ở Chẩn đoán giao diện): `desmQueryAsync` ghi mỗi lệnh gọi (thành công / hết phiên / mạng / không phải JSON / lỗi máy chủ / đường lui qua trang web) theo ngày + đường dẫn; script giao diện báo `desmStat` khi phải chèn lại style/class (gộp 5 giây). Giữ 14 ngày, hiện 7 ngày, chỉ số đếm trong UserDefaults `desmStatsV1`. Đã đăng ký 2 file mới vào project.pbxproj. CHƯA build Xcode / chưa thử máy thật.
+
+## Tổng quan: mọi dòng bấm được (2026-11-01)
+- `Sheets/Dashboard.swift`: thêm `DashTarget` (đích khi bấm), `DashPkgItem` / `DashPkgFilter` / `DashPkgListView` (danh sách kiện native đẩy vào NavigationStack của Tổng quan, có ô tìm Package No/vị trí), tham số `onGo`. `PkgSummary.items` giữ từng kiện từ `/getIdsmOsSummaryList.do`.
+- Bấm: Tổng số kiện -> danh sách tất cả kiện (native); Chưa có vị trí / Chưa xác nhận / Cập nhật vị trí hôm nay / Xác nhận hôm nay -> danh sách kiện (bấm kiện -> đóng Tổng quan, `BrowserModel.openPackageNo` gọi `__desmFindPkg` mở chi tiết kiện); từng Packing List -> danh sách kiện của PL đó (chưa vị trí xếp trước, nút "Mở trên web" lọc PL trên web qua `openPackingList`); RSI / MRF chưa đóng -> `DesmDocSheet`; RSI mới / MRF mới / MRF đã trả (24 giờ) -> `DesmActivitySheet` mở sẵn 1 ngày + đúng loại; Tàu sắp đến -> Bản đồ tàu; Thông báo -> màn Thông báo.
+- `Sheets/Activity.swift`: `DesmActivitySheet` có `init(model:initialDays:initialFilter:onClose:)`. `UI/BrowserView.swift`: `dashGo(_:)` đóng Tổng quan, chờ 0.4s rồi mở đích; thêm `activityDays`/`activityFilter`.
+- Không thêm file mới (không sửa pbxproj). CHƯA build Xcode / chưa thử máy thật. Chỗ dễ lỗi biên dịch: `NavigationLink` trong closure `state(...)`, `.searchable` trong sheet, tuple so sánh trong `DashPkgFilter.apply`.
+
+## API trang Package (kiện) — nguồn: file desm-source-20261101 người dùng gửi (2026-11-01)
+Nguồn: `Thêm > Mã nguồn trang này` khi đang ở trang Kiện hàng (menu 196) có mở hộp thoại Location Update. Bản chép nguyên văn hai script nằm trong `reference/` (KHÔNG biên dịch, chỉ để đọc): `reference/plSummary.js` (= `/resources/scripts/material/plSummary.js`, logic trang Package) và `reference/desmLocationPopUp.js` (= `/resources/scripts/popUp/desmLocationPopUp.js`, hộp thoại vị trí). Khi cần chi tiết hơn, ĐỌC HAI FILE NÀY thay vì đoán.
+Người dùng muốn **nâng cấp trang Package thành trang chính, viết lại native đầy đủ chức năng như web** (xem kế hoạch cuối mục).
+
+### Quy ước chung
+- Mọi API là `POST` form (`application/x-www-form-urlencoded`), thêm header `X-Requested-With: XMLHttpRequest` (như `desmQueryAsync`/`fetchResource`). Trả JSON: đọc `{"results": [...]}`; ghi thành công `{"success":"OK"}`; lỗi có trường `error`.
+- `list` / `deleteList` là CHUỖI JSON (mảng) rồi mới mã hoá form. Mỗi phần tử một kiện: `{"PROJECT_NO":"T25026","TRK_ITEM_NAME":"#1 Inlet Duct 1st","PACKAGE_NO":"OM4-DE-LS-0002-001","CODE_TYPE":"SUMMARY"}`. Các trường lấy từ dòng của `/getIdsmOsSummaryList.do` (`PROJECT_NO`, `TRK_ITEM_NAME`, `PACKAGE_NO`).
+- Dự án hiện tại: `PROJECT_NO=T25026` (O Mon 4); app lấy qua `desmProjectNo()` / `/getInitDefailProject.do` (`SEGMENT1`).
+- Trước mỗi trang, web gọi `/getMenuAuthCheckList.do` (`MENU_SEQ=196` Package, `197` Hạng mục chi tiết) để kiểm quyền; nút ghi có thể bị ẩn theo quyền (`AUTH_CODE`/`USE_YN`). Native nên gọi và ẩn nút ghi nếu không có quyền (chưa rõ ngữ nghĩa từng AUTH_CODE — trong log bị che `***`).
+
+### API ĐỌC
+- `/getIdsmOsSummaryList.do` — danh sách kiện (dùng ở Dashboard). Body đủ khoá lọc: `PROJECT_NO, PACKAGE_LIST_NO, PACKAGE_NO, DESCRIPTION, IS_CONFIRM_MATERIAL, RECEIPTED, ATTRIBUTE10 (voyage), REMARK, VENDOR, LOCATION, START_RECEIPT_DATE, END_RECEIPT_DATE, MRR_VISUAL_CHECK (All), MRR_RECEIVED, START_MRR_RECEIVED_DATE, END_MRR_RECEIVED_DATE, CUSTOMS_YN, MIR_CATEGORY, PACKAGE_STATUS`. Web gửi `PACKAGE_LIST_NO` chữ thường vẫn khớp (không phân biệt hoa thường). Mỗi dòng có (đã thấy): `PACKAGE_NO, PACKAGE_LIST_NO, TRK_ITEM_NAME, DESCRIPTION, STORAGE_LOCATION, LOC_UPDATED_BY, LOC_UPDATE_DATE, CONFIRM_DATE, CONFIRMED_BY, OUT_STATUS_QTY ("1.000/0.000"), OUT_STATUS, PACKAGE_STATUS, PACKAGE_TYPE, REMARKS, ATTRIBUTE9, ATTRIBUTE10, L_CM, VOLUME, GROSS, SQM, REPORT_SHORT/OVER/DMG/MISSING(_QTY), CUSTOMS_YN, COUNTRY...`.
+- `/getVoyageList.do` (`p_project_code=T25026`) → `[{ATTRIBUTE10}]` danh sách Voyage cho bộ lọc.
+- `/getLocationCodeList.do` (`PROJECT_NO`) → `[{CODE, NAME}]` vd `LAYDOWN - Y1-6` (bộ lọc/ô chọn vị trí theo tên).
+- `/getIsSubon.do` (không body) → `{results:[]}` (có thể là cờ nhà thầu phụ; chưa rõ).
+- `/getDesmMapCreationList.do` (`PROJECT_NO`) → `[{MAP_MST_ID, MAP_NAME, MAP_PATH}]` (LAYDOWN=1961, Warehouse=1962, Shelter=1963, Cable area…). Ảnh bản đồ: `MAP_PATH` (vd `/resources/images/MaterialMap/T25026_MAIN_LAYDOWN.jpg`).
+- `/getDesmMapInfoList.do` (`PROJECT_NO, MAP_MST_ID`) → `results.mstInfo[]` + `results.dtlInfo[]` = các ô vị trí `{MAP_DTL_ID, MAP_NAME ("Y1-6"), MAP_TYPE ("RECT"|polygon…), MAP_POSITION ("x,y,w,h")}`. `/getDesmMapSearchInfoList.do` (tìm ô theo tên, chưa xem tham số — đọc `reference/desmLocationPopUp.js` dòng ~426).
+
+### API GHI (đã có mã nguồn; chỉ `saveDesmLocationCheck`/`saveDesmLocation` có log chạy thật)
+1. **Cập nhật vị trí**: `POST /saveDesmLocationCheck.do` rồi `POST /saveDesmLocation.do`, cùng body `list=<JSON, có CODE_TYPE:"SUMMARY">&MAP_MST_ID=<id bản đồ>&MAP_DTL_ID=<id ô>`. Check trả `LOCATION_DIFF` khác null = kiện đang ở vị trí khác → web hỏi xác nhận "trùng vị trí" trước khi ghi. Save lỗi: `error == "qtyCheckErr"` (kiện số lượng 0, kèm `PACKAGE_NO`), lỗi khác = lỗi chung. Thành công `{"success":"OK"}`; sau đó web Search lại danh sách.
+2. **Xoá vị trí**: `POST /deleteDesmLocation.do` body `deleteList=<JSON, có CODE_TYPE:"SUMMARY">`; lỗi ở `result.error`; xong thì Search lại. (Chưa có log chạy thật.)
+3. **Xác nhận kiện**: `POST /saveIdsmOsSummaryListConfirmMaterial.do` body `list=<JSON chỉ PROJECT_NO, TRK_ITEM_NAME, PACKAGE_NO>`. **Hủy xác nhận**: `/saveIdsmOsSummaryListCancelMaterial.do` (cùng dạng; `error=="RSI"` = kiện đã có RSI nên không hủy được, kèm `PACKAGE_NO`). (Chưa có log chạy thật.)
+4. **Customs Y/N**: `/saveIdsmOsSummaryListCustoms.do` body `list=<JSON + CUSTOMS_YN>`; web đổi N↔Y, chỉ cho phép khi các kiện được chọn cùng giá trị.
+5. Còn lại (script có, chưa có log): `/saveIdsmOsSummaryList.do` (lưu sửa trực tiếp trên lưới), MIR: `…ListMirCheck/MirAccept/MirCancel/MirAcceptCheck/MirCancelCheck`, RFI: `…ListRfiCheck/RfiAccept/RfiCancel/RfiAcceptCheck/RfiCancelCheck` (đều `/saveIdsmOsSummaryList*` hoặc `/getIdsmOsSummaryList*`), `/saveIdsmShippingMarkList.do`, `/saveIdsmQrCodeList.do`, tạo hạng mục `/desmDetailItemCreationPopUp.do`.
+- Popup HTML (trả HTML, không phải JSON; cần đọc script riêng nếu muốn native): `/desmLocationPopUp.do`, `/desmLocationSearchPopUp.do`, `/desmPlSummaryEditLogPopUp.do`, `/desmPlSummaryHistoryPopUp.do`, `/desmPackageDateChangePopUp.do`, `/idsmMirCreationPopUp.do`, `/idsmRfiCreationPopUp.do`; báo cáo `/mrd.do`, `/qrCodeMrd.do`, `/shippingMarkMrd.do`.
+
+### Quy tắc an toàn khi làm thao tác ghi native
+- Hộp thoại xác nhận (`.desmAlert`) trước MỖI lần ghi; ghi vào "Nhật ký thao tác ghi" (`WriteAudit`, xem cách `JSGridItems` gọi `auditBegin`); sau khi ghi thì nạp lại danh sách.
+- Cập nhật vị trí: luôn gọi `saveDesmLocationCheck` trước, có `LOCATION_DIFF` thì phải hỏi lại người dùng.
+- Không đoán tham số; chưa có log thật thì ghi rõ "chưa kiểm chứng", thử trên kiện test. Cho phép chọn nhiều kiện = nhiều phần tử trong `list`.
+
+### Kế hoạch đã thống nhất với người dùng (chưa làm)
+1. Danh sách kiện native (đủ bộ lọc của web, tìm, sắp xếp, xuất CSV) — chỉ đọc. 2. Chi tiết kiện native + chọn nhiều kiện. 3. Cập nhật/xoá vị trí, xác nhận, hủy xác nhận, Customs native theo API trên. 4. MIR/RFI, Edit Log, lịch sử, đổi ngày. Đã làm trước: màn Tổng quan mở được danh sách kiện native (`DashPkgListView`).

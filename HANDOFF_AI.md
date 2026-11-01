@@ -1,3 +1,6 @@
+## 📌 MỚI NHẤT (2026-11-01): API trang Package + kế hoạch viết lại Package native
+Đọc mục "API trang Package (kiện)" cuối `DEV_NOTES.md` và hai file chép nguyên văn trong `reference/` (`plSummary.js`, `desmLocationPopUp.js`). Có đủ API đọc/ghi (cập nhật vị trí, xoá vị trí, xác nhận, Customs...). Người dùng muốn trang Package native làm trang chính; kế hoạch 4 giai đoạn ở cuối mục đó. Vẫn nói rõ "chưa build/chưa thử máy thật".
+
 ## ⚠️ QUY ƯỚC BẮT BUỘC khi thêm mục/màn hình mới vào "Thêm" (More) — AI nào làm tiếp cũng phải theo
 1. **Mục mới = một màn native mở dạng sheet từ `UI/MoreSheet.swift`** (thêm `Item` vào `webItems` hoặc `toolItems`, thêm callback `onXxx` rồi nối trong `UI/BrowserView.swift`). Sheet đăng ký trong `BrowserView.swift` bằng `.sheet { MànMới(model:, onClose:) .desmSheet() }`.
 2. **Luôn gắn `.desmSheet()`** cho sheet mới: modifier này đã tự thêm (a) nút camera nổi góc dưới phải để chụp CẢ danh sách thành một ảnh dài (`DesmShotModifier` trong `UI/ShareSheet.swift`), (b) sheet toàn chiều cao, thanh kéo, màu nhấn `Color.tabBlue`. Không tự viết lại nút chụp riêng cho từng màn. Nếu bắt buộc không dùng `desmSheet()` thì gọi `.desmShotButton()`. Chỉ truyền `.desmSheet(shot: false)` cho màn có ô nhập/thanh gửi ở đáy (như AI chat, Cài đặt) và phải ghi lý do.

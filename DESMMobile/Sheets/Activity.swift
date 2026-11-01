@@ -197,6 +197,14 @@ struct DesmActivitySheet: View {
     @State private var seenAtOpen: Set<String>? = nil   // nil = lần đầu: chưa có mốc nên không gắn "MỚI"
     @State private var started = false
 
+    /// initialDays / initialFilter: mở sẵn đúng khoảng ngày và loại (từ Tổng quan); mặc định 3 ngày, Tất cả.
+    init(model: BrowserModel, initialDays: Int = 3, initialFilter: Int = 0, onClose: @escaping () -> Void) {
+        _model = ObservedObject(wrappedValue: model)
+        self.onClose = onClose
+        _days = State(initialValue: initialDays)
+        _filter = State(initialValue: initialFilter)
+    }
+
     var shown: [DesmActivity] { filter == 0 ? items : items.filter { $0.kind.group == filter } }
     var newCount: Int { items.filter { $0.isNew }.count }
 
