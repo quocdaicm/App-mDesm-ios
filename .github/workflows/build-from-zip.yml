@@ -1,0 +1,56 @@
+# Đặt file này ở: .github/workflows/build-from-zip.yml
+# Cách dùng: upload (hoặc ghi đè) file DESM_Mobile_iOS.zip vào GỐC repo -> GitHub tự giải nén, build, và tạo IPA không ký.
+# IPA tải ở: tab Actions -> lần chạy mới nhất -> mục Artifacts (DESMMobile-ipa).
+name: Build from zip
+
+on:
+  push:
+    paths:
+      - 'DESM_Mobile_iOS.zip'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Giải nén zip
+        run: |
+          set -e
+          test -f DESM_Mobile_iOS.zip || { echo "Không thấy DESM_Mobile_iOS.zip ở gốc repo"; exit 1; }
+          rm -rf src && mkdir src
+          unzip -q DESM_Mobile_iOS.zip -d src
+          PROJ=$(find src -maxdepth 3 -name '*.xcodeproj' | head -n 1)
+          test -n "$PROJ" || { echo "Không thấy .xcodeproj trong zip"; exit 1; }
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          echo "Project: $PROJ"
+
+      - name: Build (không ký)
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJ" -scheme DESMMobile -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | tail -n 80
+
+      - name: Đóng gói IPA
+        run: |
+          APP=$(find build/Build/Products -name '*.app' -maxdepth 3 | head -n 1)
+          test -n "$APP" || { echo "Không thấy .app"; exit 1; }
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qr DESMMobile.ipa Payload
+
+      - name: Tải IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DESMMobile-ipa
+          path: DESMMobile.ipa
+
+      - name: Tải log build (khi lỗi cũng có)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
